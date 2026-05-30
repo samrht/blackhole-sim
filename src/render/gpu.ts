@@ -1,16 +1,6 @@
 import { packUniforms, UniformValues, UNIFORM_SIZE } from "./uniforms";
 import presentWGSL from "./present.wgsl?raw";
-
-const TEST_COMPUTE = /* wgsl */`
-struct Uniforms { res: vec2<f32>, a: f32, incl: f32, rObs: f32, fovScale: f32, rIn: f32, rOut: f32, Tpeak: f32, exposure: f32, time: f32, frame: u32, reset: u32, maxSteps: u32, };
-@group(0) @binding(0) var<uniform> U: Uniforms;
-@group(0) @binding(1) var<storage, read_write> accum: array<vec4<f32>>;
-@compute @workgroup_size(8,8) fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
-  if (gid.x >= u32(U.res.x) || gid.y >= u32(U.res.y)) { return; }
-  let idx = gid.y * u32(U.res.x) + gid.x;
-  let uv = vec2<f32>(f32(gid.x)/U.res.x, f32(gid.y)/U.res.y);
-  accum[idx] = vec4<f32>(uv.x, uv.y, 0.2, 1.0); // gradient
-}`;
+import raytraceWGSL from "./raytrace.wgsl?raw";
 
 export class Renderer {
   device!: GPUDevice; ctx!: GPUCanvasContext; format!: GPUTextureFormat;
@@ -28,7 +18,7 @@ export class Renderer {
     this.format = navigator.gpu.getPreferredCanvasFormat();
     this.resize(canvas);
     this.uniformBuf = this.device.createBuffer({ size: UNIFORM_SIZE, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-    this.buildPipelines(TEST_COMPUTE, presentWGSL);
+    this.buildPipelines(raytraceWGSL, presentWGSL);
   }
 
   resize(canvas: HTMLCanvasElement) {
