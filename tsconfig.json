@@ -5,7 +5,7 @@
     "moduleResolution": "bundler",
     "strict": true,
     "noUnusedLocals": true,
-    "types": ["@webgpu/types", "vitest/globals"],
+    "types": ["@webgpu/types", "vitest/globals", "node"],
     "lib": ["ES2022", "DOM", "DOM.Iterable"]
   },
   "include": ["src", "tests"]

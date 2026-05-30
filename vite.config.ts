@@ -1,2 +1,3 @@
 import { defineConfig } from "vite";
-export default defineConfig({ server: { port: 5173 } });
+// WebGPU only runs in modern browsers, so target esnext (enables top-level await).
+export default defineConfig({ server: { port: 5173 }, build: { target: "esnext" } });
