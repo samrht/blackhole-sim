@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8" /><title>Kerr Black Hole</title>
+<style>
+  html,body{margin:0;height:100%;background:#000;color:#ccc;font:13px system-ui}
+  #c{display:block;width:100vw;height:100vh}
+  #panel{position:fixed;top:8px;left:8px;background:#0008;padding:10px;border-radius:8px}
+  label{display:block;margin:4px 0}
+</style></head>
+<body>
+  <canvas id="c"></canvas>
+  <div id="panel">
+    <label>spin a* <input id="spin" type="range" min="0" max="0.998" step="0.001" value="0.9"><span id="spinv">0.9</span></label>
+    <label>inclination° <input id="incl" type="range" min="1" max="89" step="1" value="72"><span id="inclv">72</span></label>
+    <label>exposure <input id="exp" type="range" min="-4" max="4" step="0.1" value="0"><span id="expv">0</span></label>
+  </div>
+  <script type="module" src="/src/main.ts"></script>
+</body></html>
