@@ -95,9 +95,10 @@ fn hash2(p: vec2<u32>, frame: u32) -> vec2<f32> {
   var color = vec3<f32>(0.0);
 
   for (var step = 0u; step < U.maxSteps; step++) {
-    // adaptive step: smaller near the hole
+    // adaptive step: smaller near the hole. dl > 0 with p_r < 0 integrates INWARD
+    // (matches the geodesic capture test; a negative dl marches rays outward -> black screen).
     let r = s.x.y;
-    let dl = -clamp(0.02 * (r - rh), 0.002, 0.5);
+    let dl = clamp(0.02 * (r - rh), 0.002, 0.5);
     let sNew = rk4(s, a, dl);
 
     // disk crossing: equatorial plane th = PI/2
