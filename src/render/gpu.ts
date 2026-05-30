@@ -77,4 +77,27 @@ export class Renderer {
     rp.setPipeline(this.presentPipe); rp.setBindGroup(0, this.presentBind); rp.draw(3); rp.end();
     this.device.queue.submit([enc.finish()]);
   }
+
+  /** Render one frame to an offscreen texture and read the presented pixels back to the CPU
+   *  (tightly-packed RGBA8/BGRA8, row-stride removed). Used by validation harnesses. */
+  async readbackPresented(u: UniformValues): Promise<{ data: Uint8Array; w: number; h: number }> {
+    const tex = this.device.createTexture({ size: [this.width, this.height], format: this.format,
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC });
+    this.device.queue.writeBuffer(this.uniformBuf, 0, packUniforms(u));
+    const enc = this.device.createCommandEncoder();
+    const cp = enc.beginComputePass(); cp.setPipeline(this.computePipe); cp.setBindGroup(0, this.computeBind);
+    cp.dispatchWorkgroups(Math.ceil(this.width / 8), Math.ceil(this.height / 8)); cp.end();
+    const rp = enc.beginRenderPass({ colorAttachments: [{ view: tex.createView(), clearValue: { r: 0, g: 0, b: 0, a: 1 }, loadOp: "clear", storeOp: "store" }] });
+    rp.setPipeline(this.presentPipe); rp.setBindGroup(0, this.presentBind); rp.draw(3); rp.end();
+    const bpr = Math.ceil(this.width * 4 / 256) * 256; // bytesPerRow must be a multiple of 256
+    const buf = this.device.createBuffer({ size: bpr * this.height, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+    enc.copyTextureToBuffer({ texture: tex }, { buffer: buf, bytesPerRow: bpr }, [this.width, this.height]);
+    this.device.queue.submit([enc.finish()]);
+    await buf.mapAsync(GPUMapMode.READ);
+    const padded = new Uint8Array(buf.getMappedRange().slice(0));
+    const data = new Uint8Array(this.width * this.height * 4);
+    for (let y = 0; y < this.height; y++) data.set(padded.subarray(y * bpr, y * bpr + this.width * 4), y * this.width * 4);
+    buf.unmap();
+    return { data, w: this.width, h: this.height };
+  }
 }

@@ -13,6 +13,14 @@ if (location.search.includes("parity")) {
   document.body.innerHTML = `<pre style="color:${ok ? "#6f6" : "#f66"};font-size:18px;padding:20px">
 PARITY ${ok ? "PASS" : "FAIL"} — maxRelErr=${res.maxErr.toExponential(3)} over ${res.rows} cases</pre>`;
   console.log("parity", res);
+} else if (location.search.includes("shadow")) {
+  // Validation entry: Schwarzschild shadow-radius check (a=0, pole-on).
+  const { measureShadow } = await import("./test/shadow.browser");
+  const res = await measureShadow(canvas);
+  const ok = res.relErr < 0.1;
+  document.body.innerHTML = `<pre style="color:${ok ? "#6f6" : "#f66"};font-size:18px;padding:20px">
+SHADOW ${ok ? "PASS" : "FAIL"} — measured=${res.shadowPx.toFixed(1)}px expected=${res.expectedPx.toFixed(1)}px relErr=${(res.relErr * 100).toFixed(1)}%</pre>`;
+  console.log("shadow", res);
 } else {
   // Normal interactive render.
   const r = new Renderer();
