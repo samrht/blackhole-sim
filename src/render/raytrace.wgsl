@@ -4,6 +4,8 @@ struct Uniforms {
 };
 @group(0) @binding(0) var<uniform> U: Uniforms;
 @group(0) @binding(1) var<storage, read_write> accum: array<vec4<f32>>;
+@group(0) @binding(2) var<storage, read> tempLUT: array<f32>;       // normalized T(r) in [0,1]
+@group(0) @binding(3) var<storage, read> colorLUT: array<vec4<f32>>; // linear-sRGB blackbody color
 
 const PI = 3.141592653589793;
 
@@ -45,15 +47,26 @@ fn rk4(s: State, a: f32, dl: f32) -> State {
                s.p + (k1.p+2.0*k2.p+2.0*k3.p+k4.p)*(dl/6.0));
 }
 
-// temporary analytic temperature (replaced by LUT in Task 10): peaks outside ISCO, ~r^-3/4
-fn tempTmp(r: f32, rin: f32) -> f32 {
-  if (r <= rin) { return 0.0; }
-  let f = pow(rin/r, 0.75) * pow(max(0.0, 1.0 - sqrt(rin/r)), 0.25);
-  return f / 0.23; // rough normalization so peak ~1
+// linearly-interpolated lookup into a 1-D storage-buffer LUT (portable; no float-filterable feature)
+fn sampleTemp(r: f32) -> f32 {
+  let n = arrayLength(&tempLUT);
+  let u = clamp((r - U.rIn) / (U.rOut - U.rIn), 0.0, 1.0) * f32(n - 1u);
+  let i0 = u32(floor(u)); let i1 = min(i0 + 1u, n - 1u);
+  return mix(tempLUT[i0], tempLUT[i1], fract(u));
 }
-fn cheapColor(T: f32) -> vec3<f32> { // placeholder palette (real color LUT in Task 10)
-  let t = clamp(T, 0.0, 1.0);
-  return mix(vec3(1.0,0.3,0.05), vec3(0.6,0.8,1.0), t);
+fn sampleColor(T_kelvin: f32) -> vec3<f32> {
+  let n = arrayLength(&colorLUT);
+  // color LUT spans [1000, 40000] K
+  let u = clamp((T_kelvin - 1000.0) / (40000.0 - 1000.0), 0.0, 1.0) * f32(n - 1u);
+  let i0 = u32(floor(u)); let i1 = min(i0 + 1u, n - 1u);
+  return mix(colorLUT[i0].rgb, colorLUT[i1].rgb, fract(u));
+}
+// per-frame hash jitter for progressive anti-aliasing
+fn hash2(p: vec2<u32>, frame: u32) -> vec2<f32> {
+  let n = p.x * 1973u + p.y * 9277u + frame * 26699u;
+  let h = (n ^ (n >> 15u)) * 2246822519u;
+  let h2 = (h ^ (h >> 13u)) * 3266489917u;
+  return vec2<f32>(f32(h & 0xffffu)/65535.0, f32(h2 & 0xffffu)/65535.0);
 }
 
 @compute @workgroup_size(8,8) fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
@@ -61,15 +74,14 @@ fn cheapColor(T: f32) -> vec3<f32> { // placeholder palette (real color LUT in T
   let idx = gid.y * u32(U.res.x) + gid.x;
   let a = U.a; let i = U.incl;
 
-  // pixel -> impact parameters (alpha,beta) in units of M
+  // pixel -> impact parameters (alpha,beta) in units of M, with sub-pixel jitter for AA
   let aspect = U.res.x / U.res.y;
-  let ndc = (vec2<f32>(f32(gid.x), f32(gid.y)) + 0.5) / U.res * 2.0 - 1.0;
+  let jit = hash2(gid.xy, U.frame) - 0.5;
+  let ndc = (vec2<f32>(f32(gid.x), f32(gid.y)) + 0.5 + jit) / U.res * 2.0 - 1.0;
   let alpha = ndc.x * U.fovScale * aspect;
   let beta  = -ndc.y * U.fovScale;
-  // invert Bardeen: xi = -alpha*sin i ; eta = beta^2 - a^2 cos^2 i + xi^2 cot^2 i
+  // Bardeen impact parameter -> conserved azimuthal angular momentum
   let xi = -alpha * sin(i);
-  let ci = cos(i); let cot2 = (ci*ci)/(sin(i)*sin(i));
-  let eta = beta*beta - a*a*ci*ci + xi*xi*cot2;
 
   // initial state at (rObs, i, 0), E=1
   let r0 = U.rObs; let th0 = i;
@@ -94,13 +106,14 @@ fn cheapColor(T: f32) -> vec3<f32> { // placeholder palette (real color LUT in T
       let frac = f0 / (f0 - f1);
       let rHit = mix(s.x.y, sNew.x.y, frac);
       if (rHit >= U.rIn && rHit <= U.rOut) {
-        let Tn = tempTmp(rHit, U.rIn);
+        let Tn = sampleTemp(rHit);
         let Om = omegaKep(rHit, a);
         let gl = gLow(rHit, PI*0.5, a);
         let rad = -(gl[0] + 2.0*Om*gl[1] + Om*Om*gl[4]);
-        let g = sqrt(max(0.0, rad)) / (1.0 - Om*xi);  // redshift factor
-        let u = g * Tn;                                // observed color temperature factor
-        color = cheapColor(clamp(u, 0.0, 1.0)) * pow(u, 4.0); // brightness ∝ (g*T)^4
+        let g = sqrt(max(0.0, rad)) / (1.0 - Om*xi);
+        let Tobs = U.Tpeak * g * Tn;             // observed blackbody temperature
+        let bright = pow(g * Tn, 4.0);           // bolometric beaming ∝ (gT)^4
+        color = sampleColor(Tobs) * bright;
         break;
       }
     }
