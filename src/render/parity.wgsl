@@ -23,7 +23,10 @@ struct In { r: f32, th: f32, a: f32, xi: f32 };
   let v = inputs[gid.x];
   let gu = gUp(v.r, v.th, v.a); let gl = gLow(v.r, v.th, v.a);
   let Om = omegaKep(v.r, v.a);
-  let rad = -(gl[0] + 2.0*Om*gl[1] + Om*Om*gl[4]);
+  // The disk g-factor is always evaluated in the equatorial plane (matches gFactorKepler),
+  // independent of the test case's theta used for the metric-parity checks above.
+  let glEq = gLow(v.r, 1.5707963267948966, v.a);
+  let rad = -(glEq[0] + 2.0*Om*glEq[1] + Om*Om*glEq[4]);
   let gfac = sqrt(max(0.0, rad)) / (1.0 - Om*v.xi);
   outputs[gid.x] = vec4<f32>(gu[0], gl[0], Om, gfac);
 }
