@@ -69,6 +69,40 @@ fn hash2(p: vec2<u32>, frame: u32) -> vec2<f32> {
   return vec2<f32>(f32(h & 0xffffu)/65535.0, f32(h2 & 0xffffu)/65535.0);
 }
 
+// Dave Hoskins hash33 -> vec3 in [0,1)
+fn hash33(p3: vec3<f32>) -> vec3<f32> {
+  var p = fract(p3 * vec3<f32>(0.1031, 0.1030, 0.0973));
+  p += dot(p, p.yxz + 33.33);
+  return fract((p.xxy + p.yxx) * p.zyx);
+}
+
+// Procedural starfield sampled along an escaped ray's asymptotic direction. Because the direction
+// has been bent by the geometry, the background appears gravitationally lensed (warped/magnified
+// near the shadow) — a physically real effect, and the reason the void reads as deep space.
+fn starfield(dir: vec3<f32>) -> vec3<f32> {
+  // deep, near-black void with a barely-there cool nebular gradient (keeps space from
+  // reading as flat #000 while staying dark enough for the disk to dominate the frame)
+  let neb = 0.5 + 0.5 * dir.y;
+  var col = mix(vec3<f32>(0.0016, 0.0022, 0.0050), vec3<f32>(0.0030, 0.0024, 0.0042), neb);
+  // sparse, crisp stars across three density octaves; rarer stars burn brighter
+  for (var k = 0u; k < 3u; k++) {
+    let scale = 95.0 * pow(1.7, f32(k));
+    let p = dir * scale;
+    let cell = floor(p);
+    let h = hash33(cell);
+    let thresh = 0.989;
+    if (h.x > thresh) {
+      let center = cell + 0.5 + (h.yzx - 0.5) * 0.6;
+      let d = length(p - center);
+      let mag = (h.x - thresh) / (1.0 - thresh);            // 0..1 rarity -> brightness
+      let bright = smoothstep(0.45, 0.0, d) * (0.35 + 2.2 * mag * mag);
+      let tint = mix(vec3<f32>(0.58, 0.72, 1.0), vec3<f32>(1.0, 0.83, 0.60), h.y); // blue..warm
+      col += tint * bright;
+    }
+  }
+  return col;
+}
+
 @compute @workgroup_size(8,8) fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   if (gid.x >= u32(U.res.x) || gid.y >= u32(U.res.y)) { return; }
   let idx = gid.y * u32(U.res.x) + gid.x;
@@ -95,13 +129,17 @@ fn hash2(p: vec2<u32>, frame: u32) -> vec2<f32> {
   var color = vec3<f32>(0.0);
 
   for (var step = 0u; step < U.maxSteps; step++) {
-    // adaptive step: smaller near the hole. dl > 0 with p_r < 0 integrates INWARD
-    // (matches the geodesic capture test; a negative dl marches rays outward -> black screen).
+    // dl > 0 with p_r < 0 integrates INWARD (matches the geodesic capture test; a negative dl
+    // would march rays outward -> black screen).
     let r = s.x.y;
-    let dl = clamp(0.02 * (r - rh), 0.002, 0.5);
+    // distance-adaptive step: fine in the strong-field/disk region, large strides through the
+    // near-flat far field (curvature ~M/r^3 is negligible there) so we don't burn thousands of
+    // steps just travelling in from the distant observer at r0.
+    var dl = clamp(0.02 * (r - rh), 0.002, 0.5);
+    if (r > U.rOut * 1.5) { dl = clamp(0.04 * r, 0.6, 6.0); }
     let sNew = rk4(s, a, dl);
 
-    // disk crossing: equatorial plane th = PI/2
+    // disk crossing: equatorial plane th = PI/2 (take the first hit -> optically-thick top surface)
     let f0 = s.x.z - PI*0.5; let f1 = sNew.x.z - PI*0.5;
     if (f0 * f1 < 0.0) {
       let frac = f0 / (f0 - f1);
@@ -111,16 +149,23 @@ fn hash2(p: vec2<u32>, frame: u32) -> vec2<f32> {
         let Om = omegaKep(rHit, a);
         let gl = gLow(rHit, PI*0.5, a);
         let rad = -(gl[0] + 2.0*Om*gl[1] + Om*Om*gl[4]);
-        let g = sqrt(max(0.0, rad)) / (1.0 - Om*xi);
-        let Tobs = U.Tpeak * g * Tn;             // observed blackbody temperature
-        let bright = pow(g * Tn, 4.0);           // bolometric beaming ∝ (gT)^4
-        color = sampleColor(Tobs) * bright;
+        let g = sqrt(max(0.0, rad)) / (1.0 - Om*xi); // Doppler + gravitational redshift factor
+        let Tobs = U.Tpeak * g * Tn;                 // observed blackbody temperature
+        color = sampleColor(Tobs) * pow(g * Tn, 4.0); // beamed blackbody, ∝ (gT)^4
         break;
       }
     }
     s = sNew;
     if (s.x.y <= rh * 1.001) { color = vec3(0.0); break; }   // captured -> shadow
-    if (s.x.y > r0 * 1.2) { color = vec3(0.0); break; }      // escaped -> background
+    if (s.x.y > r0 * 1.2) {
+      // escaped: sample the background along the ray's (bent) asymptotic direction.
+      // The deflected direction makes the starfield appear gravitationally lensed —
+      // warped and magnified into a ring around the shadow.
+      let th = s.x.z; let ph = s.x.w;
+      let dir = normalize(vec3<f32>(sin(th)*cos(ph), sin(th)*sin(ph), cos(th)));
+      color = starfield(dir);
+      break;
+    }
   }
 
   let prev = select(accum[idx].rgb, vec3(0.0), U.reset == 1u);

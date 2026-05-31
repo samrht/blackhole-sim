@@ -1,14 +1,19 @@
 import { packUniforms, UniformValues, UNIFORM_SIZE } from "./uniforms";
 import presentWGSL from "./present.wgsl?raw";
 import raytraceWGSL from "./raytrace.wgsl?raw";
+import bloomWGSL from "./bloom.wgsl?raw";
 
 export class Renderer {
   device!: GPUDevice; ctx!: GPUCanvasContext; format!: GPUTextureFormat;
   uniformBuf!: GPUBuffer; accumBuf!: GPUBuffer;
   tempBuf!: GPUBuffer; colorBuf!: GPUBuffer;
+  bloomA!: GPUBuffer; bloomB!: GPUBuffer;       // half-res ping/pong glow buffers
   computePipe!: GPUComputePipeline; presentPipe!: GPURenderPipeline;
+  brightHPipe!: GPUComputePipeline; blurVPipe!: GPUComputePipeline;
   computeBind!: GPUBindGroup; presentBind!: GPUBindGroup;
-  width = 0; height = 0;
+  brightHBind!: GPUBindGroup; blurVBind!: GPUBindGroup;
+  width = 0; height = 0; bw = 0; bh = 0; // bw/bh = quarter-res bloom dimensions
+  renderBloom = true; // off for the structural shadow test (measures the raw geometric shadow)
 
   async init(canvas: HTMLCanvasElement) {
     if (!navigator.gpu) throw new Error("WebGPU not available — use Chrome/Edge.");
@@ -22,7 +27,7 @@ export class Renderer {
     // Placeholder LUT buffers so the first bind group is valid; replaced by uploadLUTs().
     this.tempBuf = this.device.createBuffer({ size: 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
     this.colorBuf = this.device.createBuffer({ size: 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
-    this.buildPipelines(raytraceWGSL, presentWGSL);
+    this.buildPipelines();
   }
 
   resize(canvas: HTMLCanvasElement) {
@@ -32,6 +37,10 @@ export class Renderer {
     canvas.width = this.width; canvas.height = this.height;
     this.ctx.configure({ device: this.device, format: this.format, alphaMode: "opaque" });
     this.accumBuf = this.device.createBuffer({ size: this.width * this.height * 16, usage: GPUBufferUsage.STORAGE });
+    this.bw = Math.ceil(this.width / 4); this.bh = Math.ceil(this.height / 4); // quarter-res bloom
+
+    this.bloomA = this.device.createBuffer({ size: this.bw * this.bh * 16, usage: GPUBufferUsage.STORAGE });
+    this.bloomB = this.device.createBuffer({ size: this.bw * this.bh * 16, usage: GPUBufferUsage.STORAGE });
   }
 
   /** Upload the CPU-computed T(r) and color(T) lookup tables as read-only storage buffers. */
@@ -44,10 +53,13 @@ export class Renderer {
     this.device.queue.writeBuffer(this.colorBuf, 0, colorLUT as Float32Array<ArrayBuffer>);
   }
 
-  buildPipelines(computeSrc: string, presentSrc: string) {
-    const cMod = this.device.createShaderModule({ code: computeSrc });
-    const pMod = this.device.createShaderModule({ code: presentSrc });
+  buildPipelines() {
+    const cMod = this.device.createShaderModule({ code: raytraceWGSL });
+    const pMod = this.device.createShaderModule({ code: presentWGSL });
+    const bMod = this.device.createShaderModule({ code: bloomWGSL });
     this.computePipe = this.device.createComputePipeline({ layout: "auto", compute: { module: cMod, entryPoint: "main" } });
+    this.brightHPipe = this.device.createComputePipeline({ layout: "auto", compute: { module: bMod, entryPoint: "bright_h" } });
+    this.blurVPipe = this.device.createComputePipeline({ layout: "auto", compute: { module: bMod, entryPoint: "blur_v" } });
     this.presentPipe = this.device.createRenderPipeline({
       layout: "auto", vertex: { module: pMod, entryPoint: "vs" },
       fragment: { module: pMod, entryPoint: "fs", targets: [{ format: this.format }] },
@@ -62,17 +74,41 @@ export class Renderer {
       { binding: 1, resource: { buffer: this.accumBuf } },
       { binding: 2, resource: { buffer: this.tempBuf } },
       { binding: 3, resource: { buffer: this.colorBuf } }] });
+    // bloom pass 1: accum -> bloomA ; pass 2: bloomA -> bloomB
+    this.brightHBind = this.device.createBindGroup({ layout: this.brightHPipe.getBindGroupLayout(0), entries: [
+      { binding: 0, resource: { buffer: this.uniformBuf } },
+      { binding: 1, resource: { buffer: this.accumBuf } },
+      { binding: 2, resource: { buffer: this.bloomA } }] });
+    this.blurVBind = this.device.createBindGroup({ layout: this.blurVPipe.getBindGroupLayout(0), entries: [
+      { binding: 0, resource: { buffer: this.uniformBuf } },
+      { binding: 1, resource: { buffer: this.bloomA } },
+      { binding: 2, resource: { buffer: this.bloomB } }] });
     this.presentBind = this.device.createBindGroup({ layout: this.presentPipe.getBindGroupLayout(0), entries: [
       { binding: 0, resource: { buffer: this.uniformBuf } },
-      { binding: 1, resource: { buffer: this.accumBuf } }] });
+      { binding: 1, resource: { buffer: this.accumBuf } },
+      { binding: 2, resource: { buffer: this.bloomB } }] });
+  }
+
+  /** Record raytrace + the two bloom dispatches into one compute pass. Dispatches in a single
+   *  pass execute in order with their storage writes visible to the next, so bright_h sees the
+   *  freshly-traced accum and blur_v sees bloomA. */
+  private recordCompute(enc: GPUCommandEncoder) {
+    const cp = enc.beginComputePass();
+    cp.setPipeline(this.computePipe); cp.setBindGroup(0, this.computeBind);
+    cp.dispatchWorkgroups(Math.ceil(this.width / 8), Math.ceil(this.height / 8));
+    if (this.renderBloom) {
+      cp.setPipeline(this.brightHPipe); cp.setBindGroup(0, this.brightHBind);
+      cp.dispatchWorkgroups(Math.ceil(this.bw / 8), Math.ceil(this.bh / 8));
+      cp.setPipeline(this.blurVPipe); cp.setBindGroup(0, this.blurVBind);
+      cp.dispatchWorkgroups(Math.ceil(this.bw / 8), Math.ceil(this.bh / 8));
+    }
+    cp.end();
   }
 
   frame(u: UniformValues) {
     this.device.queue.writeBuffer(this.uniformBuf, 0, packUniforms(u));
     const enc = this.device.createCommandEncoder();
-    const cp = enc.beginComputePass();
-    cp.setPipeline(this.computePipe); cp.setBindGroup(0, this.computeBind);
-    cp.dispatchWorkgroups(Math.ceil(this.width / 8), Math.ceil(this.height / 8)); cp.end();
+    this.recordCompute(enc);
     const rp = enc.beginRenderPass({ colorAttachments: [{ view: this.ctx.getCurrentTexture().createView(), clearValue: { r: 0, g: 0, b: 0, a: 1 }, loadOp: "clear", storeOp: "store" }] });
     rp.setPipeline(this.presentPipe); rp.setBindGroup(0, this.presentBind); rp.draw(3); rp.end();
     this.device.queue.submit([enc.finish()]);
@@ -85,8 +121,7 @@ export class Renderer {
       usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC });
     this.device.queue.writeBuffer(this.uniformBuf, 0, packUniforms(u));
     const enc = this.device.createCommandEncoder();
-    const cp = enc.beginComputePass(); cp.setPipeline(this.computePipe); cp.setBindGroup(0, this.computeBind);
-    cp.dispatchWorkgroups(Math.ceil(this.width / 8), Math.ceil(this.height / 8)); cp.end();
+    this.recordCompute(enc);
     const rp = enc.beginRenderPass({ colorAttachments: [{ view: tex.createView(), clearValue: { r: 0, g: 0, b: 0, a: 1 }, loadOp: "clear", storeOp: "store" }] });
     rp.setPipeline(this.presentPipe); rp.setBindGroup(0, this.presentBind); rp.draw(3); rp.end();
     const bpr = Math.ceil(this.width * 4 / 256) * 256; // bytesPerRow must be a multiple of 256

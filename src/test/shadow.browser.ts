@@ -19,6 +19,7 @@ import type { UniformValues } from "../render/uniforms";
  *  The rigorous numerical gate for the ported math is the ?parity test. */
 export async function measureShadow(canvas: HTMLCanvasElement) {
   const r = new Renderer(); await r.init(canvas);
+  r.renderBloom = false; // measure the raw geometric shadow, not the post-processed glow
   const a = 0, rOut = 40, fovScale = 14;
   const rPh = photonOrbit(a, true); // photon orbit = 3M for a=0; emitting from here outward
   const flatTemp = new Float32Array(512).fill(1); // uniform emitter -> bright everywhere it's hit
