@@ -108,6 +108,7 @@ apparent radius ≈ ${res.shadowRadiusM} M  (ideal sqrt(27) = ${res.bCritM} M; c
         resW: r.width, resH: r.height, a: state.a, incl: state.incl * Math.PI / 180,
         rObs: 1000, fovScale: 14, rIn, rOut, Tpeak: T_PEAK, exposure: state.exposure,
         time: now / 1000, frame: sample, reset: sample === 0 ? 1 : 0, maxSteps: 1200,
+        blend: 1 / (sample + 1), timeScale: 1, turbAmp: 0, breatheAmp: 0, nSpots: 0,
       };
       r.frame(u);
       sample++;
