@@ -97,16 +97,23 @@ apparent radius ≈ ${res.shadowRadiusM} M  (ideal sqrt(27) = ${res.bCritM} M; c
   rebuildLUTs();
   refreshReadouts();
 
-  function loop() {
-    const u: UniformValues = {
-      resW: r.width, resH: r.height, a: state.a, incl: state.incl * Math.PI / 180,
-      rObs: 1000, fovScale: 14, rIn, rOut, Tpeak: T_PEAK, exposure: state.exposure,
-      time: performance.now() / 1000, frame: sample, reset: sample === 0 ? 1 : 0, maxSteps: 3000,
-    };
-    r.frame(u);
-    sample++;
-    if ((sample & 7) === 0 || sample < 4) sppEl.textContent = String(sample);
+  // On slower GPUs, cap accumulation to ~15 fps so the tab stays responsive.
+  // Lower maxSteps reduces per-frame GPU time; quality is recovered by accumulation over time.
+  const TARGET_MS = 67; // ~15 fps
+  let lastFrame = 0;
+  function loop(now: number) {
+    if (now - lastFrame >= TARGET_MS) {
+      lastFrame = now;
+      const u: UniformValues = {
+        resW: r.width, resH: r.height, a: state.a, incl: state.incl * Math.PI / 180,
+        rObs: 1000, fovScale: 14, rIn, rOut, Tpeak: T_PEAK, exposure: state.exposure,
+        time: now / 1000, frame: sample, reset: sample === 0 ? 1 : 0, maxSteps: 1200,
+      };
+      r.frame(u);
+      sample++;
+      if ((sample & 7) === 0 || sample < 4) sppEl.textContent = String(sample);
+    }
     requestAnimationFrame(loop);
   }
-  loop();
+  requestAnimationFrame(loop);
 }
