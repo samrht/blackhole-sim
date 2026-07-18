@@ -7,6 +7,7 @@ export class Renderer {
   device!: GPUDevice; ctx!: GPUCanvasContext; format!: GPUTextureFormat;
   uniformBuf!: GPUBuffer; accumBuf!: GPUBuffer;
   tempBuf!: GPUBuffer; colorBuf!: GPUBuffer;
+  spotBuf!: GPUBuffer;   // hot-spot params: array of vec4 (r, psi, sigma, amp)
   bloomA!: GPUBuffer; bloomB!: GPUBuffer;       // half-res ping/pong glow buffers
   computePipe!: GPUComputePipeline; presentPipe!: GPURenderPipeline;
   brightHPipe!: GPUComputePipeline; blurVPipe!: GPUComputePipeline;
@@ -27,6 +28,7 @@ export class Renderer {
     // Placeholder LUT buffers so the first bind group is valid; replaced by uploadLUTs().
     this.tempBuf = this.device.createBuffer({ size: 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
     this.colorBuf = this.device.createBuffer({ size: 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+    this.spotBuf = this.device.createBuffer({ size: 8 * 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
     this.buildPipelines();
   }
 
@@ -53,6 +55,11 @@ export class Renderer {
     this.device.queue.writeBuffer(this.colorBuf, 0, colorLUT as Float32Array<ArrayBuffer>);
   }
 
+  /** Upload packed hot-spot params (Float32Array of (r,psi,sigma,amp) per spot). */
+  uploadHotSpots(spots: Float32Array) {
+    this.device.queue.writeBuffer(this.spotBuf, 0, spots as Float32Array<ArrayBuffer>);
+  }
+
   buildPipelines() {
     const cMod = this.device.createShaderModule({ code: raytraceWGSL });
     const pMod = this.device.createShaderModule({ code: presentWGSL });
@@ -73,7 +80,8 @@ export class Renderer {
       { binding: 0, resource: { buffer: this.uniformBuf } },
       { binding: 1, resource: { buffer: this.accumBuf } },
       { binding: 2, resource: { buffer: this.tempBuf } },
-      { binding: 3, resource: { buffer: this.colorBuf } }] });
+      { binding: 3, resource: { buffer: this.colorBuf } },
+      { binding: 4, resource: { buffer: this.spotBuf } }] });
     // bloom pass 1: accum -> bloomA ; pass 2: bloomA -> bloomB
     this.brightHBind = this.device.createBindGroup({ layout: this.brightHPipe.getBindGroupLayout(0), entries: [
       { binding: 0, resource: { buffer: this.uniformBuf } },
