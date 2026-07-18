@@ -1,6 +1,5 @@
 # Tier-1 WebGPU Kerr Accretion-Disk Renderer — Implementation Plan
 
-
 **Goal:** A browser app that renders a physically-correct, off-axis image of a Kerr black hole's accretion disk — shadow, photon ring, lensed far-side arc, Doppler beaming, gravitational redshift, and blackbody color — HDR-tonemapped with ACES and progressively anti-aliased.
 
 **Architecture:** A pure-TypeScript physics core (Kerr metric, geodesic integrator, ISCO/orbits, redshift g-factor, Novikov–Thorne/Page–Thorne temperature, blackbody→sRGB color) is unit-tested with Vitest against the spec's verification gates. The core's results are baked into two 1-D lookup tables (T(r) and color(T)) uploaded as GPU textures. A WebGPU compute shader (`raytrace.wgsl`) mirrors the core's math, backward-integrates one null geodesic per pixel, samples the LUTs at the disk hit, and accumulates HDR radiance into a storage buffer; a present pass divides by the sample count, applies exposure + ACES, and writes to the canvas. A CPU↔GPU parity test guards the port.
@@ -1551,6 +1550,3 @@ git commit -m "feat(ui): interactive spin/inclination/exposure controls"
 **Type consistency:** `Metric` shape `{tt,tphi,rr,thth,phph}` used identically in `kerr.ts`, `geodesic.ts`, `redshift.ts`, and mirrored as `array<f32,5>` index order `(tt,tphi,rr,thth,phph)` in WGSL. `UniformValues` field order matches `packUniforms` indices and the WGSL `Uniforms` struct (resolution vec2 first, then floats, then the three u32). State vector order `[t,r,θ,φ,p_t,p_r,p_θ,p_φ]` consistent across `geodesic.ts` and the WGSL `State` (`x`=first four, `p`=last four). LUT spans: temp over `[rIn,rOut]`, color over `[1000,40000]` K — same constants in `main.ts`, `lookups.ts`, and `raytrace.wgsl`. ✓
 
 **Known precision note (not a blocker):** the shader uses f32; near-horizon geodesics can show mild noise. The adaptive step (`dl ∝ r − r_h`) and progressive accumulation mitigate it. If artifacts appear at high spin, reduce min step in Task 9 or raise `maxSteps`.
-
----
-
