@@ -103,6 +103,13 @@ apparent radius ≈ ${res.shadowRadiusM} M  (ideal sqrt(27) = ${res.bCritM} M; c
     reset(); // clean restart (play) or fresh convergence to a still (pause)
   });
 
+  const jet = $("jet") as HTMLInputElement, jg = $("jg") as HTMLInputElement, jk = $("jk") as HTMLInputElement;
+  const jetv = $("jetv"), jgv = $("jgv"), jkv = $("jkv");
+
+  jet.addEventListener("input", () => { state.jetStrength = +jet.value; jetv.textContent = state.jetStrength.toFixed(1); reset(); });
+  jg.addEventListener("input", () => { state.jetGamma = +jg.value; jgv.textContent = state.jetGamma.toFixed(1); reset(); });
+  jk.addEventListener("input", () => { state.jetKnots = +jk.value; jkv.textContent = state.jetKnots.toFixed(2); reset(); });
+
   // Drag vertically to tilt the camera (inclination); keeps the slider + readouts in sync.
   let dragging = false, lastY = 0;
   canvas.addEventListener("pointerdown", (e) => { dragging = true; lastY = e.clientY; canvas.classList.add("drag"); canvas.setPointerCapture(e.pointerId); });

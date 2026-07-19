@@ -49,4 +49,6 @@ Tier 1 (single-GPU, real-time image) complete and verified.
 
 **Tier 2A — Living Disk (shipped):** the accretion disk now evolves in real time. Differential rotation carries a co-rotating turbulence pattern (procedural value-noise over log-radius and pattern phase), orbiting Gaussian hot-spots are Doppler-beamed by the existing g-factor (brightening on the approaching side, dimming on the receding side), and a temporal EMA replaces the static progressive average so motion is smooth while a paused scene still re-converges to a clean still. Motion / Turbulence / Flares sliders and a Play/Pause control drive it live. With all features off the render is bit-for-bit identical to Tier 1 (`?parity` and `?shadow` unchanged).
 
-Next: **Tier 2B — relativistic jet** (Blandford–Znajek funnel / synchrotron). Out of scope: lensed starfield background, Tier 3 (full GRMHD, multi-GPU/offline).
+**Tier 2B — Relativistic Jet (shipped):** a beamed, limb-brightened, animated bipolar jet (Blandford–Znajek funnel with synchrotron emission and propagating knots). The jet is integrated along rays before disk accumulation, optically thin with additive composite. Jet / Jet speed Γ / Jet knots sliders control the strength, relativistic beaming γ-factor, and knot amplitude live. With the jet off, the render is bit-for-bit identical to Tier 2A (`?parity` and `?shadow` unchanged).
+
+Out of scope: lensed starfield background, Tier 3 (full GRMHD, multi-GPU/offline).
