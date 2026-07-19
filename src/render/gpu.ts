@@ -8,6 +8,7 @@ export class Renderer {
   uniformBuf!: GPUBuffer; accumBuf!: GPUBuffer;
   tempBuf!: GPUBuffer; colorBuf!: GPUBuffer;
   spotBuf!: GPUBuffer;   // hot-spot params: array of vec4 (r, psi, sigma, amp)
+  skyTex!: GPUTexture; skySampler!: GPUSampler;
   bloomA!: GPUBuffer; bloomB!: GPUBuffer;       // half-res ping/pong glow buffers
   computePipe!: GPUComputePipeline; presentPipe!: GPURenderPipeline;
   brightHPipe!: GPUComputePipeline; blurVPipe!: GPUComputePipeline;
@@ -29,6 +30,11 @@ export class Renderer {
     this.tempBuf = this.device.createBuffer({ size: 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
     this.colorBuf = this.device.createBuffer({ size: 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
     this.spotBuf = this.device.createBuffer({ size: 8 * 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+    // 1x1 placeholder sky texture so the first bind group is valid; replaced by uploadSky().
+    this.skyTex = this.device.createTexture({ size: [1, 1], format: "rgba8unorm-srgb",
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT });
+    this.skySampler = this.device.createSampler({ magFilter: "linear", minFilter: "linear",
+      mipmapFilter: "linear", addressModeU: "repeat", addressModeV: "clamp-to-edge" });
     this.buildPipelines();
   }
 
@@ -62,6 +68,25 @@ export class Renderer {
     this.device.queue.writeBuffer(this.spotBuf, 0, clamped as Float32Array<ArrayBuffer>);
   }
 
+  /** Upload the equirectangular sky panorama as an sRGB texture with a full mip chain. Mips are
+   *  generated on the CPU via canvas downscales (WebGPU has no built-in generateMipmaps), which
+   *  keeps the lensed/minified sky from aliasing. Caller must call rebind() afterward. */
+  uploadSky(bitmap: ImageBitmap) {
+    const W = 4096, H = 2048;
+    const mips = Math.floor(Math.log2(Math.max(W, H))) + 1;
+    this.skyTex = this.device.createTexture({ size: [W, H], mipLevelCount: mips, format: "rgba8unorm-srgb",
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT });
+    const canvas = document.createElement("canvas");
+    const g = canvas.getContext("2d")!;
+    for (let lvl = 0; lvl < mips; lvl++) {
+      const lw = Math.max(1, W >> lvl), lh = Math.max(1, H >> lvl);
+      canvas.width = lw; canvas.height = lh;
+      g.imageSmoothingEnabled = true; g.imageSmoothingQuality = "high";
+      g.drawImage(bitmap, 0, 0, lw, lh);
+      this.device.queue.copyExternalImageToTexture({ source: canvas }, { texture: this.skyTex, mipLevel: lvl }, [lw, lh]);
+    }
+  }
+
   buildPipelines() {
     const cMod = this.device.createShaderModule({ code: raytraceWGSL });
     const pMod = this.device.createShaderModule({ code: presentWGSL });
@@ -83,7 +108,9 @@ export class Renderer {
       { binding: 1, resource: { buffer: this.accumBuf } },
       { binding: 2, resource: { buffer: this.tempBuf } },
       { binding: 3, resource: { buffer: this.colorBuf } },
-      { binding: 4, resource: { buffer: this.spotBuf } }] });
+      { binding: 4, resource: { buffer: this.spotBuf } },
+      { binding: 5, resource: this.skyTex.createView() },
+      { binding: 6, resource: this.skySampler }] });
     // bloom pass 1: accum -> bloomA ; pass 2: bloomA -> bloomB
     this.brightHBind = this.device.createBindGroup({ layout: this.brightHPipe.getBindGroupLayout(0), entries: [
       { binding: 0, resource: { buffer: this.uniformBuf } },

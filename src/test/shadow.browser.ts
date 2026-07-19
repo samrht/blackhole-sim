@@ -27,7 +27,7 @@ export async function measureShadow(canvas: HTMLCanvasElement) {
   const u: UniformValues = { resW: r.width, resH: r.height, a, incl: Math.PI / 18, rObs: 1000,
     fovScale, rIn: rPh, rOut, Tpeak: 3.0e4, exposure: 0, time: 0, frame: 0, reset: 1, maxSteps: 8000,
     blend: 1, timeScale: 1, turbAmp: 0, breatheAmp: 0, nSpots: 0,
-    jetStrength: 0, jetGamma: 5, jetLength: 60, jetKnots: 0.7 };
+    jetStrength: 0, jetGamma: 5, jetLength: 60, jetKnots: 0.7, skyStrength: 0 };
   const { data, w, h } = await r.readbackPresented(u);
 
   const cx = w >> 1, cy = h >> 1;

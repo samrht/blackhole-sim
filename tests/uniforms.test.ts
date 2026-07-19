@@ -9,6 +9,7 @@ describe("uniforms packing", () => {
       Tpeak: 3e4, exposure: 1.6, time: 7, frame: 3, reset: 0, maxSteps: 1200,
       blend: 0.15, timeScale: 2, turbAmp: 0.6, breatheAmp: 0.1, nSpots: 4,
       jetStrength: 1.0, jetGamma: 5.0, jetLength: 60.0, jetKnots: 0.7,
+      skyStrength: 0.6,
     };
     const dv = new DataView(packUniforms(u));
     expect(dv.getFloat32(0, true)).toBeCloseTo(100);   // resW
@@ -20,5 +21,6 @@ describe("uniforms packing", () => {
     expect(dv.getFloat32(80, true)).toBeCloseTo(5.0);   // jetGamma (index 20)
     expect(dv.getFloat32(84, true)).toBeCloseTo(60.0);  // jetLength (index 21)
     expect(dv.getFloat32(88, true)).toBeCloseTo(0.7);   // jetKnots (index 22)
+    expect(dv.getFloat32(92, true)).toBeCloseTo(0.6);   // skyStrength (index 23)
   });
 });

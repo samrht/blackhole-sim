@@ -34,7 +34,7 @@ apparent radius ≈ ${res.shadowRadiusM} M  (ideal sqrt(27) = ${res.bCritM} M; c
     throw e;
   }
 
-  const state = { a: 0.9, incl: 72, exposure: 1.6, timeScale: 1.0, turbAmp: 0.6, breatheAmp: 0.0, playing: true, flareScale: 1.0, jetStrength: 1.0, jetGamma: 5.0, jetLength: 60.0, jetKnots: 0.7 };
+  const state = { a: 0.9, incl: 72, exposure: 1.6, timeScale: 1.0, turbAmp: 0.6, breatheAmp: 0.0, playing: true, flareScale: 1.0, jetStrength: 1.0, jetGamma: 5.0, jetLength: 60.0, jetKnots: 0.7, skyStrength: 0.6 };
   const SPEED = 20;        // coordinate-time M advanced per real second at timeScale = 1
   const EMA_BLEND = 0.15;  // trailing-window weight while animating
   let simTime = 0, lastNow = 0;
@@ -110,6 +110,9 @@ apparent radius ≈ ${res.shadowRadiusM} M  (ideal sqrt(27) = ${res.bCritM} M; c
   jg.addEventListener("input", () => { state.jetGamma = +jg.value; jgv.textContent = state.jetGamma.toFixed(1); reset(); });
   jk.addEventListener("input", () => { state.jetKnots = +jk.value; jkv.textContent = state.jetKnots.toFixed(2); reset(); });
 
+  const sky = $("sky") as HTMLInputElement, skyv = $("skyv");
+  sky.addEventListener("input", () => { state.skyStrength = +sky.value; skyv.textContent = state.skyStrength.toFixed(2); reset(); });
+
   // Drag vertically to tilt the camera (inclination); keeps the slider + readouts in sync.
   let dragging = false, lastY = 0;
   canvas.addEventListener("pointerdown", (e) => { dragging = true; lastY = e.clientY; canvas.classList.add("drag"); canvas.setPointerCapture(e.pointerId); });
@@ -134,6 +137,16 @@ apparent radius ≈ ${res.shadowRadiusM} M  (ideal sqrt(27) = ${res.bCritM} M; c
   refreshReadouts();
   r.uploadHotSpots(packSpots(state.flareScale));
 
+  // Load the baked sky panorama asynchronously; on failure keep the procedural starfield fallback.
+  let skyReady = false; // the sky panorama only contributes once the async upload has landed;
+                        // until then (and on load failure) skyStrength is forced to 0 so the
+                        // escaped-ray path stays bit-identical to the procedural void.
+  fetch("/sky/milkyway-4k.jpg")
+    .then((res) => { if (!res.ok) throw new Error(`sky ${res.status}`); return res.blob(); })
+    .then(createImageBitmap)
+    .then((bmp) => { r.uploadSky(bmp); r.rebind(); skyReady = true; reset(); })
+    .catch(() => { /* offline / decode error — skyReady stays false, procedural starfield stays */ });
+
   // On slower GPUs, cap accumulation to ~15 fps so the tab stays responsive.
   // Lower maxSteps reduces per-frame GPU time; quality is recovered by accumulation over time.
   const TARGET_MS = 67; // ~15 fps cap so the tab stays responsive on modest GPUs
@@ -153,6 +166,7 @@ apparent radius ≈ ${res.shadowRadiusM} M  (ideal sqrt(27) = ${res.bCritM} M; c
         breatheAmp: state.breatheAmp, nSpots: baseSpots.length,
         jetStrength: state.jetStrength, jetGamma: state.jetGamma,
         jetLength: state.jetLength, jetKnots: state.jetKnots,
+        skyStrength: skyReady ? state.skyStrength : 0,
       };
       r.frame(u);
       sample++;
