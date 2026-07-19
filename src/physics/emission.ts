@@ -21,7 +21,7 @@ function ihash(ix: number, iy: number): number {
   return (n & 0xffffff) / 0xffffff;
 }
 function smooth(t: number): number { return t * t * (3 - 2 * t); }
-function vnoise(x: number, y: number): number {
+export function vnoise(x: number, y: number): number {
   const ix = Math.floor(x), iy = Math.floor(y);
   const fx = smooth(x - ix), fy = smooth(y - iy);
   const a00 = ihash(ix, iy), a10 = ihash(ix + 1, iy);
