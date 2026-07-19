@@ -138,9 +138,14 @@ apparent radius ≈ ${res.shadowRadiusM} M  (ideal sqrt(27) = ${res.bCritM} M; c
   r.uploadHotSpots(packSpots(state.flareScale));
 
   // Load the baked sky panorama asynchronously; on failure keep the procedural starfield fallback.
-  fetch("/sky/milkyway-4k.jpg").then((res) => res.blob()).then(createImageBitmap)
-    .then((bmp) => { r.uploadSky(bmp); r.rebind(); reset(); })
-    .catch(() => { /* offline / decode error — procedural starfield stays */ });
+  let skyReady = false; // the sky panorama only contributes once the async upload has landed;
+                        // until then (and on load failure) skyStrength is forced to 0 so the
+                        // escaped-ray path stays bit-identical to the procedural void.
+  fetch("/sky/milkyway-4k.jpg")
+    .then((res) => { if (!res.ok) throw new Error(`sky ${res.status}`); return res.blob(); })
+    .then(createImageBitmap)
+    .then((bmp) => { r.uploadSky(bmp); r.rebind(); skyReady = true; reset(); })
+    .catch(() => { /* offline / decode error — skyReady stays false, procedural starfield stays */ });
 
   // On slower GPUs, cap accumulation to ~15 fps so the tab stays responsive.
   // Lower maxSteps reduces per-frame GPU time; quality is recovered by accumulation over time.
@@ -161,7 +166,7 @@ apparent radius ≈ ${res.shadowRadiusM} M  (ideal sqrt(27) = ${res.bCritM} M; c
         breatheAmp: state.breatheAmp, nSpots: baseSpots.length,
         jetStrength: state.jetStrength, jetGamma: state.jetGamma,
         jetLength: state.jetLength, jetKnots: state.jetKnots,
-        skyStrength: state.skyStrength,
+        skyStrength: skyReady ? state.skyStrength : 0,
       };
       r.frame(u);
       sample++;
