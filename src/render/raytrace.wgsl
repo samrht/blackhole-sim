@@ -1,11 +1,13 @@
 struct Uniforms {
   res: vec2<f32>, a: f32, incl: f32, rObs: f32, fovScale: f32, rIn: f32, rOut: f32,
   Tpeak: f32, exposure: f32, time: f32, frame: u32, reset: u32, maxSteps: u32,
+  blend: f32, timeScale: f32, turbAmp: f32, breatheAmp: f32, nSpots: u32,
 };
 @group(0) @binding(0) var<uniform> U: Uniforms;
 @group(0) @binding(1) var<storage, read_write> accum: array<vec4<f32>>;
 @group(0) @binding(2) var<storage, read> tempLUT: array<f32>;       // normalized T(r) in [0,1]
 @group(0) @binding(3) var<storage, read> colorLUT: array<vec4<f32>>; // linear-sRGB blackbody color
+@group(0) @binding(4) var<storage, read> hotspots: array<vec4<f32>>; // (r, psi, sigma, amp)
 
 const PI = 3.141592653589793;
 
@@ -103,6 +105,44 @@ fn starfield(dir: vec3<f32>) -> vec3<f32> {
   return col;
 }
 
+// --- Tier 2A emission field (WGSL twin of src/physics/emission.ts) -----------------------------
+fn ihashE(ix: i32, iy: i32) -> f32 {
+  var n = u32(ix) * 1973u + u32(iy) * 9277u;
+  n = (n ^ (n >> 15u)) * 2246822519u;
+  n = (n ^ (n >> 13u)) * 3266489917u;
+  return f32(n & 0xffffffu) / f32(0xffffffu);
+}
+fn smoothE(t: f32) -> f32 { return t * t * (3.0 - 2.0 * t); }
+fn vnoiseE(x: f32, y: f32) -> f32 {
+  let ix = i32(floor(x)); let iy = i32(floor(y));
+  let fx = smoothE(x - floor(x)); let fy = smoothE(y - floor(y));
+  let a00 = ihashE(ix, iy); let a10 = ihashE(ix + 1, iy);
+  let a01 = ihashE(ix, iy + 1); let a11 = ihashE(ix + 1, iy + 1);
+  return (a00 * (1.0 - fx) + a10 * fx) * (1.0 - fy) + (a01 * (1.0 - fx) + a11 * fx) * fy;
+}
+fn turbulenceE(logR: f32, psi: f32) -> f32 {
+  var sum = 0.0; var amp = 0.5; var freq = 1.0;
+  for (var o = 0u; o < 3u; o++) { sum += amp * vnoiseE(logR * freq, psi * freq); amp *= 0.5; freq *= 2.0; }
+  return sum;
+}
+fn hotspotFieldE(rHit: f32, psi: f32) -> f32 {
+  var s = 0.0;
+  for (var k = 0u; k < U.nSpots; k++) {
+    let sp = hotspots[k];
+    let dr = rHit - sp.x;
+    var dpsi = psi - sp.y;
+    dpsi = dpsi - 2.0 * PI * round(dpsi / (2.0 * PI));
+    let arc = sp.x * dpsi;
+    s += sp.w * exp(-(dr * dr + arc * arc) / (2.0 * sp.z * sp.z));
+  }
+  return s;
+}
+fn emissionFieldE(rHit: f32, psi: f32) -> f32 {
+  let turb = 1.0 + U.turbAmp * (turbulenceE(log(rHit), psi) - 0.5) * 2.0;
+  let breathe = 1.0 + U.breatheAmp * sin(2.0 * PI * U.time / 2000.0);
+  return max(0.0, turb * breathe + hotspotFieldE(rHit, psi));
+}
+
 @compute @workgroup_size(8,8) fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   if (gid.x >= u32(U.res.x) || gid.y >= u32(U.res.y)) { return; }
   let idx = gid.y * u32(U.res.x) + gid.x;
@@ -151,7 +191,10 @@ fn starfield(dir: vec3<f32>) -> vec3<f32> {
         let rad = -(gl[0] + 2.0*Om*gl[1] + Om*Om*gl[4]);
         let g = sqrt(max(0.0, rad)) / (1.0 - Om*xi); // Doppler + gravitational redshift factor
         let Tobs = U.Tpeak * g * Tn;                 // observed blackbody temperature
-        color = sampleColor(Tobs) * pow(g * Tn, 4.0); // beamed blackbody, ∝ (gT)^4
+        let phiHit = mix(s.x.w, sNew.x.w, frac);     // azimuth of the emitting matter
+        let psi = phiHit - Om * U.time * U.timeScale;// co-rotating pattern phase
+        let E = emissionFieldE(rHit, psi);           // time-varying brightness (==1 when features off)
+        color = sampleColor(Tobs) * pow(g * Tn, 4.0) * E;
         break;
       }
     }
@@ -168,6 +211,7 @@ fn starfield(dir: vec3<f32>) -> vec3<f32> {
     }
   }
 
-  let prev = select(accum[idx].rgb, vec3(0.0), U.reset == 1u);
-  accum[idx] = vec4<f32>(prev + color, 1.0);
+  // Temporal EMA: blend = 1/(frame+1) reproduces the Tier-1 running mean when static; a fixed
+  // blend (~0.15) tracks an animating scene. blend==1 (first frame after a reset) clears cleanly.
+  accum[idx] = vec4<f32>(mix(accum[idx].rgb, color, U.blend), 1.0);
 }

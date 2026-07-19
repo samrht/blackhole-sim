@@ -25,9 +25,7 @@ const BLOOM = 0.85; // glow intensity
   let px = vec2<u32>(u32(fragCoord.x), u32(fragCoord.y));
   let res = vec2<u32>(u32(U.res.x), u32(U.res.y));
   let idx = px.y * res.x + px.x;
-  let samples = f32(U.frame + 1u);
-
-  var hdr = accum[idx].rgb / samples;
+  var hdr = accum[idx].rgb; // accum already holds normalized radiance (EMA / running mean)
 
   // additive quarter-res bloom, bilinearly upsampled (nearest-tap would show 4x4 blocks)
   let bw = (res.x + 3u) / 4u;

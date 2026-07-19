@@ -24,7 +24,6 @@ fn dims_lo() -> vec2<u32> { let f = dims_full(); return (f + vec2<u32>(DOWN - 1u
   let lo = dims_lo();
   if (gid.x >= lo.x || gid.y >= lo.y) { return; }
   let full = dims_full();
-  let samples = f32(U.frame + 1u);
   let cx = i32(gid.x * DOWN);
   let cy = i32(gid.y * DOWN);
   var sum = vec3<f32>(0.0);
@@ -32,7 +31,7 @@ fn dims_lo() -> vec2<u32> { let f = dims_full(); return (f + vec2<u32>(DOWN - 1u
   for (var i = -RADIUS; i <= RADIUS; i++) {
     let sx = clamp(cx + i, 0, i32(full.x) - 1);
     let idx = u32(cy) * full.x + u32(sx);
-    var c = src[idx].rgb / samples;
+    var c = src[idx].rgb; // accum already holds normalized radiance (EMA / running mean)
     // bright-pass: isolate the luminous core (hot disk + bright stars), reject the dark void
     let lum = dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));
     c = c * smoothstep(0.75, 1.7, lum);

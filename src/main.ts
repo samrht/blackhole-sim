@@ -2,6 +2,7 @@ import { Renderer } from "./render/gpu";
 import type { UniformValues } from "./render/uniforms";
 import { buildTempLUT, buildColorLUT } from "./physics/lookups";
 import { iscoRadius, photonOrbit } from "./physics/orbits";
+import type { HotSpot } from "./physics/emission";
 
 const canvas = document.getElementById("c") as HTMLCanvasElement;
 
@@ -33,7 +34,20 @@ apparent radius ≈ ${res.shadowRadiusM} M  (ideal sqrt(27) = ${res.bCritM} M; c
     throw e;
   }
 
-  const state = { a: 0.9, incl: 72, exposure: 1.6 };
+  const state = { a: 0.9, incl: 72, exposure: 1.6, timeScale: 1.0, turbAmp: 0.6, breatheAmp: 0.0, playing: true, flareScale: 1.0 };
+  const SPEED = 20;        // coordinate-time M advanced per real second at timeScale = 1
+  const EMA_BLEND = 0.15;  // trailing-window weight while animating
+  let simTime = 0, lastNow = 0;
+  const baseSpots: HotSpot[] = [
+    { r: 8,  psi: 0.0, sigma: 1.2, amp: 1.8 },
+    { r: 12, psi: 2.1, sigma: 1.6, amp: 1.2 },
+    { r: 16, psi: 4.3, sigma: 2.0, amp: 0.9 },
+  ];
+  const packSpots = (scale: number) => {
+    const f = new Float32Array(baseSpots.length * 4);
+    baseSpots.forEach((s, i) => f.set([s.r, s.psi, s.sigma, s.amp * scale], i * 4));
+    return f;
+  };
   const rOut = 40;
   // Effective color-temperature scale (K) for visualization. The true Novikov–Thorne peak for a
   // stellar-mass disk (~1e7 K) radiates in X-ray, so we map the normalized profile into the visible
@@ -74,6 +88,21 @@ apparent radius ≈ ${res.shadowRadiusM} M  (ideal sqrt(27) = ${res.bCritM} M; c
     state.exposure = +exp.value; expv.textContent = (state.exposure >= 0 ? "+" : "") + state.exposure.toFixed(1);
   });
 
+  const ts = $("ts") as HTMLInputElement, turb = $("turb") as HTMLInputElement, flare = $("flare") as HTMLInputElement;
+  const tsv = $("tsv"), turbv = $("turbv"), flarev = $("flarev"), playBtn = $("playpause") as HTMLButtonElement;
+
+  ts.addEventListener("input", () => { state.timeScale = +ts.value; tsv.textContent = state.timeScale.toFixed(1); });
+  turb.addEventListener("input", () => { state.turbAmp = +turb.value; turbv.textContent = state.turbAmp.toFixed(2); reset(); });
+  flare.addEventListener("input", () => {
+    state.flareScale = +flare.value; flarev.textContent = state.flareScale.toFixed(1);
+    r.uploadHotSpots(packSpots(state.flareScale)); reset();
+  });
+  playBtn.addEventListener("click", () => {
+    state.playing = !state.playing;
+    playBtn.textContent = state.playing ? "Pause" : "Play";
+    reset(); // clean restart (play) or fresh convergence to a still (pause)
+  });
+
   // Drag vertically to tilt the camera (inclination); keeps the slider + readouts in sync.
   let dragging = false, lastY = 0;
   canvas.addEventListener("pointerdown", (e) => { dragging = true; lastY = e.clientY; canvas.classList.add("drag"); canvas.setPointerCapture(e.pointerId); });
@@ -96,18 +125,25 @@ apparent radius ≈ ${res.shadowRadiusM} M  (ideal sqrt(27) = ${res.bCritM} M; c
 
   rebuildLUTs();
   refreshReadouts();
+  r.uploadHotSpots(packSpots(state.flareScale));
 
   // On slower GPUs, cap accumulation to ~15 fps so the tab stays responsive.
   // Lower maxSteps reduces per-frame GPU time; quality is recovered by accumulation over time.
-  const TARGET_MS = 67; // ~15 fps
+  const TARGET_MS = 67; // ~15 fps cap so the tab stays responsive on modest GPUs
   let lastFrame = 0;
   function loop(now: number) {
     if (now - lastFrame >= TARGET_MS) {
+      const dt = lastNow ? (now - lastNow) / 1000 : 0; lastNow = now;
+      if (state.playing) simTime += dt * SPEED;   // advance coordinate time only while playing
       lastFrame = now;
+      // Playing: fixed EMA (blend==1 on the reset frame to clear). Paused: progressive running mean.
+      const blend = state.playing ? (sample === 0 ? 1 : EMA_BLEND) : 1 / (sample + 1);
       const u: UniformValues = {
         resW: r.width, resH: r.height, a: state.a, incl: state.incl * Math.PI / 180,
         rObs: 1000, fovScale: 14, rIn, rOut, Tpeak: T_PEAK, exposure: state.exposure,
-        time: now / 1000, frame: sample, reset: sample === 0 ? 1 : 0, maxSteps: 1200,
+        time: simTime, frame: sample, reset: sample === 0 ? 1 : 0, maxSteps: 1200,
+        blend, timeScale: state.timeScale, turbAmp: state.turbAmp,
+        breatheAmp: state.breatheAmp, nSpots: baseSpots.length,
       };
       r.frame(u);
       sample++;
