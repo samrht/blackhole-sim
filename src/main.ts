@@ -34,7 +34,7 @@ apparent radius ≈ ${res.shadowRadiusM} M  (ideal sqrt(27) = ${res.bCritM} M; c
     throw e;
   }
 
-  const state = { a: 0.9, incl: 72, exposure: 1.6, timeScale: 1.0, turbAmp: 0.6, breatheAmp: 0.0, playing: true, flareScale: 1.0 };
+  const state = { a: 0.9, incl: 72, exposure: 1.6, timeScale: 1.0, turbAmp: 0.6, breatheAmp: 0.0, playing: true, flareScale: 1.0, jetStrength: 1.0, jetGamma: 5.0, jetLength: 60.0, jetKnots: 0.7 };
   const SPEED = 20;        // coordinate-time M advanced per real second at timeScale = 1
   const EMA_BLEND = 0.15;  // trailing-window weight while animating
   let simTime = 0, lastNow = 0;
@@ -103,6 +103,13 @@ apparent radius ≈ ${res.shadowRadiusM} M  (ideal sqrt(27) = ${res.bCritM} M; c
     reset(); // clean restart (play) or fresh convergence to a still (pause)
   });
 
+  const jet = $("jet") as HTMLInputElement, jg = $("jg") as HTMLInputElement, jk = $("jk") as HTMLInputElement;
+  const jetv = $("jetv"), jgv = $("jgv"), jkv = $("jkv");
+
+  jet.addEventListener("input", () => { state.jetStrength = +jet.value; jetv.textContent = state.jetStrength.toFixed(1); reset(); });
+  jg.addEventListener("input", () => { state.jetGamma = +jg.value; jgv.textContent = state.jetGamma.toFixed(1); reset(); });
+  jk.addEventListener("input", () => { state.jetKnots = +jk.value; jkv.textContent = state.jetKnots.toFixed(2); reset(); });
+
   // Drag vertically to tilt the camera (inclination); keeps the slider + readouts in sync.
   let dragging = false, lastY = 0;
   canvas.addEventListener("pointerdown", (e) => { dragging = true; lastY = e.clientY; canvas.classList.add("drag"); canvas.setPointerCapture(e.pointerId); });
@@ -144,6 +151,8 @@ apparent radius ≈ ${res.shadowRadiusM} M  (ideal sqrt(27) = ${res.bCritM} M; c
         time: simTime, frame: sample, reset: sample === 0 ? 1 : 0, maxSteps: 1200,
         blend, timeScale: state.timeScale, turbAmp: state.turbAmp,
         breatheAmp: state.breatheAmp, nSpots: baseSpots.length,
+        jetStrength: state.jetStrength, jetGamma: state.jetGamma,
+        jetLength: state.jetLength, jetKnots: state.jetKnots,
       };
       r.frame(u);
       sample++;
