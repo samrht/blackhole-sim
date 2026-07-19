@@ -4,6 +4,8 @@ import { gFactorKepler } from "../physics/redshift";
 import parityWGSL from "../render/parity.wgsl?raw";
 import { turbulence } from "../physics/emission";
 import turbParityWGSL from "../render/turb-parity.wgsl?raw";
+import { jetEmission, dopplerBoost } from "../physics/jet";
+import jetParityWGSL from "../render/jet-parity.wgsl?raw";
 
 /** Runs the WGSL metric/orbit/g-factor helpers on fixed inputs and returns the max relative
  *  error vs the TypeScript core. f32 GPU vs f64 CPU keeps this in the ~1e-6..1e-4 range. */
@@ -61,5 +63,34 @@ export async function runParity(): Promise<{ maxErr: number; rows: number }> {
     const cpu = turbulence(c.logR, c.psi, 3);
     maxErr = Math.max(maxErr, Math.abs(tgpu[i] - cpu) / (1 + Math.abs(cpu)));
   });
-  return { maxErr, rows: cases.length + tcases.length };
+  // --- jet parity (CPU jet.ts vs GPU jet-parity.wgsl) ---
+  const jcases = [
+    { r: 8,  th: 0.12, t: 0.0, mu: 0.9 },
+    { r: 14, th: 0.20, t: 1.3, mu: 0.3 },
+    { r: 20, th: 0.10, t: 2.7, mu: -0.6 },
+    { r: 6,  th: 0.30, t: 0.5, mu: -0.9 },
+  ];
+  const jin = device.createBuffer({ size: jcases.length * 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+  const jarr = new Float32Array(jcases.length * 4);
+  jcases.forEach((c, i) => { jarr.set([c.r, c.th, c.t, c.mu], i * 4); });
+  device.queue.writeBuffer(jin, 0, jarr);
+  const jout = device.createBuffer({ size: jcases.length * 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
+  const jread = device.createBuffer({ size: jcases.length * 16, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+  const jmod = device.createShaderModule({ code: jetParityWGSL });
+  const jpipe = device.createComputePipeline({ layout: "auto", compute: { module: jmod, entryPoint: "main" } });
+  const jbind = device.createBindGroup({ layout: jpipe.getBindGroupLayout(0), entries: [
+    { binding: 0, resource: { buffer: jin } }, { binding: 1, resource: { buffer: jout } }] });
+  const jenc = device.createCommandEncoder();
+  const jcp = jenc.beginComputePass(); jcp.setPipeline(jpipe); jcp.setBindGroup(0, jbind); jcp.dispatchWorkgroups(jcases.length); jcp.end();
+  jenc.copyBufferToBuffer(jout, 0, jread, 0, jcases.length * 16);
+  device.queue.submit([jenc.finish()]);
+  await jread.mapAsync(GPUMapMode.READ);
+  const jgpu = new Float32Array(jread.getMappedRange().slice(0));
+  jcases.forEach((c, i) => {
+    const cpuE = jetEmission(c.r, c.th, c.t, 1, 1, 60, 0.7);
+    const cpuB = dopplerBoost(c.mu, 5);
+    maxErr = Math.max(maxErr, Math.abs(jgpu[i * 4 + 0] - cpuE) / (1 + Math.abs(cpuE)));
+    maxErr = Math.max(maxErr, Math.abs(jgpu[i * 4 + 1] - cpuB) / (1 + Math.abs(cpuB)));
+  });
+  return { maxErr, rows: cases.length + tcases.length + jcases.length };
 }
