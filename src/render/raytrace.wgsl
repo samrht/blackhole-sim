@@ -3,12 +3,15 @@ struct Uniforms {
   Tpeak: f32, exposure: f32, time: f32, frame: u32, reset: u32, maxSteps: u32,
   blend: f32, timeScale: f32, turbAmp: f32, breatheAmp: f32, nSpots: u32,
   jetStrength: f32, jetGamma: f32, jetLength: f32, jetKnots: f32,
+  skyStrength: f32,
 };
 @group(0) @binding(0) var<uniform> U: Uniforms;
 @group(0) @binding(1) var<storage, read_write> accum: array<vec4<f32>>;
 @group(0) @binding(2) var<storage, read> tempLUT: array<f32>;       // normalized T(r) in [0,1]
 @group(0) @binding(3) var<storage, read> colorLUT: array<vec4<f32>>; // linear-sRGB blackbody color
 @group(0) @binding(4) var<storage, read> hotspots: array<vec4<f32>>; // (r, psi, sigma, amp)
+@group(0) @binding(5) var skyTex: texture_2d<f32>;
+@group(0) @binding(6) var skySamp: sampler;
 
 const PI = 3.141592653589793;
 
@@ -109,6 +112,25 @@ fn starfield(dir: vec3<f32>) -> vec3<f32> {
     }
   }
   return col;
+}
+
+// --- Baked sky panorama (equirectangular; twin of src/render/skymap.ts) ------------------------
+const SKY_TEXW = 4096.0;
+fn tiltDir(d: vec3<f32>) -> vec3<f32> {   // R_SKY = Rz(30°)·Rx(60°), must match skymap.ts
+  return vec3<f32>(
+    0.866025 * d.x - 0.25 * d.y + 0.433013 * d.z,
+    0.5 * d.x + 0.433013 * d.y - 0.75 * d.z,
+    0.866025 * d.y + 0.5 * d.z);
+}
+fn skySample(dir: vec3<f32>) -> vec3<f32> {
+  let d = tiltDir(dir);
+  let u = atan2(d.z, d.x) * (0.5 / PI) + 0.5;
+  let v = acos(clamp(d.y, -1.0, 1.0)) * (1.0 / PI);
+  // Compute shaders have no implicit derivatives, so pick LOD analytically from the far-field
+  // angular footprint of one pixel. Mip chain + temporal AA absorb residual minification aliasing.
+  let anglePerPixel = 2.0 * U.fovScale / U.res.y / U.rObs;
+  let lod = max(0.0, log2(SKY_TEXW * anglePerPixel / (2.0 * PI)));
+  return textureSampleLevel(skyTex, skySamp, vec2<f32>(u, v), lod).rgb;
 }
 
 // --- Tier 2A emission field (WGSL twin of src/physics/emission.ts) -----------------------------
@@ -281,7 +303,9 @@ fn cartOf(x: vec4<f32>) -> vec3<f32> {
       // warped and magnified into a ring around the shadow.
       let th = s.x.z; let ph = s.x.w;
       let dir = normalize(vec3<f32>(sin(th)*cos(ph), sin(th)*sin(ph), cos(th)));
-      color = starfield(dir);
+      // Baked panorama crossfaded over the procedural starfield by skyStrength (0 => unchanged).
+      let mixT = clamp(U.skyStrength, 0.0, 1.0);
+      color = mix(starfield(dir), skySample(dir) * U.skyStrength, mixT);
       break;
     }
   }
