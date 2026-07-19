@@ -1,15 +1,17 @@
 // Layout MUST match the `Uniforms` struct in raytrace.wgsl (4-byte scalars, vec2 first).
 // floats: resW,resH,a,incl,rObs,fovScale,rIn,rOut,Tpeak,exposure,time (11)
-//         + blend,timeScale,turbAmp,breatheAmp (4)                     -> 15 floats
+//         + blend,timeScale,turbAmp,breatheAmp (4)                     -> 15
+//         + jetStrength,jetGamma,jetLength,jetKnots (4)                -> 19 floats
 // uint:   frame,reset,maxSteps (3) + nSpots (1)                        -> 4 uints
 export interface UniformValues {
   resW: number; resH: number; a: number; incl: number; rObs: number; fovScale: number;
   rIn: number; rOut: number; Tpeak: number; exposure: number; time: number;
   frame: number; reset: number; maxSteps: number;
   blend: number; timeScale: number; turbAmp: number; breatheAmp: number; nSpots: number;
+  jetStrength: number; jetGamma: number; jetLength: number; jetKnots: number;
 }
-export const UNIFORM_FLOATS = 15, UNIFORM_UINTS = 4;
-export const UNIFORM_SIZE = Math.ceil((UNIFORM_FLOATS + UNIFORM_UINTS) / 4) * 16; // -> 80 bytes
+export const UNIFORM_FLOATS = 19, UNIFORM_UINTS = 4;
+export const UNIFORM_SIZE = Math.ceil((UNIFORM_FLOATS + UNIFORM_UINTS) / 4) * 16; // -> 96 bytes
 
 export function packUniforms(u: UniformValues): ArrayBuffer {
   const buf = new ArrayBuffer(UNIFORM_SIZE);
@@ -20,5 +22,6 @@ export function packUniforms(u: UniformValues): ArrayBuffer {
   i[11] = u.frame; i[12] = u.reset; i[13] = u.maxSteps;
   f[14] = u.blend; f[15] = u.timeScale; f[16] = u.turbAmp; f[17] = u.breatheAmp;
   i[18] = u.nSpots;
+  f[19] = u.jetStrength; f[20] = u.jetGamma; f[21] = u.jetLength; f[22] = u.jetKnots;
   return buf;
 }

@@ -144,6 +144,7 @@ apparent radius ≈ ${res.shadowRadiusM} M  (ideal sqrt(27) = ${res.bCritM} M; c
         time: simTime, frame: sample, reset: sample === 0 ? 1 : 0, maxSteps: 1200,
         blend, timeScale: state.timeScale, turbAmp: state.turbAmp,
         breatheAmp: state.breatheAmp, nSpots: baseSpots.length,
+        jetStrength: 0, jetGamma: 5, jetLength: 60, jetKnots: 0.7,
       };
       r.frame(u);
       sample++;

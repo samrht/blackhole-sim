@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  JET, funnelEdge, wallProfile, lengthFalloff, knots, dopplerBoost, jetEmission,
+  JET, funnelEdge, wallProfile, knots, dopplerBoost, jetEmission,
 } from "../src/physics/jet";
 
 describe("jet geometry", () => {
