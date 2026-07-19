@@ -43,6 +43,10 @@ Full physics specification and derivations: `docs/specs/2026-05-30-relativistic-
 
 Kerr (1963); Carter (1968); Bardeen, Press & Teukolsky (1972); Bardeen (1973); Novikov & Thorne (1973); Page & Thorne (1974); James, von Tunzelmann, Franklin & Thorne (2015, the Interstellar/Gargantua paper).
 
+## Attribution
+
+Milky-Way panorama: ESO/S. Brunier, CC BY 4.0 (eso0932a).
+
 ## Status
 
 Tier 1 (single-GPU, real-time image) complete and verified.
@@ -53,4 +57,6 @@ Tier 1 (single-GPU, real-time image) complete and verified.
 
 **Visual polish:** the default jet brightness/ceiling were retuned so the relativistically beamed jet reads with internal structure at low (pole-on) inclination instead of clipping to a solid white funnel. The Boyer–Lindquist polar axis (where g^φφ ∝ 1/sin²θ diverges) is now regularized with a small sin²θ floor, removing a thin black meridian seam and hard central cap that had been present since Tier 1; the floor is inert away from the axis, so `?parity` and `?shadow` are unchanged.
 
-Out of scope: lensed starfield background, Tier 3 (full GRMHD, multi-GPU/offline).
+**Lensed sky background (shipped):** the procedural starfield is replaced by a real Milky-Way panorama (ESO/S. Brunier, CC BY 4.0) sampled along each escaped ray's gravitationally-bent direction, so the background warps into a clear Einstein ring around the shadow. A "Sky" slider crossfades its brightness; at 0 (or if the asset fails to load) the render falls back to the original procedural void, so `?parity` and `?shadow` are unchanged.
+
+Out of scope: Tier 3 (full GRMHD, multi-GPU/offline).

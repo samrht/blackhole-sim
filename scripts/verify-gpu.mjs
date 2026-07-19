@@ -38,6 +38,12 @@ await page.waitForTimeout(4500); // let progressive accumulation converge
 await page.screenshot({ path: SHOT, timeout: 15000 });
 console.log(`• saved ${SHOT}`);
 
+// Sky panorama should be fetched and served (200) during the interactive render.
+const skyResp = await page.request.get(BASE + "/sky/milkyway-4k.jpg");
+const skyOk = skyResp.ok();
+console.log(`${skyOk ? "✓ PASS" : "✗ FAIL"}  /sky/milkyway-4k.jpg  (${skyResp.status()})`);
+if (!skyOk) failed = true;
+
 if (errors.length) console.log("console/page errors:", errors.join(" | "));
 await browser.close();
 process.exit(failed ? 1 : 0);
