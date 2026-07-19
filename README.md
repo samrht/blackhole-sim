@@ -51,4 +51,6 @@ Tier 1 (single-GPU, real-time image) complete and verified.
 
 **Tier 2B — Relativistic Jet (shipped):** a beamed, limb-brightened, animated bipolar jet (Blandford–Znajek funnel with synchrotron emission and propagating knots). The jet is integrated along rays before disk accumulation, optically thin with additive composite. Jet / Jet speed Γ / Jet knots sliders control the strength, relativistic beaming γ-factor, and knot amplitude live. With the jet off, the render is bit-for-bit identical to Tier 2A (`?parity` and `?shadow` unchanged).
 
+**Visual polish:** the default jet brightness/ceiling were retuned so the relativistically beamed jet reads with internal structure at low (pole-on) inclination instead of clipping to a solid white funnel. The Boyer–Lindquist polar axis (where g^φφ ∝ 1/sin²θ diverges) is now regularized with a small sin²θ floor, removing a thin black meridian seam and hard central cap that had been present since Tier 1; the floor is inert away from the axis, so `?parity` and `?shadow` are unchanged.
+
 Out of scope: lensed starfield background, Tier 3 (full GRMHD, multi-GPU/offline).
