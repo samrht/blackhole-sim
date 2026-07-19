@@ -2,6 +2,7 @@ struct Uniforms {
   res: vec2<f32>, a: f32, incl: f32, rObs: f32, fovScale: f32, rIn: f32, rOut: f32,
   Tpeak: f32, exposure: f32, time: f32, frame: u32, reset: u32, maxSteps: u32,
   blend: f32, timeScale: f32, turbAmp: f32, breatheAmp: f32, nSpots: u32,
+  jetStrength: f32, jetGamma: f32, jetLength: f32, jetKnots: f32,
 };
 @group(0) @binding(0) var<uniform> U: Uniforms;
 @group(0) @binding(1) var<storage, read_write> accum: array<vec4<f32>>;
@@ -143,6 +144,58 @@ fn emissionFieldE(rHit: f32, psi: f32) -> f32 {
   return max(0.0, turb * breathe + hotspotFieldE(rHit, psi));
 }
 
+// --- Tier 2B jet (WGSL twin of src/physics/jet.ts) --------------------------------------------
+const JET_QPEAK = 0.8;   const JET_WWALL = 0.22;
+const JET_RHO0  = 0.6;   const JET_SLOPE = 0.7;
+const JET_ZBASE = 2.0;   const JET_KZ    = 0.35;  const JET_VKNOT = 6.0;
+const JET_PBEAM = 3.5;   const JET_TURB  = 0.35;  const JET_SEED  = 17.0;
+const JET_GAIN  = 0.06;  const JET_CEIL  = 8.0;
+const JET_TINT  = vec3<f32>(0.55, 0.78, 1.0);
+
+fn smoothstepJ(a: f32, b: f32, x: f32) -> f32 {
+  let t = clamp((x - a) / (b - a), 0.0, 1.0);
+  return t * t * (3.0 - 2.0 * t);
+}
+fn funnelEdgeJ(z: f32) -> f32 { return JET_RHO0 + JET_SLOPE * sqrt(abs(z)); }
+fn wallJ(rho: f32, z: f32) -> f32 {
+  let q = rho / funnelEdgeJ(z);
+  if (q > 1.2) { return 0.0; }
+  let d = q - JET_QPEAK;
+  return exp(-(d * d) / (2.0 * JET_WWALL * JET_WWALL));
+}
+fn lengthFalloffJ(z: f32, zMax: f32) -> f32 {
+  let az = abs(z);
+  let fadeIn = smoothstepJ(JET_ZBASE, JET_ZBASE + 2.0, az);
+  let fadeOut = 1.0 - smoothstepJ(zMax * 0.7, zMax, az);
+  let decay = JET_ZBASE / max(az, JET_ZBASE);
+  return fadeIn * fadeOut * decay;
+}
+fn knotsJ(z: f32, t: f32) -> f32 {
+  let phase = JET_KZ * abs(z) - JET_VKNOT * t * U.timeScale;
+  return 1.0 + U.jetKnots * (vnoiseE(phase, JET_SEED) - 0.5) * 2.0;
+}
+fn boostJ(mu: f32, gamma: f32) -> f32 {
+  let beta = sqrt(max(0.0, 1.0 - 1.0 / (gamma * gamma)));
+  let delta = 1.0 / (gamma * (1.0 - beta * mu));
+  return pow(delta, JET_PBEAM);
+}
+// scalar emissivity (no beaming); exactly 0 when jet off / below zBase / beyond zMax / outside wall
+fn jetEmissionJ(r: f32, th: f32, t: f32) -> f32 {
+  if (U.jetStrength == 0.0) { return 0.0; }
+  let z = r * cos(th);
+  let az = abs(z);
+  if (az < JET_ZBASE || az > U.jetLength) { return 0.0; }
+  let rho = r * sin(th);
+  let w = wallJ(rho, z);
+  if (w <= 0.0) { return 0.0; }
+  let turb = 1.0 + JET_TURB * (vnoiseE(log(1.0 + rho), JET_KZ * z) - 0.5) * 2.0;
+  return max(0.0, w * lengthFalloffJ(z, U.jetLength) * knotsJ(z, t) * turb);
+}
+fn cartOf(x: vec4<f32>) -> vec3<f32> {
+  let r = x.y; let th = x.z; let ph = x.w; let s = sin(th);
+  return vec3<f32>(r * s * cos(ph), r * s * sin(ph), r * cos(th));
+}
+
 @compute @workgroup_size(8,8) fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   if (gid.x >= u32(U.res.x) || gid.y >= u32(U.res.y)) { return; }
   let idx = gid.y * u32(U.res.x) + gid.x;
@@ -167,6 +220,7 @@ fn emissionFieldE(rHit: f32, psi: f32) -> f32 {
 
   let rh = 1.0 + sqrt(max(0.0, 1.0 - a*a)); // horizon
   var color = vec3<f32>(0.0);
+  var jetAccum = vec3<f32>(0.0); // optically-thin jet emission integrated along the ray
 
   for (var step = 0u; step < U.maxSteps; step++) {
     // dl > 0 with p_r < 0 integrates INWARD (matches the geodesic capture test; a negative dl
@@ -178,6 +232,19 @@ fn emissionFieldE(rHit: f32, psi: f32) -> f32 {
     var dl = clamp(0.02 * (r - rh), 0.002, 0.5);
     if (r > U.rOut * 1.5) { dl = clamp(0.04 * r, 0.6, 6.0); }
     let sNew = rk4(s, a, dl);
+
+    // Optically-thin jet: integrate emissivity * relativistic beaming along the ray. The disk
+    // hit below still `break`s (opaque), so jet segments behind the disk/horizon are occluded.
+    if (U.jetStrength > 0.0) {
+      let jz = s.x.y * cos(s.x.z);
+      let e = jetEmissionJ(s.x.y, s.x.z, U.time);
+      if (e > 0.0) {
+        let marchDir = normalize(cartOf(sNew.x) - cartOf(s.x)); // inward (camera -> hole)
+        let axisSign = select(-1.0, 1.0, jz >= 0.0);
+        let mu = -axisSign * marchDir.z;                        // emitter outflow toward observer
+        jetAccum += JET_TINT * (e * JET_GAIN) * boostJ(mu, U.jetGamma) * dl;
+      }
+    }
 
     // disk crossing: equatorial plane th = PI/2 (take the first hit -> optically-thick top surface)
     let f0 = s.x.z - PI*0.5; let f1 = sNew.x.z - PI*0.5;
@@ -213,5 +280,7 @@ fn emissionFieldE(rHit: f32, psi: f32) -> f32 {
 
   // Temporal EMA: blend = 1/(frame+1) reproduces the Tier-1 running mean when static; a fixed
   // blend (~0.15) tracks an animating scene. blend==1 (first frame after a reset) clears cleanly.
-  accum[idx] = vec4<f32>(mix(accum[idx].rgb, color, U.blend), 1.0);
+  // Additive optically-thin jet on top of whatever the ray terminated on (disk/starfield/shadow).
+  let composited = color + U.jetStrength * min(jetAccum, vec3<f32>(JET_CEIL));
+  accum[idx] = vec4<f32>(mix(accum[idx].rgb, composited, U.blend), 1.0);
 }
