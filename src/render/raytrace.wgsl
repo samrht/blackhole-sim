@@ -238,8 +238,11 @@ fn cartOf(x: vec4<f32>) -> vec3<f32> {
     if (U.jetStrength > 0.0) {
       let jz = s.x.y * cos(s.x.z);
       let e = jetEmissionJ(s.x.y, s.x.z, U.time);
-      if (e > 0.0) {
-        let marchDir = normalize(cartOf(sNew.x) - cartOf(s.x)); // inward (camera -> hole)
+      let dvec = cartOf(sNew.x) - cartOf(s.x);                  // inward step (camera -> hole)
+      // guard normalize() against a zero-length step: a NaN mu here would poison the EMA accum
+      // buffer permanently (mix(accum, NaN, blend) stays NaN). Effectively unreachable, cheap insurance.
+      if (e > 0.0 && dot(dvec, dvec) > 1e-12) {
+        let marchDir = normalize(dvec);
         let axisSign = select(-1.0, 1.0, jz >= 0.0);
         let mu = -axisSign * marchDir.z;                        // emitter outflow toward observer
         jetAccum += JET_TINT * (e * JET_GAIN) * boostJ(mu, U.jetGamma) * dl;
