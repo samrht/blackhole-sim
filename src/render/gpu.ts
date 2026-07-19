@@ -55,9 +55,11 @@ export class Renderer {
     this.device.queue.writeBuffer(this.colorBuf, 0, colorLUT as Float32Array<ArrayBuffer>);
   }
 
-  /** Upload packed hot-spot params (Float32Array of (r,psi,sigma,amp) per spot). */
+  /** Upload packed hot-spot params (Float32Array of (r,psi,sigma,amp) per spot). Capped at the
+   *  8-vec4 buffer capacity created in init(); extra spots would overflow the storage buffer. */
   uploadHotSpots(spots: Float32Array) {
-    this.device.queue.writeBuffer(this.spotBuf, 0, spots as Float32Array<ArrayBuffer>);
+    const clamped = spots.length > 8 * 4 ? spots.subarray(0, 8 * 4) : spots;
+    this.device.queue.writeBuffer(this.spotBuf, 0, clamped as Float32Array<ArrayBuffer>);
   }
 
   buildPipelines() {
