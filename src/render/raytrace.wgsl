@@ -17,9 +17,14 @@ fn sigma_(r: f32, th: f32, a: f32) -> f32 { let c = cos(th); return r*r + a*a*c*
 fn bigA_(r: f32, th: f32, a: f32) -> f32 { let s = sin(th); return pow(r*r+a*a,2.0) - a*a*delta_(r,a)*s*s; }
 
 // upper metric components (tt, tphi, rr, thth, phph)
+// POLE_S2 floors sin^2(th) in the divergent 1/sin^2 denominator of g^{phi phi}; matches
+// src/physics/kerr.ts. Regularizes the Boyer-Lindquist polar axis so axis-grazing rays no
+// longer get an unbounded p_th kick (which painted a black meridian seam + central cap).
+const POLE_S2 = 1e-3;
 fn gUp(r: f32, th: f32, a: f32) -> array<f32,5> {
-  let s2 = sin(th)*sin(th); let Sig = sigma_(r,th,a); let d = delta_(r,a); let A = bigA_(r,th,a);
-  return array<f32,5>( -A/(Sig*d), -2.0*a*r/(Sig*d), d/Sig, 1.0/Sig, (d - a*a*s2)/(Sig*d*s2) );
+  let s2 = sin(th)*sin(th); let s2d = max(s2, POLE_S2);
+  let Sig = sigma_(r,th,a); let d = delta_(r,a); let A = bigA_(r,th,a);
+  return array<f32,5>( -A/(Sig*d), -2.0*a*r/(Sig*d), d/Sig, 1.0/Sig, (d - a*a*s2)/(Sig*d*s2d) );
 }
 fn gLow(r: f32, th: f32, a: f32) -> array<f32,5> {
   let s2 = sin(th)*sin(th); let Sig = sigma_(r,th,a); let d = delta_(r,a);
@@ -149,7 +154,7 @@ const JET_QPEAK = 0.8;   const JET_WWALL = 0.22;
 const JET_RHO0  = 0.6;   const JET_SLOPE = 0.7;
 const JET_ZBASE = 2.0;   const JET_KZ    = 0.35;  const JET_VKNOT = 6.0;
 const JET_PBEAM = 3.5;   const JET_TURB  = 0.35;  const JET_SEED  = 17.0;
-const JET_GAIN  = 0.06;  const JET_CEIL  = 8.0;
+const JET_GAIN  = 0.03;  const JET_CEIL  = 4.0;
 const JET_TINT  = vec3<f32>(0.55, 0.78, 1.0);
 
 fn smoothstepJ(a: f32, b: f32, x: f32) -> f32 {
