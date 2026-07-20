@@ -35,7 +35,7 @@ apparent radius ≈ ${res.shadowRadiusM} M  (ideal sqrt(27) = ${res.bCritM} M; c
     throw e;
   }
 
-  const state = { a: 0.9, incl: 72, exposure: 1.6, timeScale: 1.0, turbAmp: 0.6, breatheAmp: 0.0, playing: true, flareScale: 1.0, jetStrength: 1.0, jetGamma: 5.0, jetLength: 60.0, jetKnots: 0.7, skyStrength: 1.0 };
+  const state = { a: 0.9, incl: 72, exposure: 1.6, timeScale: 1.0, turbAmp: 0.6, breatheAmp: 0.0, playing: true, flareScale: 1.0, jetStrength: 1.0, jetGamma: 5.0, jetLength: 60.0, jetKnots: 0.7, skyStrength: 1.0, maxSteps: 4800 };
   const SPEED = 20;        // coordinate-time M advanced per real second at timeScale = 1
   const EMA_BLEND = 0.15;  // trailing-window weight while animating
   let simTime = 0, lastNow = 0;
@@ -114,6 +114,9 @@ apparent radius ≈ ${res.shadowRadiusM} M  (ideal sqrt(27) = ${res.bCritM} M; c
   const sky = $("sky") as HTMLInputElement, skyv = $("skyv");
   sky.addEventListener("input", () => { state.skyStrength = +sky.value; skyv.textContent = state.skyStrength.toFixed(2); reset(); });
 
+  const detail = $("detail") as HTMLInputElement, detailv = $("detailv");
+  detail.addEventListener("input", () => { state.maxSteps = +detail.value; detailv.textContent = String(state.maxSteps); reset(); });
+
   // Drag vertically to tilt the camera (inclination); keeps the slider + readouts in sync.
   let dragging = false, lastY = 0;
   canvas.addEventListener("pointerdown", (e) => { dragging = true; lastY = e.clientY; canvas.classList.add("drag"); canvas.setPointerCapture(e.pointerId); });
@@ -162,7 +165,7 @@ apparent radius ≈ ${res.shadowRadiusM} M  (ideal sqrt(27) = ${res.bCritM} M; c
       const u: UniformValues = {
         resW: r.width, resH: r.height, a: state.a, incl: state.incl * Math.PI / 180,
         rObs: 1000, fovScale: 14, rIn, rOut, Tpeak: T_PEAK, exposure: state.exposure,
-        time: simTime, frame: sample, reset: sample === 0 ? 1 : 0, maxSteps: 1200,
+        time: simTime, frame: sample, reset: sample === 0 ? 1 : 0, maxSteps: state.maxSteps,
         blend, timeScale: state.timeScale, turbAmp: state.turbAmp,
         breatheAmp: state.breatheAmp, nSpots: baseSpots.length,
         jetStrength: state.jetStrength, jetGamma: state.jetGamma,
