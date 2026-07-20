@@ -34,7 +34,7 @@ apparent radius ≈ ${res.shadowRadiusM} M  (ideal sqrt(27) = ${res.bCritM} M; c
     throw e;
   }
 
-  const state = { a: 0.9, incl: 72, exposure: 1.6, timeScale: 1.0, turbAmp: 0.6, breatheAmp: 0.0, playing: true, flareScale: 1.0, jetStrength: 1.0, jetGamma: 5.0, jetLength: 60.0, jetKnots: 0.7, skyStrength: 0.6 };
+  const state = { a: 0.9, incl: 72, exposure: 1.6, timeScale: 1.0, turbAmp: 0.6, breatheAmp: 0.0, playing: true, flareScale: 1.0, jetStrength: 1.0, jetGamma: 5.0, jetLength: 60.0, jetKnots: 0.7, skyStrength: 1.0 };
   const SPEED = 20;        // coordinate-time M advanced per real second at timeScale = 1
   const EMA_BLEND = 0.15;  // trailing-window weight while animating
   let simTime = 0, lastNow = 0;
