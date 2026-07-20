@@ -58,7 +58,10 @@ Exports:
 - `criticalXiEta(r, a)` → `[ξ, η]`
 - `photonShellRange(a)` → `[r_min, r_max]`
 - `shadowBoundary(a, incl, nSamples)` → array of celestial-plane `(α, β)` points
-- `shadowRadiusSchwarzschild()` → `√27`
+- `classify(xi, eta, a)` → `"captured" | "escaped"` (see §3.2 for the algorithm)
+
+There is deliberately no `shadowRadiusSchwarzschild()` constant: `?shadow` recovers √27 by bisecting
+`classify`, so the check exercises the model rather than comparing against a hardcoded number.
 
 **Numerical hazard (must be handled explicitly):** both ξ and η are 0/0 as a→0. The η numerator
 factors as `4Δ − r(r−1)² = −r(r−3)² + 4a²`, so at a→0, r=3 the limit is `27·4a²/(4a²) = 27` —
@@ -141,8 +144,28 @@ the plate scale — with a smaller contribution from step starvation inflating t
 corrected radius lands near 5.2 with no residual scale factor, then the 0.87 was entirely this bug
 and the old check was rationalizing an artifact.
 
-Deliverable: measure apparent radius at maxSteps 1200 vs 4800, report both against the analytic
-value, and document the decomposition in the README.
+> **CORRECTION (found while planning, before implementation).** The prediction above is **wrong in
+> its second clause**. `src/test/shadow.browser.ts:28` already runs the diagnostic at
+> **`maxSteps: 8000`**, not the interactive 1200 — so step starvation contributes **exactly zero**
+> to the measured 0.87. The `?shadow` route was never starved.
+>
+> The real cause is the one the existing code comment already names: the Tier-1 camera maps screen
+> coordinates to photon initial conditions heuristically (`p_θ = β`, `p_φ = −α·sin i`) with no
+> normalization, so `fovScale` is not calibrated in true M units. The 0.87 is **entirely camera
+> calibration**.
+>
+> Consequences for this plan:
+> - The 0.87 and the step-budget bug are **independent defects**. Fixing the budget will not move
+>   `scaleVsBcrit`.
+> - Recalibrating the camera to a normalized Bardeen mapping would change the zoom of *every* image
+>   in the project (framing of disk, jet, and the just-tuned sky). That is **out of scope here** and
+>   is recorded as a follow-up.
+> - What stays in scope: compare the rendered boundary against `shadow.ts` ground truth, and report
+>   the calibration factor as a *measured, explained* quantity rather than an unexplained constant.
+
+Deliverable: measure apparent radius across maxSteps ∈ {1200, 2400, 4800, 8000} at fixed camera to
+show the starvation contribution is flat (predicted: no significant change), report the residual
+against the analytic √27, and document the decomposition in the README.
 
 ## 4. Invariants
 
