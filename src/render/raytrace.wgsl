@@ -350,10 +350,16 @@ fn classifyCaptured(xi: f32, eta: f32, a: f32) -> bool {
   // them from their conserved (xi, eta) instead: the sign of p_r at an arbitrary cutoff is
   // effectively random for a winding ray and would produce salt-and-pepper noise.
   if (!resolved) {
-    if (classifyCaptured(xi, eta, a)) {
+    let th = s.x.z; let ph = s.x.w;
+    // RK4 can diverge for rays near the critical impact parameter, leaving s.x non-finite when the
+    // step budget runs out. Reading that state into `dir` would emit a NaN colour into the EMA
+    // accumulator below, and bloom.wgsl's separable blur would then smear that single NaN pixel
+    // across a whole neighbourhood. NaN comparisons are always false, so this range test rejects
+    // non-finite th/ph without needing a bitcast/isnan helper, and we just treat the ray as captured.
+    let usable = th > -1e6 && th < 1e6 && ph > -1e6 && ph < 1e6;
+    if (classifyCaptured(xi, eta, a) || !usable) {
       color = vec3<f32>(0.0);
     } else {
-      let th = s.x.z; let ph = s.x.w;
       let dir = normalize(vec3<f32>(sin(th)*cos(ph), sin(th)*sin(ph), cos(th)));
       let mixT = clamp(U.skyStrength, 0.0, 1.0);
       color = mix(starfield(dir), skySample(dir) * U.skyStrength, mixT);
