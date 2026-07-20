@@ -264,6 +264,10 @@ fn classifyCaptured(xi: f32, eta: f32, a: f32) -> bool {
   let beta  = -ndc.y * U.fovScale;
   // Bardeen impact parameter -> conserved azimuthal angular momentum
   let xi = -alpha * sin(i);
+  // Carter constant from the Bardeen screen coordinates: eta = beta^2 + xi^2*cot^2(i) - a^2*cos^2(i).
+  // Both xi and eta are conserved, so they classify a ray regardless of where integration stopped.
+  let ci = cos(i); let si = sin(i);
+  let eta = beta*beta + xi*xi*(ci*ci)/max(si*si, 1e-8) - a*a*ci*ci;
 
   // initial state at (rObs, i, 0), E=1
   let r0 = U.rObs; let th0 = i;
@@ -275,6 +279,7 @@ fn classifyCaptured(xi: f32, eta: f32, a: f32) -> bool {
 
   let rh = 1.0 + sqrt(max(0.0, 1.0 - a*a)); // horizon
   var color = vec3<f32>(0.0);
+  var resolved = false; // set by each real termination; false => the step budget ran out
   var jetAccum = vec3<f32>(0.0); // optically-thin jet emission integrated along the ray
 
   for (var step = 0u; step < U.maxSteps; step++) {
@@ -320,11 +325,12 @@ fn classifyCaptured(xi: f32, eta: f32, a: f32) -> bool {
         let psi = phiHit - Om * U.time * U.timeScale;// co-rotating pattern phase
         let E = emissionFieldE(rHit, psi);           // time-varying brightness (==1 when features off)
         color = sampleColor(Tobs) * pow(g * Tn, 4.0) * E;
+        resolved = true;
         break;
       }
     }
     s = sNew;
-    if (s.x.y <= rh * 1.001) { color = vec3(0.0); break; }   // captured -> shadow
+    if (s.x.y <= rh * 1.001) { color = vec3(0.0); resolved = true; break; }   // captured -> shadow
     if (s.x.y > r0 * 1.2) {
       // escaped: sample the background along the ray's (bent) asymptotic direction.
       // The deflected direction makes the starfield appear gravitationally lensed —
@@ -334,7 +340,23 @@ fn classifyCaptured(xi: f32, eta: f32, a: f32) -> bool {
       // Baked panorama crossfaded over the procedural starfield by skyStrength (0 => unchanged).
       let mixT = clamp(U.skyStrength, 0.0, 1.0);
       color = mix(starfield(dir), skySample(dir) * U.skyStrength, mixT);
+      resolved = true;
       break;
+    }
+  }
+
+  // Budget exhausted without a real termination. Previously these rays kept color = vec3(0) and so
+  // rendered as shadow -- a step-budget artifact that swallowed the n=1 photon subring. Classify
+  // them from their conserved (xi, eta) instead: the sign of p_r at an arbitrary cutoff is
+  // effectively random for a winding ray and would produce salt-and-pepper noise.
+  if (!resolved) {
+    if (classifyCaptured(xi, eta, a)) {
+      color = vec3<f32>(0.0);
+    } else {
+      let th = s.x.z; let ph = s.x.w;
+      let dir = normalize(vec3<f32>(sin(th)*cos(ph), sin(th)*sin(ph), cos(th)));
+      let mixT = clamp(U.skyStrength, 0.0, 1.0);
+      color = mix(starfield(dir), skySample(dir) * U.skyStrength, mixT);
     }
   }
 
