@@ -21,7 +21,8 @@ PARITY ${ok ? "PASS" : "FAIL"} — maxRelErr=${res.maxErr.toExponential(3)} over
   const res = await measureShadow(canvas, stepsParam ? +stepsParam : 8000);
   document.body.innerHTML = `<pre style="color:${res.ok ? "#6f6" : "#f66"};font-size:18px;padding:20px">
 SHADOW ${res.ok ? "PASS" : "FAIL"} (structural) — centred dark shadow=${res.hasShadow}, ringed by disk=${res.hasDisk}
-apparent radius ≈ ${res.shadowRadiusM} M  (ideal sqrt(27) = ${res.bCritM} M; camera scale factor ≈ ${res.scaleVsBcrit})</pre>`;
+apparent radius ≈ ${res.shadowRadiusM} M; analytic critical curve = ${res.analyticRadiusM} M
+camera calibration factor = ${res.calibration} (not physics — see spec §3.4)</pre>`;
   console.log("shadow", res);
 } else {
   // Normal interactive render.

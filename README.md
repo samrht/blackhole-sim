@@ -59,4 +59,19 @@ Tier 1 (single-GPU, real-time image) complete and verified.
 
 **Lensed sky background (shipped):** the procedural starfield is replaced by a real Milky-Way panorama (ESO/S. Brunier, CC BY 4.0) sampled along each escaped ray's gravitationally-bent direction, so the background warps around the shadow into a lensed ring (most pronounced near edge-on inclination). A "Sky" slider crossfades its brightness; at 0 (or if the asset fails to load) the render falls back to the original procedural void, so `?parity` and `?shadow` are unchanged. The default strength was subsequently retuned from 0.6 to 1.0 so the lensed background reads at the default 72° view without washing the sky into a flat haze at near pole-on inclinations.
 
-Out of scope: Tier 3 (full GRMHD, multi-GPU/offline).
+**Photon-ring detail (shipped):** rays that exhausted the integrator's step budget previously fell
+out of the loop still holding their initial black colour, so step-starved rays rendered as shadow —
+an artifact that swallowed the n=1 photon subring (at a=0.9 one winding near the prograde photon
+orbit r≈1.56M costs ~3900 steps against a budget of 1200). Exhausted rays are now classified by
+their conserved impact parameters (ξ, η) against the analytic Kerr critical curve, and a "Detail"
+slider exposes the step budget (default 4800). Note this is the first feature that does **not**
+preserve the project's bit-identical-when-off property: correcting the artifact necessarily changes
+pixels near the shadow edge. `?parity` is math-only and is unchanged.
+
+The `?shadow` diagnostic now compares the rendered boundary against the analytic critical curve.
+The residual ~0.87 factor is camera calibration, not physics: the Tier-1 camera maps screen
+coordinates to photon initial conditions without normalization, so `fovScale` is not in true M
+units. A normalized Bardeen camera is a tracked follow-up.
+
+Out of scope: Tier 3 (full GRMHD, multi-GPU/offline); recalibrating the Tier-1 camera to a
+normalized Bardeen mapping (tracked follow-up, see above).

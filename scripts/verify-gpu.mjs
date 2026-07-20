@@ -25,7 +25,7 @@ async function check(path, expect) {
   await page.waitForFunction((e) => document.body.innerText.includes(e), expect, { timeout: 25000 }).catch(() => {});
   const txt = (await page.innerText("body")).replace(/\s+/g, " ").trim();
   const ok = txt.includes(expect);
-  console.log(`${ok ? "✓ PASS" : "✗ FAIL"}  ${path}\n        ${txt.slice(0, 150)}`);
+  console.log(`${ok ? "✓ PASS" : "✗ FAIL"}  ${path}\n        ${txt.slice(0, 300)}`);
   if (!ok) failed = true;
 }
 
