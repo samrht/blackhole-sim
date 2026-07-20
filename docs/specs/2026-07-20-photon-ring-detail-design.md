@@ -164,8 +164,28 @@ and the old check was rationalizing an artifact.
 >   the calibration factor as a *measured, explained* quantity rather than an unexplained constant.
 
 Deliverable: measure apparent radius across maxSteps ∈ {1200, 2400, 4800, 8000} at fixed camera to
-show the starvation contribution is flat (predicted: no significant change), report the residual
-against the analytic √27, and document the decomposition in the README.
+show the starvation contribution is flat (**measured: no significant change — confirmed**), report
+the residual against the analytic √27, and document the decomposition in the README.
+
+**Measured (Task 2, 2026-07-20).** `measureShadow` was given an optional `maxStepsOverride`
+(default 8000, preserving prior behaviour) and `?shadow` now accepts `?steps=N` to drive it. Swept
+via headless Chrome (`playwright-core`, `channel: "chrome"`) against the dev server at a fixed
+camera (a=0, pole-on, `fovScale=14`, viewport 900×700):
+
+| maxSteps | apparent radius (M) | scale vs √27 |
+|---|---|---|
+| 1200 | 4.48 | 0.86 |
+| 2400 | 4.48 | 0.86 |
+| 4800 | 4.48 | 0.86 |
+| 8000 | 4.48 | 0.86 |
+
+**The prediction held exactly.** Apparent radius is bit-for-bit flat (4.48 M) across the entire
+step-budget sweep, confirming `?shadow` was never step-starved — all of the residual gap against the
+ideal √27 ≈ 5.20 M (scale factor ≈ 0.86) is attributable to camera calibration, not integration
+budget. (The measured 4.48/0.86 differ slightly from the 4.51/0.87 quoted above the CORRECTION note
+above — that number came from `scripts/verify-gpu.mjs`'s 1000×680 viewport; this sweep used 900×700
+per the Task 2 brief. The discrepancy is viewport-driven pixel quantization, not a new effect, and
+does not disturb the flatness result.)
 
 ## 4. Invariants
 

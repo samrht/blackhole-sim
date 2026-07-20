@@ -17,7 +17,7 @@ import type { UniformValues } from "../render/uniforms";
  *  the field of view (the shape/lensing/colour are all correct — only the zoom calibration differs).
  *  `scaleVsBcrit` reports that factor; tightening it to 1.0 is a follow-up (a normalised Bardeen camera).
  *  The rigorous numerical gate for the ported math is the ?parity test. */
-export async function measureShadow(canvas: HTMLCanvasElement) {
+export async function measureShadow(canvas: HTMLCanvasElement, maxStepsOverride = 8000) {
   const r = new Renderer(); await r.init(canvas);
   r.renderBloom = false; // measure the raw geometric shadow, not the post-processed glow
   const a = 0, rOut = 40, fovScale = 14;
@@ -25,7 +25,7 @@ export async function measureShadow(canvas: HTMLCanvasElement) {
   const flatTemp = new Float32Array(512).fill(1); // uniform emitter -> bright everywhere it's hit
   r.uploadLUTs(flatTemp, buildColorLUT(1000, 40000, 256)); r.rebind();
   const u: UniformValues = { resW: r.width, resH: r.height, a, incl: Math.PI / 18, rObs: 1000,
-    fovScale, rIn: rPh, rOut, Tpeak: 3.0e4, exposure: 0, time: 0, frame: 0, reset: 1, maxSteps: 8000,
+    fovScale, rIn: rPh, rOut, Tpeak: 3.0e4, exposure: 0, time: 0, frame: 0, reset: 1, maxSteps: maxStepsOverride,
     blend: 1, timeScale: 1, turbAmp: 0, breatheAmp: 0, nSpots: 0,
     jetStrength: 0, jetGamma: 5, jetLength: 60, jetKnots: 0.7, skyStrength: 0 };
   const { data, w, h } = await r.readbackPresented(u);
