@@ -64,9 +64,15 @@ out of the loop still holding their initial black colour, so step-starved rays r
 an artifact that swallowed the n=1 photon subring (at a=0.9 one winding near the prograde photon
 orbit r≈1.56M costs ~3900 steps against a budget of 1200). Exhausted rays are now classified by
 their conserved impact parameters (ξ, η) against the analytic Kerr critical curve, and a "Detail"
-slider exposes the step budget (default 4800). Note this is the first feature that does **not**
-preserve the project's bit-identical-when-off property: correcting the artifact necessarily changes
-pixels near the shadow edge. `?parity` is math-only and is unchanged.
+slider exposes the step budget (default 4800). This does not fully resolve the ring: per-winding
+step cost varies roughly 8x across the photon shell (at a=0.9, ~3900 steps at the prograde edge
+r≈1.56M vs. ~500 at the retrograde edge r≈3.91M), so a budget of 4800 resolves the retrograde side
+completely but leaves the innermost prograde part of the n=1 subring still budget-limited. n=2
+subrings are not visible and cannot be at the default field of view — successive subrings are
+thinner by a factor of roughly e^(−2π) ≈ 1/535, well under one pixel at the default `fovScale`;
+seeing one would require a narrow-FOV zoom, which is out of scope. Note this is the first feature
+that does **not** preserve the project's bit-identical-when-off property: correcting the artifact
+necessarily changes pixels near the shadow edge. `?parity` is math-only and is unchanged.
 
 The `?shadow` diagnostic now compares the rendered boundary against the analytic critical curve.
 The residual ~0.87 factor is camera calibration, not physics: the Tier-1 camera maps screen
