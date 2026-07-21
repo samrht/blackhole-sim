@@ -14,8 +14,9 @@ describe("lookups", () => {
   it("color LUT: length 4N (RGBA), all finite and non-negative", () => {
     const lut = buildColorLUT(1000, 40000, 64);
     expect(lut.length).toBe(64 * 4);
-    // Entries are luminance-normalized, so an individual channel may exceed 1 (a 40000 K blue is
-    // ~4.3 in blue). That is intentional and safe: the LUT is an f32 storage buffer, not unorm8.
+    // Entries are luminance-normalized, so an individual channel may exceed 1. The largest is red
+    // at the cool end (1000 K -> r = 4.29, because a dim red has little luminance to divide by);
+    // 40000 K peaks at b = 2.05. Intentional and safe: the LUT is an f32 storage buffer, not unorm8.
     for (const x of lut) { expect(Number.isFinite(x)).toBe(true); expect(x).toBeGreaterThanOrEqual(0); }
   });
 });
