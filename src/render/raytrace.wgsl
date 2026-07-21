@@ -251,25 +251,16 @@ fn skyDir(s: State, a: f32) -> vec3<f32> {
   let ndc = (vec2<f32>(f32(gid.x), f32(gid.y)) + 0.5 + jit) / U.res * 2.0 - 1.0;
   let alpha = ndc.x * U.fovScale * aspect;
   let beta  = -ndc.y * U.fovScale;
-  // Bardeen impact parameter -> conserved azimuthal angular momentum
-  let xi = -alpha * sin(i);
-  // Carter constant from the Bardeen screen coordinates: eta = beta^2 + xi^2*cot^2(i) - a^2*cos^2(i).
-  // Both xi and eta are conserved, so they classify a ray regardless of where integration stopped.
-  let ci = cos(i); let si = sin(i);
-  let eta = beta*beta + xi*xi*(ci*ci)/max(si*si, 1e-8) - a*a*ci*ci;
+  // Bardeen impact parameters -> conserved (xi, eta). Sole copy lives in camera-shared.wgsl,
+  // which gpu.ts prepends here and parity.browser.ts prepends to camera-parity.wgsl.
+  let xe = cameraXiEta(alpha, beta, a, i);
+  let xi = xe.x; let eta = xe.y;
 
-  // initial state at (rObs, i, 0), E=1
+  // initial state at (rObs, i, 0), E=1. Past-directed momentum -- see cameraMomenta().
   let r0 = U.rObs; let th0 = i;
-  // Backward tracing follows the arriving photon's worldline in REVERSE, which negates the whole
-  // 4-momentum -- not p_t alone. This ray is past-directed (dt/dl < 0) and inward (dr/dl < 0).
-  // Negating only p_t leaves a future-directed ray falling away from the camera: a different
-  // geodesic, which renders inclination (pi - incl). See src/physics/camera.ts and tests/camera.test.ts.
-  // xi = L_z/E is unchanged by the negation, so the g-factor and classifier below still use xi.
-  let pt = 1.0; let pphi = -xi; let pth = -beta;
   let gU = gUp(r0, th0, a);
-  let rest = gU[0]*pt*pt + 2.0*gU[1]*pt*pphi + gU[3]*pth*pth + gU[4]*pphi*pphi;
-  let pr = -sqrt(max(0.0, -rest/gU[2])); // inward
-  var s = State(vec4<f32>(0.0, r0, th0, 0.0), vec4<f32>(pt, pr, pth, pphi));
+  let p0 = cameraMomenta(xi, beta, gU[0], gU[1], gU[2], gU[3], gU[4]);
+  var s = State(vec4<f32>(0.0, r0, th0, 0.0), p0);
 
   let rh = 1.0 + sqrt(max(0.0, 1.0 - a*a)); // horizon
   var color = vec3<f32>(0.0);

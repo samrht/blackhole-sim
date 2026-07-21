@@ -2,6 +2,7 @@ import { packUniforms, UniformValues, UNIFORM_SIZE } from "./uniforms";
 import presentWGSL from "./present.wgsl?raw";
 import raytraceWGSL from "./raytrace.wgsl?raw";
 import shadowSharedWGSL from "./shadow-shared.wgsl?raw";
+import cameraSharedWGSL from "./camera-shared.wgsl?raw";
 import bloomWGSL from "./bloom.wgsl?raw";
 
 export class Renderer {
@@ -89,9 +90,12 @@ export class Renderer {
   }
 
   buildPipelines() {
-    // Prepended, not appended: declarations must precede use. shadow-shared.wgsl is the sole copy
-    // of the critical-curve classifier and is shared verbatim with the ?parity route.
-    const cMod = this.device.createShaderModule({ code: shadowSharedWGSL + raytraceWGSL });
+    // Prepended, not appended: declarations must precede use. shadow-shared.wgsl (critical-curve
+    // classifier) and camera-shared.wgsl (screen -> xi/eta + initial momentum) are the sole copies
+    // of their math and are shared verbatim with the ?parity route. Both are self-contained --
+    // camera-shared.wgsl takes the inverse-metric components as arguments rather than calling
+    // gUp() -- so the concatenation order between them does not matter.
+    const cMod = this.device.createShaderModule({ code: shadowSharedWGSL + cameraSharedWGSL + raytraceWGSL });
     const pMod = this.device.createShaderModule({ code: presentWGSL });
     const bMod = this.device.createShaderModule({ code: bloomWGSL });
     this.computePipe = this.device.createComputePipeline({ layout: "auto", compute: { module: cMod, entryPoint: "main" } });
