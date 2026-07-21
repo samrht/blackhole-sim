@@ -306,7 +306,11 @@ fn cartOf(x: vec4<f32>) -> vec3<f32> {
       }
     }
     s = sNew;
-    if (s.x.y <= rh * 1.001) { color = vec3(0.0); resolved = true; break; }   // captured -> shadow
+    // captured -> shadow. The margin must exceed one integration step (dl_min = 0.002 moves r by
+    // ~4.2e-3 M at a=0.9), otherwise RK4's intermediate stages sample r < r_+, where Delta < 0
+    // flips the metric signature and the state explodes to garbage that can pass the escape test
+    // and paint starfield inside the shadow.
+    if (s.x.y <= rh * 1.005) { color = vec3(0.0); resolved = true; break; }
     if (s.x.y > r0 * 1.2) {
       // escaped: sample the background along the ray's (bent) asymptotic direction.
       // The deflected direction makes the starfield appear gravitationally lensed —
