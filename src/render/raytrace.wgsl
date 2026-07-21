@@ -149,9 +149,9 @@ fn vnoiseE(x: f32, y: f32) -> f32 {
   return (a00 * (1.0 - fx) + a10 * fx) * (1.0 - fy) + (a01 * (1.0 - fx) + a11 * fx) * fy;
 }
 fn turbulenceE(logR: f32, psi: f32) -> f32 {
-  var sum = 0.0; var amp = 0.5; var freq = 1.0;
-  for (var o = 0u; o < 3u; o++) { sum += amp * vnoiseE(logR * freq, psi * freq); amp *= 0.5; freq *= 2.0; }
-  return sum;
+  var sum = 0.0; var amp = 0.5; var freq = 1.0; var norm = 0.0;
+  for (var o = 0u; o < 3u; o++) { sum += amp * vnoiseE(logR * freq, psi * freq); norm += amp; amp *= 0.5; freq *= 2.0; }
+  return sum / norm;
 }
 fn hotspotFieldE(rHit: f32, psi: f32) -> f32 {
   var s = 0.0;
@@ -223,6 +223,23 @@ fn cartOf(x: vec4<f32>) -> vec3<f32> {
   return vec3<f32>(r * s * cos(ph), r * s * sin(ph), r * cos(th));
 }
 
+// Asymptotic sky direction of an escaping ray. Built from the propagation direction
+// dx^mu/dl = g^{mu nu} p_nu, NOT the position unit vector: at the r>1.2*rObs cutoff those differ
+// by ~b/r (up to ~16 mrad, ~11 panorama texels), which displaces every background star radially.
+// gUp indices: 0=tt, 1=tphi, 2=rr, 3=thth, 4=phph. State packs momenta in s.p = (pt,pr,pth,pphi).
+fn skyDir(s: State, a: f32) -> vec3<f32> {
+  let r = s.x.y; let th = s.x.z; let ph = s.x.w;
+  let g = gUp(r, th, a);
+  let dr  = g[2] * s.p.y;
+  let dth = g[3] * s.p.z;
+  let dph = g[1] * s.p.x + g[4] * s.p.w;
+  let st = sin(th); let ct = cos(th); let sp = sin(ph); let cp = cos(ph);
+  return normalize(vec3<f32>(
+    dr * st * cp + r * ct * cp * dth - r * st * sp * dph,
+    dr * st * sp + r * ct * sp * dth + r * st * cp * dph,
+    dr * ct - r * st * dth));
+}
+
 @compute @workgroup_size(8,8) fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   if (gid.x >= u32(U.res.x) || gid.y >= u32(U.res.y)) { return; }
   let idx = gid.y * u32(U.res.x) + gid.x;
@@ -243,7 +260,12 @@ fn cartOf(x: vec4<f32>) -> vec3<f32> {
 
   // initial state at (rObs, i, 0), E=1
   let r0 = U.rObs; let th0 = i;
-  let pt = -1.0; let pphi = xi; let pth = beta; // sign of p_th set by image y
+  // Backward tracing follows the arriving photon's worldline in REVERSE, which negates the whole
+  // 4-momentum -- not p_t alone. This ray is past-directed (dt/dl < 0) and inward (dr/dl < 0).
+  // Negating only p_t leaves a future-directed ray falling away from the camera: a different
+  // geodesic, which renders inclination (pi - incl). See src/physics/camera.ts and tests/camera.test.ts.
+  // xi = L_z/E is unchanged by the negation, so the g-factor and classifier below still use xi.
+  let pt = 1.0; let pphi = -xi; let pth = -beta;
   let gU = gUp(r0, th0, a);
   let rest = gU[0]*pt*pt + 2.0*gU[1]*pt*pphi + gU[3]*pth*pth + gU[4]*pphi*pphi;
   let pr = -sqrt(max(0.0, -rest/gU[2])); // inward
@@ -255,8 +277,7 @@ fn cartOf(x: vec4<f32>) -> vec3<f32> {
   var jetAccum = vec3<f32>(0.0); // optically-thin jet emission integrated along the ray
 
   for (var step = 0u; step < U.maxSteps; step++) {
-    // dl > 0 with p_r < 0 integrates INWARD (matches the geodesic capture test; a negative dl
-    // would march rays outward -> black screen).
+    // dl > 0 with p_r < 0 integrates INWARD along the reversed worldline.
     let r = s.x.y;
     // distance-adaptive step: fine in the strong-field/disk region, large strides through the
     // near-flat far field (curvature ~M/r^3 is negligible there) so we don't burn thousands of
@@ -302,13 +323,16 @@ fn cartOf(x: vec4<f32>) -> vec3<f32> {
       }
     }
     s = sNew;
-    if (s.x.y <= rh * 1.001) { color = vec3(0.0); resolved = true; break; }   // captured -> shadow
+    // captured -> shadow. The margin must exceed one integration step (dl_min = 0.002 moves r by
+    // ~4.2e-3 M at a=0.9), otherwise RK4's intermediate stages sample r < r_+, where Delta < 0
+    // flips the metric signature and the state explodes to garbage that can pass the escape test
+    // and paint starfield inside the shadow.
+    if (s.x.y <= rh * 1.005) { color = vec3(0.0); resolved = true; break; }
     if (s.x.y > r0 * 1.2) {
       // escaped: sample the background along the ray's (bent) asymptotic direction.
       // The deflected direction makes the starfield appear gravitationally lensed —
       // warped and magnified into a ring around the shadow.
-      let th = s.x.z; let ph = s.x.w;
-      let dir = normalize(vec3<f32>(sin(th)*cos(ph), sin(th)*sin(ph), cos(th)));
+      let dir = skyDir(s, a);
       // Baked panorama crossfaded over the procedural starfield by skyStrength (0 => unchanged).
       let mixT = clamp(U.skyStrength, 0.0, 1.0);
       color = mix(starfield(dir), skySample(dir) * U.skyStrength, mixT);
@@ -332,7 +356,7 @@ fn cartOf(x: vec4<f32>) -> vec3<f32> {
     if (classifyCaptured(xi, eta, a) || !usable) {
       color = vec3<f32>(0.0);
     } else {
-      let dir = normalize(vec3<f32>(sin(th)*cos(ph), sin(th)*sin(ph), cos(th)));
+      let dir = skyDir(s, a);
       let mixT = clamp(U.skyStrength, 0.0, 1.0);
       color = mix(starfield(dir), skySample(dir) * U.skyStrength, mixT);
     }

@@ -30,9 +30,11 @@ export function vnoise(x: number, y: number): number {
 }
 /** Multi-octave value noise in [0,~1); domain (logR, psi) so features shear with radius and phase. */
 export function turbulence(logR: number, psi: number, octaves: number): number {
-  let sum = 0, amp = 0.5, freq = 1;
-  for (let o = 0; o < octaves; o++) { sum += amp * vnoise(logR * freq, psi * freq); amp *= 0.5; freq *= 2; }
-  return sum;
+  let sum = 0, amp = 0.5, freq = 1, norm = 0;
+  for (let o = 0; o < octaves; o++) { sum += amp * vnoise(logR * freq, psi * freq); norm += amp; amp *= 0.5; freq *= 2; }
+  // Divide by the octave-amplitude sum: without it the mean is 0.434, not the 0.5 that callers
+  // recentre against, so raising turbAmp systematically dims the disk (0.921x at the 0.6 default).
+  return norm > 0 ? sum / norm : 0;
 }
 
 const TWO_PI = 2 * Math.PI;

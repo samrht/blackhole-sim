@@ -3,7 +3,16 @@
 // Reuses the Tier 2A value-noise basis (emission.vnoise) so there is one shared noise impl.
 import { vnoise } from "./emission";
 
-/** Shared design constants. The WGSL twins hardcode these exact values. */
+/** Shared design constants.
+ *
+ * The shape and beaming constants below (rho0 .. knotSeed) are hardcoded identically in both WGSL
+ * twins and are covered by the ?parity route, so a desync there fails a gate.
+ *
+ * `gain` and `ceil` are NOT: they scale accumulated radiance at the integration site in
+ * raytrace.wgsl, downstream of the emission function jet-parity.wgsl exercises. Nothing in TS reads
+ * them — they are documentation of what the shader does, and they had drifted (0.06/8.0 recorded
+ * against the shader's actual 0.03/4.0). Keep them in step with raytrace.wgsl:179 by hand.
+ */
 export const JET = {
   rho0: 0.6, slope: 0.7,      // funnel throat radius (M) and parabolic flare (M^1/2)
   qPeak: 0.8, wWall: 0.22,    // limb-brightening: wall peak position and width (in q units)
@@ -12,8 +21,8 @@ export const JET = {
   pBeam: 3.5,                 // beaming exponent (3 + spectral index)
   turbAmpJet: 0.35,           // small cross-funnel churn
   knotSeed: 17.0,             // fixed 2nd-axis coordinate for the 1-D knot noise
-  gain: 0.06,                 // per-dl emissivity -> radiance scale
-  ceil: 8.0,                  // clamp on accumulated jet radiance (anti-blowout)
+  gain: 0.03,                 // per-dl emissivity -> radiance scale   (raytrace.wgsl JET_GAIN)
+  ceil: 4.0,                  // clamp on accumulated jet radiance     (raytrace.wgsl JET_CEIL)
 } as const;
 
 function smoothstep(a: number, b: number, x: number): number {

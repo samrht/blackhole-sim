@@ -13,7 +13,7 @@ function planck(lambda_m: number, T: number): number {
   return (1 / Math.pow(lambda_m, 5)) / (Math.exp(H * C / (lambda_m * KB * T)) - 1);
 }
 
-/** Linear sRGB color of a blackbody at temperature T (K), chromaticity-preserving, max channel = 1. */
+/** Linear sRGB color of a blackbody at temperature T (K), chromaticity-preserving, luminance = 1. */
 export function blackbodyLinearSRGB(T: number): [number, number, number] {
   let X = 0, Y = 0, Z = 0;
   for (let nm = 360; nm <= 830; nm += 5) {
@@ -25,6 +25,11 @@ export function blackbodyLinearSRGB(T: number): [number, number, number] {
   let g = -0.9689 * X + 1.8758 * Y + 0.0415 * Z;
   let b = 0.0557 * X - 0.2040 * Y + 1.0570 * Z;
   r = Math.max(0, r); g = Math.max(0, g); b = Math.max(0, b);
-  const m = Math.max(r, g, b) || 1;
-  return [r / m, g / m, b / m];
+  // Normalize by relative luminance, NOT by max channel. The shader multiplies this by (g*Tn)^4
+  // to realize the T_obs^4 law; if the LUT's luminance varied with T (max-channel normalization
+  // gives 0.96 at 6504 K falling to 0.49 at 40000 K) that law would be silently scaled by a
+  // factor sliding ~2x across the disk. Channels may exceed 1; the LUT is an f32 storage buffer.
+  // (named `lum`, not `Y`: the CIE Y accumulator above already owns that name)
+  const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b || 1;
+  return [r / lum, g / lum, b / lum];
 }

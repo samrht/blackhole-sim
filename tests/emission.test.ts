@@ -27,6 +27,14 @@ describe("emission", () => {
     }
   });
 
+  it("turbulence is centred near 0.5 so the emission multiplier is unbiased", () => {
+    let s = 0; const N = 200000;
+    for (let i = 0; i < N; i++) s += turbulence((i * 0.7331) % 50, (i * 1.4177) % 50, 3);
+    const mean = s / N;
+    expect(mean).toBeGreaterThan(0.47);
+    expect(mean).toBeLessThan(0.53);
+  });
+
   it("hotspotField peaks at the spot center and decays far away, and is periodic in psi", () => {
     const spots: HotSpot[] = [{ r: 10, psi: 1.0, sigma: 1.0, amp: 2.0 }];
     const peak = hotspotField(10, 1.0, spots);
