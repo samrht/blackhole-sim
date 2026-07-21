@@ -309,9 +309,13 @@ to:
   const smod = device.createShaderModule({ code: shadowParityWGSL });
 ```
 
-Run `npm run verify:gpu`. Expected: **FAIL** with a WGSL compile error naming `classifyCaptured` as unresolved. That failure is the proof that `shadow-parity.wgsl` holds no local copy of the math.
+Run `npm run verify:gpu`. Expected: **`?parity` FAILS.** That failure is the proof that `shadow-parity.wgsl` holds no local copy of the math.
 
-If it PASSES, a duplicate copy has crept in somewhere — stop and report.
+**Do not expect a readable WGSL error in the verify:gpu output.** Task 1 established that `verify-gpu.mjs` only collects `pageerror` events, while Chrome reports WGSL compile failures as console *warnings* — so a broken shader surfaces as a downstream symptom (a thrown JS error, a hang, or a nonsense number), not as `unresolved call target`. Judge this step on `?parity` failing by any mechanism.
+
+To confirm the *cause* is the unresolved identifier rather than unrelated breakage, capture the browser console directly with a temporary Playwright script. Put it in `scripts/` (playwright-core is not resolvable from outside the repo), use `.mjs` with `import` (package.json sets `"type": "module"`, so `require()` is undefined), and delete it afterwards. Attach `page.on("console", ...)` and look for `unresolved call target 'classifyCaptured'`.
+
+If `?parity` PASSES, a duplicate copy of the math has crept in somewhere — stop and report.
 
 Now revert the line back to `shadowSharedWGSL + shadowParityWGSL`.
 
