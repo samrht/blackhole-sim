@@ -223,6 +223,23 @@ fn cartOf(x: vec4<f32>) -> vec3<f32> {
   return vec3<f32>(r * s * cos(ph), r * s * sin(ph), r * cos(th));
 }
 
+// Asymptotic sky direction of an escaping ray. Built from the propagation direction
+// dx^mu/dl = g^{mu nu} p_nu, NOT the position unit vector: at the r>1.2*rObs cutoff those differ
+// by ~b/r (up to ~16 mrad, ~11 panorama texels), which displaces every background star radially.
+// gUp indices: 0=tt, 1=tphi, 2=rr, 3=thth, 4=phph. State packs momenta in s.p = (pt,pr,pth,pphi).
+fn skyDir(s: State, a: f32) -> vec3<f32> {
+  let r = s.x.y; let th = s.x.z; let ph = s.x.w;
+  let g = gUp(r, th, a);
+  let dr  = g[2] * s.p.y;
+  let dth = g[3] * s.p.z;
+  let dph = g[1] * s.p.x + g[4] * s.p.w;
+  let st = sin(th); let ct = cos(th); let sp = sin(ph); let cp = cos(ph);
+  return normalize(vec3<f32>(
+    dr * st * cp + r * ct * cp * dth - r * st * sp * dph,
+    dr * st * sp + r * ct * sp * dth + r * st * cp * dph,
+    dr * ct - r * st * dth));
+}
+
 @compute @workgroup_size(8,8) fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   if (gid.x >= u32(U.res.x) || gid.y >= u32(U.res.y)) { return; }
   let idx = gid.y * u32(U.res.x) + gid.x;
@@ -315,8 +332,7 @@ fn cartOf(x: vec4<f32>) -> vec3<f32> {
       // escaped: sample the background along the ray's (bent) asymptotic direction.
       // The deflected direction makes the starfield appear gravitationally lensed —
       // warped and magnified into a ring around the shadow.
-      let th = s.x.z; let ph = s.x.w;
-      let dir = normalize(vec3<f32>(sin(th)*cos(ph), sin(th)*sin(ph), cos(th)));
+      let dir = skyDir(s, a);
       // Baked panorama crossfaded over the procedural starfield by skyStrength (0 => unchanged).
       let mixT = clamp(U.skyStrength, 0.0, 1.0);
       color = mix(starfield(dir), skySample(dir) * U.skyStrength, mixT);
@@ -340,7 +356,7 @@ fn cartOf(x: vec4<f32>) -> vec3<f32> {
     if (classifyCaptured(xi, eta, a) || !usable) {
       color = vec3<f32>(0.0);
     } else {
-      let dir = normalize(vec3<f32>(sin(th)*cos(ph), sin(th)*sin(ph), cos(th)));
+      let dir = skyDir(s, a);
       let mixT = clamp(U.skyStrength, 0.0, 1.0);
       color = mix(starfield(dir), skySample(dir) * U.skyStrength, mixT);
     }
