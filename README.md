@@ -70,7 +70,12 @@ r≈1.56M vs. ~500 at the retrograde edge r≈3.91M), so a budget of 4800 resolv
 completely but leaves the innermost prograde part of the n=1 subring still budget-limited. n=2
 subrings are not visible and cannot be at the default field of view — successive subrings are
 thinner by a factor of roughly e^(−2π) ≈ 1/535, well under one pixel at the default `fovScale`;
-seeing one would require a narrow-FOV zoom, which is out of scope. Note this is the first feature
+seeing one would require a narrow-FOV zoom, which is out of scope — and a zoom alone would not
+suffice, since n=2 is also bounded by integrator accuracy: the geodesic forces come from finite
+differences (`h=1e-4` in raytrace.wgsl) rather than analytic Christoffels, giving ~1e-3 relative
+force error per step in f32, and non-symplectic RK4 lets that drift secularly while a near-critical
+spherical orbit amplifies it by the same e^(2π) ≈ 535 per winding, so the error reaches O(1) after
+roughly 2–3 windings. Note this is the first feature
 that does **not** preserve the project's bit-identical-when-off property: correcting the artifact
 necessarily changes pixels near the shadow edge. `?parity` is math-only and is unchanged.
 

@@ -369,6 +369,14 @@ fn classifyCaptured(xi: f32, eta: f32, a: f32) -> bool {
   // Temporal EMA: blend = 1/(frame+1) reproduces the Tier-1 running mean when static; a fixed
   // blend (~0.15) tracks an animating scene. blend==1 (first frame after a reset) clears cleanly.
   // Additive optically-thin jet on top of whatever the ray terminated on (disk/starfield/shadow).
-  let composited = color + U.jetStrength * min(jetAccum, vec3<f32>(JET_CEIL));
+  let raw = color + U.jetStrength * min(jetAccum, vec3<f32>(JET_CEIL));
+  // Single choke point: nothing non-finite may enter accum. The in-loop escape branch above reads
+  // s.x without the `usable` guard, so a diverged RK4 ray (r = +inf compares true, th/ph NaN) can
+  // still produce a NaN colour there. A NaN in accum is PERMANENT -- mix(NaN, ..) stays NaN for
+  // every later frame -- and bloom.wgsl's separable blur amplifies that one pixel into a whole
+  // block. NaN compares false to everything, so this range test rejects NaN and both infinities
+  // without a bitcast, and is exactly inert for finite values.
+  let finite = all(raw > vec3<f32>(-1e30)) && all(raw < vec3<f32>(1e30));
+  let composited = select(vec3<f32>(0.0), raw, finite);
   accum[idx] = vec4<f32>(mix(accum[idx].rgb, composited, U.blend), 1.0);
 }

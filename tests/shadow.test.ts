@@ -74,6 +74,27 @@ describe("Kerr critical curve", () => {
     expect(classify(0, 27 * 1.02, 1e-3)).toBe("escaped");
   });
 
+  it("the bisection brackets the critical curve at nonzero xi across the whole photon shell", () => {
+    // The other classify() tests only probe xi in {0, 50}, so the bisection's inversion of xi_c(r)
+    // was never pinned at a generic nonzero xi. Here we walk the shell, take the exact critical
+    // (xi_c, eta_c) at each radius, and require +/-1% in eta to straddle the capture threshold.
+    // Measured: 119 interior samples at each spin, 0 failures, min eta_c = 0.695 (a=0.9) and
+    // 1.534 (a=0.998) -- so 1% is far above any float noise and no sample needs the eta~0 skip
+    // (that guard only matters if the sampling is pushed nearer the endpoints, where eta_c -> 0
+    // and +/-1% of zero is meaningless).
+    for (const a of [0.9, 0.998]) {
+      const [lo, hi] = photonShellRange(a);
+      const N = 120;
+      for (let i = 1; i < N; i++) {
+        const r = lo + ((hi - lo) * i) / N; // strictly inside the shell
+        const [xiC, etaC] = criticalXiEta(r, a);
+        if (Math.abs(etaC) < 1e-6) continue; // shell endpoint: +/-1% of ~0 is meaningless
+        expect(classify(xiC, 0.99 * etaC, a)).toBe("captured");
+        expect(classify(xiC, 1.01 * etaC, a)).toBe("escaped");
+      }
+    }
+  });
+
   it("the a=0 boundary is a symmetric circle of radius sqrt(27)", () => {
     const pts = shadowBoundary(0, Math.PI / 2, 400);
     const al = pts.map((p) => p[0]);

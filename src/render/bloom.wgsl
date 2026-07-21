@@ -31,7 +31,12 @@ fn dims_lo() -> vec2<u32> { let f = dims_full(); return (f + vec2<u32>(DOWN - 1u
   for (var i = -RADIUS; i <= RADIUS; i++) {
     let sx = clamp(cx + i, 0, i32(full.x) - 1);
     let idx = u32(cy) * full.x + u32(sx);
-    var c = src[idx].rgb; // accum already holds normalized radiance (EMA / running mean)
+    // accum already holds normalized radiance (EMA / running mean). Defence-in-depth: raytrace.wgsl
+    // guarantees only finite values reach accum, but a single non-finite tap here would spread over
+    // a ~52x52 full-res block (13 taps, two separable passes, quarter res). NaN compares false to
+    // everything, so this range test rejects NaN and both infinities without a bitcast.
+    let t = src[idx].rgb;
+    var c = select(vec3<f32>(0.0), t, all(t > vec3<f32>(-1e30)) && all(t < vec3<f32>(1e30)));
     // bright-pass: isolate the luminous core (hot disk + bright stars), reject the dark void
     let lum = dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));
     c = c * smoothstep(0.75, 1.7, lum);
@@ -54,7 +59,9 @@ fn dims_lo() -> vec2<u32> { let f = dims_full(); return (f + vec2<u32>(DOWN - 1u
     let idx = u32(sy) * lo.x + gid.x;
     let fi = f32(i);
     let w = exp(-fi * fi / SIGMA2);
-    sum += src[idx].rgb * w;
+    let t = src[idx].rgb;
+    let c = select(vec3<f32>(0.0), t, all(t > vec3<f32>(-1e30)) && all(t < vec3<f32>(1e30)));
+    sum += c * w;
     wsum += w;
   }
   dst[gid.y * lo.x + gid.x] = vec4<f32>(sum / wsum, 1.0);

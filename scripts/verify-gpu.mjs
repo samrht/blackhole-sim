@@ -2,13 +2,13 @@
 // channel) against the dev/preview server to run the in-browser validation routes and capture a
 // reference render. WebGPU can't run under jsdom, so these checks live here rather than in vitest.
 //
-//   npm run dev            # in one terminal (serves on :4178 by config below, or pass BASE=)
+//   npm run dev            # in one terminal (serves on :5173 by vite.config.ts, or pass BASE=)
 //   node scripts/verify-gpu.mjs
 //
 // Exits non-zero if either the CPU<->GPU parity route or the Schwarzschild shadow route fails.
 import { chromium } from "playwright-core";
 
-const BASE = process.env.BASE || "http://localhost:4178";
+const BASE = process.env.BASE || "http://localhost:5173";
 const SHOT = process.env.SHOT || "render.png";
 
 const browser = await chromium.launch({
