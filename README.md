@@ -30,7 +30,7 @@ npm run build     # production build
 ```
 
 Validation routes (append to the dev URL):
-- `?parity` — CPU↔GPU parity check for the core physics math
+- `?parity` — CPU↔GPU parity check for the core physics math, including the shadow-edge classifier compiled from the same shared WGSL fragment the renderer uses
 - `?shadow` — structural check that the Schwarzschild shadow radius matches the analytic value (√27 M)
 
 ## Architecture

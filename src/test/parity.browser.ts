@@ -6,6 +6,9 @@ import { turbulence } from "../physics/emission";
 import turbParityWGSL from "../render/turb-parity.wgsl?raw";
 import { jetEmission, dopplerBoost } from "../physics/jet";
 import jetParityWGSL from "../render/jet-parity.wgsl?raw";
+import { classify, criticalXiEta, photonShellRange } from "../physics/shadow";
+import shadowSharedWGSL from "../render/shadow-shared.wgsl?raw";
+import shadowParityWGSL from "../render/shadow-parity.wgsl?raw";
 
 /** Runs the WGSL metric/orbit/g-factor helpers on fixed inputs and returns the max relative
  *  error vs the TypeScript core. f32 GPU vs f64 CPU keeps this in the ~1e-6..1e-4 range. */
@@ -92,5 +95,46 @@ export async function runParity(): Promise<{ maxErr: number; rows: number }> {
     maxErr = Math.max(maxErr, Math.abs(jgpu[i * 4 + 0] - cpuE) / (1 + Math.abs(cpuE)));
     maxErr = Math.max(maxErr, Math.abs(jgpu[i * 4 + 1] - cpuB) / (1 + Math.abs(cpuB)));
   });
-  return { maxErr, rows: cases.length + tcases.length + jcases.length };
+  // --- shadow-classifier parity (CPU shadow.ts vs the SHIPPED classifier in shadow-shared.wgsl) ---
+  // Unlike the blocks above, this does NOT compare against a separate copy of the math: the same
+  // shadow-shared.wgsl that gpu.ts prepends to raytrace.wgsl is prepended here, so a desync
+  // between the renderer and shadow.ts cannot hide. Cases straddle the critical curve at +/-1% in
+  // eta, which is where a formula drift would first flip a pixel.
+  const scases: { xi: number; eta: number; a: number }[] = [];
+  for (const a of [0.9, 0.998]) {
+    const [slo, shi] = photonShellRange(a);
+    for (let i = 1; i <= 5; i++) {
+      const r = slo + ((shi - slo) * i) / 6; // strictly inside the photon shell
+      const [xiC, etaC] = criticalXiEta(r, a);
+      scases.push({ xi: xiC, eta: 0.99 * etaC, a }); // just inside -> captured
+      scases.push({ xi: xiC, eta: 1.01 * etaC, a }); // just outside -> escaped
+    }
+  }
+  // The shell sampling never reaches these two branches, so cover them explicitly:
+  scases.push({ xi: 0, eta: 26.5, a: 0 }, { xi: 0, eta: 27.5, a: 0 });      // |a| < A_EPS short-circuit
+  scases.push({ xi: 1000, eta: 1, a: 0.9 }, { xi: -1000, eta: 1, a: 0.9 }); // out-of-bracket early return
+  const sin_ = device.createBuffer({ size: scases.length * 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+  const sarr = new Float32Array(scases.length * 4);
+  scases.forEach((c, i) => { sarr.set([c.xi, c.eta, c.a, 0], i * 4); });
+  device.queue.writeBuffer(sin_, 0, sarr);
+  const sout = device.createBuffer({ size: scases.length * 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
+  const sread = device.createBuffer({ size: scases.length * 16, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+  const smod = device.createShaderModule({ code: shadowSharedWGSL + shadowParityWGSL });
+  const spipe = device.createComputePipeline({ layout: "auto", compute: { module: smod, entryPoint: "main" } });
+  const sbind = device.createBindGroup({ layout: spipe.getBindGroupLayout(0), entries: [
+    { binding: 0, resource: { buffer: sin_ } }, { binding: 1, resource: { buffer: sout } }] });
+  const senc = device.createCommandEncoder();
+  const scp = senc.beginComputePass(); scp.setPipeline(spipe); scp.setBindGroup(0, sbind); scp.dispatchWorkgroups(scases.length); scp.end();
+  senc.copyBufferToBuffer(sout, 0, sread, 0, scases.length * 16);
+  device.queue.submit([senc.finish()]);
+  await sread.mapAsync(GPUMapMode.READ);
+  const sgpu = new Float32Array(sread.getMappedRange().slice(0));
+  scases.forEach((c, i) => {
+    // Absolute difference, not relative: the value is already a 0/1 flag, so a mismatch scores 1.0
+    // -- three orders of magnitude above the 1e-3 pass threshold -- and agreement scores exactly 0,
+    // leaving the documented 9.690e-7 gate untouched.
+    const cpu = classify(c.xi, c.eta, c.a) === "captured" ? 1 : 0;
+    maxErr = Math.max(maxErr, Math.abs(sgpu[i * 4 + 0] - cpu));
+  });
+  return { maxErr, rows: cases.length + tcases.length + jcases.length + scases.length };
 }
