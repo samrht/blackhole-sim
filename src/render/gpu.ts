@@ -1,6 +1,7 @@
 import { packUniforms, UniformValues, UNIFORM_SIZE } from "./uniforms";
 import presentWGSL from "./present.wgsl?raw";
 import raytraceWGSL from "./raytrace.wgsl?raw";
+import shadowSharedWGSL from "./shadow-shared.wgsl?raw";
 import bloomWGSL from "./bloom.wgsl?raw";
 
 export class Renderer {
@@ -88,7 +89,9 @@ export class Renderer {
   }
 
   buildPipelines() {
-    const cMod = this.device.createShaderModule({ code: raytraceWGSL });
+    // Prepended, not appended: declarations must precede use. shadow-shared.wgsl is the sole copy
+    // of the critical-curve classifier and is shared verbatim with the ?parity route.
+    const cMod = this.device.createShaderModule({ code: shadowSharedWGSL + raytraceWGSL });
     const pMod = this.device.createShaderModule({ code: presentWGSL });
     const bMod = this.device.createShaderModule({ code: bloomWGSL });
     this.computePipe = this.device.createComputePipeline({ layout: "auto", compute: { module: cMod, entryPoint: "main" } });
