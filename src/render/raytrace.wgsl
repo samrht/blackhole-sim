@@ -149,9 +149,9 @@ fn vnoiseE(x: f32, y: f32) -> f32 {
   return (a00 * (1.0 - fx) + a10 * fx) * (1.0 - fy) + (a01 * (1.0 - fx) + a11 * fx) * fy;
 }
 fn turbulenceE(logR: f32, psi: f32) -> f32 {
-  var sum = 0.0; var amp = 0.5; var freq = 1.0;
-  for (var o = 0u; o < 3u; o++) { sum += amp * vnoiseE(logR * freq, psi * freq); amp *= 0.5; freq *= 2.0; }
-  return sum;
+  var sum = 0.0; var amp = 0.5; var freq = 1.0; var norm = 0.0;
+  for (var o = 0u; o < 3u; o++) { sum += amp * vnoiseE(logR * freq, psi * freq); norm += amp; amp *= 0.5; freq *= 2.0; }
+  return sum / norm;
 }
 fn hotspotFieldE(rHit: f32, psi: f32) -> f32 {
   var s = 0.0;

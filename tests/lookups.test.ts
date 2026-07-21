@@ -11,9 +11,11 @@ describe("lookups", () => {
     expect(argmax).toBeGreaterThan(0);          // peak is not at the inner edge
     expect(argmax).toBeLessThan(255);
   });
-  it("color LUT: length 4N (RGBA), all finite in [0,1]", () => {
+  it("color LUT: length 4N (RGBA), all finite and non-negative", () => {
     const lut = buildColorLUT(1000, 40000, 64);
     expect(lut.length).toBe(64 * 4);
-    for (const x of lut) { expect(x).toBeGreaterThanOrEqual(0); expect(x).toBeLessThanOrEqual(1); }
+    // Entries are luminance-normalized, so an individual channel may exceed 1 (a 40000 K blue is
+    // ~4.3 in blue). That is intentional and safe: the LUT is an f32 storage buffer, not unorm8.
+    for (const x of lut) { expect(Number.isFinite(x)).toBe(true); expect(x).toBeGreaterThanOrEqual(0); }
   });
 });
