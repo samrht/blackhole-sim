@@ -243,7 +243,12 @@ fn cartOf(x: vec4<f32>) -> vec3<f32> {
 
   // initial state at (rObs, i, 0), E=1
   let r0 = U.rObs; let th0 = i;
-  let pt = -1.0; let pphi = xi; let pth = beta; // sign of p_th set by image y
+  // Backward tracing follows the arriving photon's worldline in REVERSE, which negates the whole
+  // 4-momentum -- not p_t alone. This ray is past-directed (dt/dl < 0) and inward (dr/dl < 0).
+  // Negating only p_t leaves a future-directed ray falling away from the camera: a different
+  // geodesic, which renders inclination (pi - incl). See src/physics/camera.ts and tests/camera.test.ts.
+  // xi = L_z/E is unchanged by the negation, so the g-factor and classifier below still use xi.
+  let pt = 1.0; let pphi = -xi; let pth = -beta;
   let gU = gUp(r0, th0, a);
   let rest = gU[0]*pt*pt + 2.0*gU[1]*pt*pphi + gU[3]*pth*pth + gU[4]*pphi*pphi;
   let pr = -sqrt(max(0.0, -rest/gU[2])); // inward
@@ -255,8 +260,7 @@ fn cartOf(x: vec4<f32>) -> vec3<f32> {
   var jetAccum = vec3<f32>(0.0); // optically-thin jet emission integrated along the ray
 
   for (var step = 0u; step < U.maxSteps; step++) {
-    // dl > 0 with p_r < 0 integrates INWARD (matches the geodesic capture test; a negative dl
-    // would march rays outward -> black screen).
+    // dl > 0 with p_r < 0 integrates INWARD along the reversed worldline.
     let r = s.x.y;
     // distance-adaptive step: fine in the strong-field/disk region, large strides through the
     // near-flat far field (curvature ~M/r^3 is negligible there) so we don't burn thousands of
