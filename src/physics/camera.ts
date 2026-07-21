@@ -3,10 +3,10 @@ import { nullRadialMomentum } from "./geodesic";
 /**
  * Screen impact parameters (alpha, beta) -> initial state for BACKWARD ray tracing.
  *
- * HAND-SYNC REQUIRED: this is duplicated in raytrace.wgsl (the `pt/pphi/pth/pr` block that sets up
- * each ray). No ?parity case covers the pair -- the reciprocity test below exercises this file
- * only -- so changing the camera convention here will NOT fail a gate while the shipped render
- * silently keeps the old mapping. Change both, or add a camera-parity.wgsl.
+ * GATED: the GPU twin is src/render/camera-shared.wgsl, which is the SOLE WGSL copy -- gpu.ts
+ * prepends it to raytrace.wgsl and parity.browser.ts prepends it to camera-parity.wgsl, so the
+ * ?parity route compiles the exact bytes the renderer runs. Changing the convention in either
+ * file without the other now FAILS ?parity. Do not inline a second copy of this math anywhere.
  *
  * The photon we see arrives at the camera moving outward, forward in coordinate time. Retracing
  * it means following its worldline in reverse, i.e. integrating the fully negated 4-momentum:

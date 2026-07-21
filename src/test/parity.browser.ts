@@ -9,6 +9,9 @@ import jetParityWGSL from "../render/jet-parity.wgsl?raw";
 import { classify, criticalXiEta, photonShellRange } from "../physics/shadow";
 import shadowSharedWGSL from "../render/shadow-shared.wgsl?raw";
 import shadowParityWGSL from "../render/shadow-parity.wgsl?raw";
+import { screenToState, screenToXiEta } from "../physics/camera";
+import cameraSharedWGSL from "../render/camera-shared.wgsl?raw";
+import cameraParityWGSL from "../render/camera-parity.wgsl?raw";
 
 /** Runs the WGSL metric/orbit/g-factor helpers on fixed inputs and returns the max relative
  *  error vs the TypeScript core. f32 GPU vs f64 CPU keeps this in the ~1e-6..1e-4 range. */
@@ -136,5 +139,54 @@ export async function runParity(): Promise<{ maxErr: number; rows: number }> {
     const cpu = classify(c.xi, c.eta, c.a) === "captured" ? 1 : 0;
     maxErr = Math.max(maxErr, Math.abs(sgpu[i * 4 + 0] - cpu));
   });
-  return { maxErr, rows: cases.length + tcases.length + jcases.length + scases.length };
+  // --- camera parity (CPU camera.ts vs the SHIPPED mapping in camera-shared.wgsl) ---
+  // Like the shadow block, this compares against the exact bytes gpu.ts prepends to raytrace.wgsl,
+  // not a hand-synced duplicate. The inverse-metric components are computed on the CPU (kerr.ts is
+  // parity-covered separately, above) and passed in, so this case isolates the camera algebra.
+  //
+  // Case selection targets the historical bug -- negating p_t alone instead of the whole momentum.
+  // That bug leaves pth = +beta and pr > 0 (outward), so it is only visible when beta != 0 and the
+  // sign of beta is checked BOTH ways, and its inclination error (pi - i) vanishes at i = pi/2.
+  // Hence: both signs of beta, a = 0 and a ~ 0.9, and inclinations well away from 90 degrees.
+  const ccases = [
+    { alpha:  4.0, beta:  3.0, a: 0.0,  incl: 1.2 },
+    { alpha:  4.0, beta: -3.0, a: 0.0,  incl: 1.2 },  // beta sign flip: catches pth = +beta
+    { alpha: -5.0, beta:  2.0, a: 0.9,  incl: 0.45 }, // far from pi/2: catches the pi - i mapping
+    { alpha: -5.0, beta: -2.0, a: 0.9,  incl: 0.45 },
+    { alpha:  6.0, beta:  1.5, a: 0.5,  incl: 2.6 },  // i > pi/2, mirror of the above
+    { alpha:  2.0, beta: -4.5, a: 0.998,incl: 1.0 },
+    { alpha:  0.0, beta:  3.5, a: 0.9,  incl: 0.8 },  // alpha = 0 edge: xi = 0
+    { alpha:  5.0, beta:  0.0, a: 0.9,  incl: 0.8 },  // beta = 0 edge: pth = 0
+    { alpha:  0.0, beta:  0.0, a: 0.0,  incl: 1.5 },  // both zero: radial ray
+  ];
+  const rObs = 100;
+  const cin = device.createBuffer({ size: ccases.length * 48, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+  const carr = new Float32Array(ccases.length * 12);
+  ccases.forEach((c, i) => {
+    const g = metricUpper(rObs, c.incl, c.a); // observer sits at theta = incl
+    carr.set([c.alpha, c.beta, c.a, c.incl], i * 12);
+    carr.set([g.tt, g.tphi, g.rr, g.thth], i * 12 + 4);
+    carr.set([g.phph, 0, 0, 0], i * 12 + 8);
+  });
+  device.queue.writeBuffer(cin, 0, carr);
+  const cout = device.createBuffer({ size: ccases.length * 32, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
+  const cread = device.createBuffer({ size: ccases.length * 32, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+  const cmod = device.createShaderModule({ code: cameraSharedWGSL + cameraParityWGSL });
+  const cpipe = device.createComputePipeline({ layout: "auto", compute: { module: cmod, entryPoint: "main" } });
+  const cbind = device.createBindGroup({ layout: cpipe.getBindGroupLayout(0), entries: [
+    { binding: 0, resource: { buffer: cin } }, { binding: 1, resource: { buffer: cout } }] });
+  const cenc = device.createCommandEncoder();
+  const ccp = cenc.beginComputePass(); ccp.setPipeline(cpipe); ccp.setBindGroup(0, cbind); ccp.dispatchWorkgroups(ccases.length); ccp.end();
+  cenc.copyBufferToBuffer(cout, 0, cread, 0, ccases.length * 32);
+  device.queue.submit([cenc.finish()]);
+  await cread.mapAsync(GPUMapMode.READ);
+  const cgpu = new Float32Array(cread.getMappedRange().slice(0));
+  ccases.forEach((c, i) => {
+    const st = screenToState(c.alpha, c.beta, c.a, c.incl, rObs); // [t,r,th,phi, pt,pr,pth,pphi]
+    const [xi, eta] = screenToXiEta(c.alpha, c.beta, c.a, c.incl);
+    const cpu = [st[4], st[5], st[6], st[7], xi, eta];
+    const got = [cgpu[i*8+0], cgpu[i*8+1], cgpu[i*8+2], cgpu[i*8+3], cgpu[i*8+4], cgpu[i*8+5]];
+    for (let k = 0; k < 6; k++) maxErr = Math.max(maxErr, Math.abs(got[k] - cpu[k]) / (1 + Math.abs(cpu[k])));
+  });
+  return { maxErr, rows: cases.length + tcases.length + jcases.length + scases.length + ccases.length };
 }
