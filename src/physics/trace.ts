@@ -8,9 +8,15 @@ import { rk4 } from "./geodesic";
  */
 
 /** Null-constraint tolerance, RELATIVE to the magnitude of the Hamiltonian's terms (see
- *  hquadScaled). PROVISIONAL until tests/sweep-htol.test.ts picks the final value. */
-export const H_TOL = 1e-4;
-/** Maximum number of step halvings before a step is accepted as untrusted. PROVISIONAL (see above). */
+ *  hquadScaled). Chosen from tests/sweep-htol.test.ts (SWEEP=1): 1e-3, 1e-4, 1e-5 all survived
+ *  (untrusted = 0 on both views, near-axis rHit within 0.02 M of the converged reference); 1e-2
+ *  failed accuracy and 1e-6 fell below the f32 floor; picked the largest (cheapest) survivor.
+ *  Twin constant in integrator-shared.wgsl. */
+export const H_TOL = 1e-3;
+/** Maximum number of step halvings before a step is accepted as untrusted. Chosen from the same
+ *  sweep: at H_TOL = 1e-3, maxRetry = 4, 8 and 12 all behaved identically (the cap was never
+ *  approached); shipped one size up from the smallest surviving value (4) for margin.
+ *  Twin constant in integrator-shared.wgsl. */
 export const MAX_RETRY = 8;
 
 /** Baseline step length: fine in the strong-field/disk region, long strides through the near-flat
