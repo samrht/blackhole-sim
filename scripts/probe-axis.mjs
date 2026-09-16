@@ -46,14 +46,20 @@ async function darkFraction(png, x, y0, y1) {
     return dark / Math.max(1, y1 - y0);
   }, [png.toString("base64"), x, y0, y1]);
 }
-/** Top edge of the dark run containing the frame centre on column x (the shadow's upper edge). */
+/** Top edge of the dark run containing the frame centre around column x (the shadow's upper edge).
+ *  Uses the median luminance over x-2..x+2 per row, so an isolated lit pixel on the axis column
+ *  inside the shadow (an f32 near-axis residual, see README limitation (a)) does not stop the walk. */
 async function shadowTop(png, x) {
   return page.evaluate(async ([b64, x]) => {
     const img = new Image(); img.src = "data:image/png;base64," + b64; await img.decode();
     const cv = document.createElement("canvas"); cv.width = img.width; cv.height = img.height;
     const g = cv.getContext("2d"); g.drawImage(img, 0, 0);
     const d = g.getImageData(0, 0, cv.width, cv.height).data;
-    const lum = (y) => { const i = (y * cv.width + x) * 4; return d[i] + d[i + 1] + d[i + 2]; };
+    const lum = (y) => {
+      const v = [];
+      for (let dx = -2; dx <= 2; dx++) { const i = (y * cv.width + x + dx) * 4; v.push(d[i] + d[i + 1] + d[i + 2]); }
+      return v.sort((p, q) => p - q)[2];
+    };
     let top = cv.height >> 1; while (top > 0 && lum(top) < 20) top--;
     return top;
   }, [png.toString("base64"), x]);

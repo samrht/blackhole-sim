@@ -128,6 +128,8 @@ are a measure-zero set and the alternative (black) is strictly worse.
 
 ### 3.4 `?shadow` upgraded to an analytic comparison
 
+> **Superseded 2026-09-17** — the camera-calibration attribution below was a misdiagnosis; the route measures the emitter's lensed inner edge, not the critical curve. See README "What `?shadow` measures — a correction".
+
 The current check asserts "centred dark shadow" + "ringed by disk" and reports apparent radius
 ≈ 4.51M against ideal √27 ≈ 5.2M, attributing the gap to a **camera scale factor ≈ 0.87** that has
 never been justified. The new check measures the rendered boundary and compares it to

@@ -249,7 +249,7 @@ export async function runParity(): Promise<{ maxErr: number; rows: number }> {
   // sides land 2% apart (CPU p_theta -1.3487, GPU -1.3212, resolved 32-substep reference -1.2954)
   // while 1-ulp input perturbations move it by 1e-6. State agreement here would be an
   // integrator-precision statement, not a shipped-bytes statement; the disk-hit radius downstream
-  // is still within 0.01 M of the converged reference (Task 2 sweep). The retry count IS the
+  // is still within 0.02 M of the converged reference (Task 2 sweep criterion; 0.0097 M measured). The retry count IS the
   // shipped-bytes statement: the GPU must halve exactly where trace.ts does.
   const barrier = findState("barrier", screenToState(0.05, 6, 0, I8, 1000), 0, (_, out) => out.retries >= 1);
   icases.push({ ...barrier, nCmp: 0 });
