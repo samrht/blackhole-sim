@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { screenToState, screenToXiEta } from "../src/physics/camera";
 import { conserved } from "../src/physics/geodesic";
 import { stepGeodesic, traceRay, reflectAxis, stepSize, hquadScaled } from "../src/physics/trace";
+import { iscoRadius } from "../src/physics/orbits";
 
 const I8 = (8 * Math.PI) / 180, ROBS = 1000;
 const OPTS = { rIn: 3, rOut: 40, rObs: ROBS }; // emit from the a=0 photon orbit outward, like ?shadow
@@ -59,6 +60,23 @@ describe("polar axis", () => {
     expect(Math.sign(res.s[6])).toBe(-Math.sign(s0[6])); // p_theta flipped by the crossing
   });
 
+  it("rays within 1e-3 of alpha = 0 hit the disk at the on-axis radius (no seam at the axis column)", () => {
+    // The interactive view (a = 0.9, i = 72 deg), beta = 8: the alpha = 0 ray crosses the axis
+    // exactly (reflectAxis) and hits the disk; rays a hair off-axis pass within ~1e-4 rad of the
+    // pole where the 1/sin^3 barrier exhausts the retry budget. Routing those to the (xi, eta)
+    // classifier painted starfield where the disk belongs -- a 1-px dark seam on the alpha = 0
+    // pixel column. By continuity they must land where the on-axis ray does.
+    const a = 0.9, incl = (72 * Math.PI) / 180;
+    const opts = { rIn: iscoRadius(a, true), rOut: 40, rObs: ROBS };
+    const ref = traceRay(screenToState(0, 8, a, incl, ROBS), a, opts);
+    expect(ref.fate).toBe("disk");
+    for (const alpha of [0, 1e-4, 1e-3, 1e-2]) {
+      const res = traceRay(screenToState(alpha, 8, a, incl, ROBS), a, opts);
+      expect(res.fate, `alpha = ${alpha}`).toBe("disk");
+      expect(Math.abs(res.rHit! - ref.rHit!), `alpha = ${alpha}`).toBeLessThan(0.02); // half a pixel at ~24 px/M
+    }
+  });
+
   it("reflectAxis is the exact continuation at both poles and the identity elsewhere", () => {
     const inside = new Float64Array([0, 10, 1.0, 0.3, 1, -1, 2, 0.5]);
     expect(reflectAxis(inside)).toBe(inside); // identity returns the same object
@@ -83,8 +101,11 @@ describe("polar axis", () => {
     expect(out.ok).toBe(false);
     expect(out.retries).toBe(5);
     expect(out.dl).toBeCloseTo(dl0 / 32, 12);
-    // traceRay routes an untrusted step out of the loop immediately.
-    expect(traceRay(s, a, { ...OPTS, hTol: -1, maxRetry: 3 }).fate).toBe("untrusted");
+    // traceRay counts the exhaustion but proceeds with the smallest-step attempt: the ray still
+    // terminates normally.
+    const t = traceRay(s, a, { ...OPTS, hTol: -1, maxRetry: 3 });
+    expect(t.exhausted).toBeGreaterThan(0);
+    expect(["disk", "captured", "escaped", "budget"]).toContain(t.fate);
     // ...and a NaN state is never accepted either (NaN drift compares false).
     const nan = new Float64Array([0, NaN, 1, 0, 1, -1, 0, 0]);
     expect(stepGeodesic(nan, a, 0.1, 1e-4, 2).ok).toBe(false);

@@ -35,7 +35,8 @@ await check("/?shadow", "SHADOW PASS");
 // Capture a reference render of the interactive view.
 await page.goto(BASE + "/", { waitUntil: "load", timeout: 20000 });
 await page.waitForTimeout(4500); // let progressive accumulation converge
-await page.screenshot({ path: SHOT, timeout: 15000 });
+// 30 s: a converged headless frame takes ~15 s after the monitored-step branch (measured 14.8 s).
+await page.screenshot({ path: SHOT, timeout: 30000 });
 console.log(`• saved ${SHOT}`);
 
 // Sky panorama should be fetched and served (200) during the interactive render.

@@ -9,13 +9,14 @@ import { rk4 } from "./geodesic";
 
 /** Null-constraint tolerance, RELATIVE to the magnitude of the Hamiltonian's terms (see
  *  hquadScaled). Chosen from tests/sweep-htol.test.ts (SWEEP=1): 1e-3, 1e-4, 1e-5 all survived
- *  (untrusted = 0 on both views, near-axis rHit within 0.02 M of the converged reference); 1e-2
+ *  (exhausted = 0 on both views, near-axis rHit within 0.02 M of the converged reference); 1e-2
  *  failed accuracy and 1e-6 fell below the f32 floor; picked the largest (cheapest) survivor.
  *  Twin constant in integrator-shared.wgsl. */
 export const H_TOL = 1e-3;
-/** Maximum number of step halvings before a step is accepted as untrusted. Chosen from the same
- *  sweep: at H_TOL = 1e-3, maxRetry = 4, 8 and 12 all behaved identically (the cap was never
- *  approached); shipped one size up from the smallest surviving value (4) for margin.
+/** Maximum number of step halvings. On exhaustion the smallest-step attempt is accepted anyway and
+ *  the ray proceeds (ok = false is informational; traceRay counts it in `exhausted`). Chosen from
+ *  the same sweep: at H_TOL = 1e-3, maxRetry = 4, 8 and 12 all behaved identically (the cap was
+ *  never approached); shipped one size up from the smallest surviving value (4) for margin.
  *  Twin constant in integrator-shared.wgsl. */
 export const MAX_RETRY = 8;
 /** Far-field exemption: beyond rOut * 1.5 (the far branch of stepSize) the monitor is OFF. The f32
@@ -60,9 +61,10 @@ export interface StepOut { s: Float64Array; ok: boolean; retries: number; dl: nu
 
 /** One constraint-monitored RK4 step. The step is accepted when the per-step change in the null
  *  constraint is within tolerance; otherwise dl is halved and the step redone, up to maxRetry
- *  halvings. The final attempt is returned either way, with ok = false if it still failed, so the
- *  caller can route the ray to the conserved-quantity classifier instead of trusting it.
- *  NaN drift compares false against the tolerance, so a diverged step is never accepted. */
+ *  halvings. The final attempt is returned either way, with ok = false if it still failed; the
+ *  caller proceeds with it regardless (a near-axis ray that exhausts the budget is still an
+ *  axis-crosser by continuity, and a diverging one winds to budget exhaustion as before) and only
+ *  records the exhaustion. NaN drift compares false against the tolerance, so it is never ok. */
 export function stepGeodesic(s: Float64Array, a: number, dl0: number, hTol = H_TOL, maxRetry = MAX_RETRY): StepOut {
   const [h0] = hquadScaled(s[1], s[2], a, s[4], s[5], s[6], s[7]);
   let dl = dl0;
@@ -78,34 +80,39 @@ export function stepGeodesic(s: Float64Array, a: number, dl0: number, hTol = H_T
   return { s: reflectAxis(sN), ok, retries: maxRetry, dl };
 }
 
-export type Fate = "disk" | "captured" | "escaped" | "budget" | "untrusted";
+export type Fate = "disk" | "captured" | "escaped" | "budget";
 export interface TraceOpts { rIn: number; rOut: number; rObs: number; maxSteps?: number; hTol?: number; maxRetry?: number; }
-export interface TraceResult { fate: Fate; s: Float64Array; steps: number; retries: number; thMin: number; rHit?: number; phiHit?: number; }
+/** exhausted = number of steps whose monitor came back ok = false (the smallest-step attempt was
+ *  accepted and the ray proceeded; see stepGeodesic). */
+export interface TraceResult { fate: Fate; s: Float64Array; steps: number; retries: number; exhausted: number; thMin: number; rHit?: number; phiHit?: number; }
 
 /** Backward ray trace with the render loop's termination order: disk crossing, then capture, then
  *  escape. thMin is the smallest sampled angular distance from either pole along the trajectory. */
 export function traceRay(s0: Float64Array, a: number, o: TraceOpts): TraceResult {
   const rh = 1 + Math.sqrt(Math.max(0, 1 - a * a));
   const maxSteps = o.maxSteps ?? 20000;
-  let s = s0, retries = 0, thMin = Math.min(s0[2], Math.PI - s0[2]);
+  let s = s0, retries = 0, exhausted = 0, thMin = Math.min(s0[2], Math.PI - s0[2]);
   for (let step = 1; step <= maxSteps; step++) {
     const far = s[1] > o.rOut * 1.5; // same threshold as the far branch of stepSize
     const out = stepGeodesic(s, a, stepSize(s[1], rh, o.rOut), far ? H_TOL_FAR : o.hTol, o.maxRetry);
     retries += out.retries;
-    if (!out.ok) return { fate: "untrusted", s: out.s, steps: step, retries, thMin };
+    // Retry exhaustion does not end the ray (twin of raytrace.wgsl): the smallest-step attempt is
+    // accepted. Ending it at the (xi, eta) classifier painted starfield over the disk hits of
+    // near-axis rays (the classifier can only answer captured/escaped) -- the alpha = 0 seam.
+    if (!out.ok) exhausted++;
     const sN = out.s;
     const f0 = s[2] - Math.PI / 2, f1 = sN[2] - Math.PI / 2;
     if (f0 * f1 < 0) {
       const frac = f0 / (f0 - f1);
       const rHit = s[1] + frac * (sN[1] - s[1]);
       if (rHit >= o.rIn && rHit <= o.rOut) {
-        return { fate: "disk", s: sN, steps: step, retries, thMin, rHit, phiHit: s[3] + frac * (sN[3] - s[3]) };
+        return { fate: "disk", s: sN, steps: step, retries, exhausted, thMin, rHit, phiHit: s[3] + frac * (sN[3] - s[3]) };
       }
     }
     s = sN;
     thMin = Math.min(thMin, s[2], Math.PI - s[2]);
-    if (s[1] <= rh * 1.005) return { fate: "captured", s, steps: step, retries, thMin };
-    if (s[1] > o.rObs * 1.2) return { fate: "escaped", s, steps: step, retries, thMin };
+    if (s[1] <= rh * 1.005) return { fate: "captured", s, steps: step, retries, exhausted, thMin };
+    if (s[1] > o.rObs * 1.2) return { fate: "escaped", s, steps: step, retries, exhausted, thMin };
   }
-  return { fate: "budget", s, steps: maxSteps, retries, thMin };
+  return { fate: "budget", s, steps: maxSteps, retries, exhausted, thMin };
 }

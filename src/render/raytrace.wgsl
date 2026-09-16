@@ -227,10 +227,11 @@ fn skyDir(s: State, a: f32) -> vec3<f32> {
     let r = s.x.y;
     let far = r > U.rOut * 1.5; // same threshold as the far branch of stepSize: monitor OFF out there
     let st = stepGeodesic(s, a, stepSize(r, rh, U.rOut), select(H_TOL, H_TOL_FAR, far));
-    // The constraint monitor spent all its retries: this trajectory can no longer be trusted.
-    // Leave the loop with resolved == false so the conserved-quantity classifier below decides
-    // captured/escaped from (xi, eta) instead of a garbage state being accepted as a real hit.
-    if (!st.ok) { break; }
+    // On retry exhaustion the smallest-step attempt is accepted and the ray proceeds; st.ok is
+    // informational. Breaking to the (xi, eta) classifier here painted starfield over disk hits
+    // for near-axis rays (it can only answer captured/escaped) -- a dark seam on the alpha = 0
+    // column. A genuinely diverging ray still winds to budget exhaustion and reaches the
+    // classifier below as before; a NaN state still ends in the `usable` guard.
     let dl = st.dl; let sNew = st.s;
 
     // Optically-thin jet: integrate emissivity * relativistic beaming along the ray. The disk

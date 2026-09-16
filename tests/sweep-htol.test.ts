@@ -14,18 +14,18 @@ const ROBS = 1000, FOV = 14, N = 32, STEPS = 4800;
 const VIEWS = [{ a: 0, incl: (8 * Math.PI) / 180 }, { a: 0.9, incl: (72 * Math.PI) / 180 }];
 
 function sweepOne(hTol: number, maxRetry: number) {
-  let steps = 0, retries = 0, rays = 0;
-  const fates: Record<Fate, number> = { disk: 0, captured: 0, escaped: 0, budget: 0, untrusted: 0 };
+  let steps = 0, retries = 0, exhausted = 0, rays = 0;
+  const fates: Record<Fate, number> = { disk: 0, captured: 0, escaped: 0, budget: 0 };
   for (const v of VIEWS) {
     const rIn = photonOrbit(v.a, true);
     for (let iy = 0; iy < N; iy++) for (let ix = 0; ix < N; ix++) {
       const alpha = (((ix + 0.5) / N) * 2 - 1) * FOV, beta = -(((iy + 0.5) / N) * 2 - 1) * FOV;
       const r = traceRay(screenToState(alpha, beta, v.a, v.incl, ROBS), v.a,
         { rIn, rOut: 40, rObs: ROBS, maxSteps: STEPS, hTol, maxRetry });
-      steps += r.steps; retries += r.retries; rays++; fates[r.fate]++;
+      steps += r.steps; retries += r.retries; exhausted += r.exhausted; rays++; fates[r.fate]++;
     }
   }
-  return { meanSteps: steps / rays, retries, fates };
+  return { meanSteps: steps / rays, retries, exhausted, fates };
 }
 
 /** Disk-hit radius of the spec's reference near-axis ray (theta_min ~ 1.2e-3 rad). */
@@ -42,12 +42,12 @@ describe.skipIf(!SWEEP)("H_TOL / MAX_RETRY sweep (SWEEP=1)", () => {
     const truthA = nearAxisHit(1e-8, 24), truthB = nearAxisHit(1e-9, 28);
     expect(Math.abs(truthA - truthB)).toBeLessThan(1e-4);
     console.log(`near-axis reference rHit (converged) = ${truthA.toFixed(5)} M`);
-    console.log("hTol      retry  meanSteps  retries  untrusted  budget  disk  captured  escaped  |rHit-truth| M");
+    console.log("hTol      retry  meanSteps  retries  exhausted  budget  disk  captured  escaped  |rHit-truth| M");
     for (const hTol of [1e-2, 1e-3, 1e-4, 1e-5, 1e-6]) {
       for (const maxRetry of [4, 8, 12]) {
         const s = sweepOne(hTol, maxRetry);
         const err = Math.abs(nearAxisHit(hTol, maxRetry) - truthA);
-        console.log(`${hTol.toExponential(0).padEnd(9)} ${String(maxRetry).padEnd(6)} ${s.meanSteps.toFixed(1).padEnd(10)} ${String(s.retries).padEnd(8)} ${String(s.fates.untrusted).padEnd(10)} ${String(s.fates.budget).padEnd(7)} ${String(s.fates.disk).padEnd(5)} ${String(s.fates.captured).padEnd(9)} ${String(s.fates.escaped).padEnd(8)} ${err.toFixed(4)}`);
+        console.log(`${hTol.toExponential(0).padEnd(9)} ${String(maxRetry).padEnd(6)} ${s.meanSteps.toFixed(1).padEnd(10)} ${String(s.retries).padEnd(8)} ${String(s.exhausted).padEnd(10)} ${String(s.fates.budget).padEnd(7)} ${String(s.fates.disk).padEnd(5)} ${String(s.fates.captured).padEnd(9)} ${String(s.fates.escaped).padEnd(8)} ${err.toFixed(4)}`);
       }
     }
   }, 1_800_000);
