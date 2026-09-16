@@ -2,6 +2,7 @@ import { metricUpper, metricLower } from "../physics/kerr";
 import { omegaKepler } from "../physics/orbits";
 import { gFactorKepler } from "../physics/redshift";
 import parityWGSL from "../render/parity.wgsl?raw";
+import integratorSharedWGSL from "../render/integrator-shared.wgsl?raw";
 import { turbulence } from "../physics/emission";
 import turbParityWGSL from "../render/turb-parity.wgsl?raw";
 import { jetEmission, dopplerBoost } from "../physics/jet";
@@ -28,7 +29,7 @@ export async function runParity(): Promise<{ maxErr: number; rows: number }> {
   device.queue.writeBuffer(inBuf, 0, inArr);
   const outBuf = device.createBuffer({ size: cases.length * 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
   const readBuf = device.createBuffer({ size: cases.length * 16, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
-  const mod = device.createShaderModule({ code: parityWGSL });
+  const mod = device.createShaderModule({ code: integratorSharedWGSL + parityWGSL });
   const pipe = device.createComputePipeline({ layout: "auto", compute: { module: mod, entryPoint: "main" } });
   const bind = device.createBindGroup({ layout: pipe.getBindGroupLayout(0), entries: [
     { binding: 0, resource: { buffer: inBuf } }, { binding: 1, resource: { buffer: outBuf } }] });
