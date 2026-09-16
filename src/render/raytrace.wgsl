@@ -225,8 +225,13 @@ fn skyDir(s: State, a: f32) -> vec3<f32> {
   for (var step = 0u; step < U.maxSteps; step++) {
     // dl > 0 with p_r < 0 integrates INWARD along the reversed worldline.
     let r = s.x.y;
-    let dl = stepSize(r, rh, U.rOut);
-    let sNew = rk4(s, a, dl);
+    let far = r > U.rOut * 1.5; // same threshold as the far branch of stepSize: monitor OFF out there
+    let st = stepGeodesic(s, a, stepSize(r, rh, U.rOut), select(H_TOL, H_TOL_FAR, far));
+    // The constraint monitor spent all its retries: this trajectory can no longer be trusted.
+    // Leave the loop with resolved == false so the conserved-quantity classifier below decides
+    // captured/escaped from (xi, eta) instead of a garbage state being accepted as a real hit.
+    if (!st.ok) { break; }
+    let dl = st.dl; let sNew = st.s;
 
     // Optically-thin jet: integrate emissivity * relativistic beaming along the ray. The disk
     // hit below still `break`s (opaque), so jet segments behind the disk/horizon are occluded.

@@ -14,10 +14,11 @@ fn sigma_(r: f32, th: f32, a: f32) -> f32 { let c = cos(th); return r*r + a*a*c*
 fn bigA_(r: f32, th: f32, a: f32) -> f32 { let s = sin(th); return pow(r*r+a*a,2.0) - a*a*delta_(r,a)*s*s; }
 
 // upper metric components (tt, tphi, rr, thth, phph)
-// POLE_S2 floors sin^2(th) in the divergent 1/sin^2 denominator of g^{phi phi}; matches
-// src/physics/kerr.ts. Regularizes the Boyer-Lindquist polar axis so axis-grazing rays no
-// longer get an unbounded p_th kick (which painted a black meridian seam + central cap).
-const POLE_S2 = 1e-3;
+// POLE_S2 floors sin^2(th) in the divergent 1/sin^2 denominator of g^{phi phi}. It is a NaN guard
+// (inf * 0 for an exactly-on-axis ray with p_phi = 0), NOT a physics cap: at 1e-12 the affected
+// cone is 1e-6 rad, far below a pixel. Matches src/physics/kerr.ts. The old 1e-3 removed the
+// centrifugal barrier inside a 1.8 deg cone and let rays tunnel through the axis.
+const POLE_S2 = 1e-12;
 fn gUp(r: f32, th: f32, a: f32) -> array<f32,5> {
   let s2 = sin(th)*sin(th); let s2d = max(s2, POLE_S2);
   let Sig = sigma_(r,th,a); let d = delta_(r,a); let A = bigA_(r,th,a);
@@ -58,4 +59,54 @@ fn rk4(s: State, a: f32, dl: f32) -> State {
 fn stepSize(r: f32, rh: f32, rOut: f32) -> f32 {
   if (r > rOut * 1.5) { return clamp(0.04 * r, 0.6, 6.0); }
   return clamp(0.02 * (r - rh), 0.002, 0.5);
+}
+
+// ---- Constraint-monitored stepping. Twin of stepGeodesic() in trace.ts. --------------------------
+// For a null geodesic H = 1/2 g^{mu nu} p_mu p_nu = 0 exactly. RK4 with finite-difference forces
+// drifts off that, worst where the theta force is steep (the restored 1/sin^2 barrier). After each
+// step the CHANGE in H is compared against a tolerance RELATIVE to the size of the terms being
+// cancelled (near the capture margin g^tt ~ 1e2, so an absolute tolerance would sit at f32 noise);
+// on failure dl is halved and the step redone, up to MAX_RETRY halvings.
+const H_TOL = 1e-3;
+const MAX_RETRY = 8u;
+// Far-field exemption: beyond rOut * 1.5 (the far branch of stepSize) the monitor is OFF. The f32
+// finite-difference force is pure noise at r ~ 1e3 (ulp 6e-5 vs the FD half-step 1e-4; measured
+// |dH|/scale 2.4e-3 here vs 2e-11 in f64 for the same step), so halving on dH there costs steps
+// for nothing while curvature ~M/r^3 is negligible. Still a NaN guard: abs(NaN) <= x is false.
+// Twin constant in trace.ts.
+const H_TOL_FAR = 1e30;
+
+// vec2(g^{mu nu} p_mu p_nu, sum of |terms|). gUp indices: 0=tt, 1=tphi, 2=rr, 3=thth, 4=phph.
+fn hquadScaled(r: f32, th: f32, a: f32, p: vec4<f32>) -> vec2<f32> {
+  let g = gUp(r, th, a);
+  let t0 = g[0]*p.x*p.x; let t1 = 2.0*g[1]*p.x*p.w; let t2 = g[2]*p.y*p.y;
+  let t3 = g[3]*p.z*p.z; let t4 = g[4]*p.w*p.w;
+  return vec2<f32>(t0 + t1 + t2 + t3 + t4, abs(t0) + abs(t1) + abs(t2) + abs(t3) + abs(t4));
+}
+
+// Exact analytic continuation through the polar axis: th -> -th (2pi - th at the south pole),
+// phi -> phi + pi, p_th -> -p_th; p_phi unchanged. Identity unless a step carried th past 0 or pi.
+fn reflectAxis(s: State) -> State {
+  let th = s.x.z;
+  if (th >= 0.0 && th <= PI) { return s; }
+  let thR = select(2.0*PI - th, -th, th < 0.0);
+  return State(vec4<f32>(s.x.x, s.x.y, thR, s.x.w + PI), vec4<f32>(s.p.x, s.p.y, -s.p.z, s.p.w));
+}
+
+struct StepOut { s: State, dl: f32, retries: u32, ok: bool };
+// The final attempt is returned either way; ok = false tells the caller the trajectory can no
+// longer be trusted. A NaN drift compares false against the tolerance, so it is never accepted.
+fn stepGeodesic(s: State, a: f32, dl0: f32, hTol: f32) -> StepOut {
+  let h0 = hquadScaled(s.x.y, s.x.z, a, s.p).x;
+  var dl = dl0;
+  for (var k = 0u; k < MAX_RETRY; k++) {
+    let sN = rk4(s, a, dl);
+    let hs = hquadScaled(sN.x.y, sN.x.z, a, sN.p);
+    if (abs(hs.x - h0) <= hTol * hs.y) { return StepOut(reflectAxis(sN), dl, k, true); }
+    dl = dl * 0.5;
+  }
+  let sN = rk4(s, a, dl);
+  let hs = hquadScaled(sN.x.y, sN.x.z, a, sN.p);
+  let ok = abs(hs.x - h0) <= hTol * hs.y;
+  return StepOut(reflectAxis(sN), dl, MAX_RETRY, ok);
 }

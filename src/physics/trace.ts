@@ -18,6 +18,12 @@ export const H_TOL = 1e-3;
  *  approached); shipped one size up from the smallest surviving value (4) for margin.
  *  Twin constant in integrator-shared.wgsl. */
 export const MAX_RETRY = 8;
+/** Far-field exemption: beyond rOut * 1.5 (the far branch of stepSize) the monitor is OFF. The f32
+ *  finite-difference force is pure noise at r ~ 1e3 (ulp 6e-5 vs the FD half-step 1e-4; measured
+ *  |dH|/scale 2.4e-3 on the GPU vs 2e-11 in f64 for the same step), so halving on dH there costs
+ *  steps for nothing while curvature ~M/r^3 is negligible. Still a NaN guard: abs(NaN) <= x is
+ *  false. Twin constant in integrator-shared.wgsl. */
+export const H_TOL_FAR = 1e30;
 
 /** Baseline step length: fine in the strong-field/disk region, long strides through the near-flat
  *  far field. Twin of stepSize() in integrator-shared.wgsl. */
@@ -83,7 +89,8 @@ export function traceRay(s0: Float64Array, a: number, o: TraceOpts): TraceResult
   const maxSteps = o.maxSteps ?? 20000;
   let s = s0, retries = 0, thMin = Math.min(s0[2], Math.PI - s0[2]);
   for (let step = 1; step <= maxSteps; step++) {
-    const out = stepGeodesic(s, a, stepSize(s[1], rh, o.rOut), o.hTol, o.maxRetry);
+    const far = s[1] > o.rOut * 1.5; // same threshold as the far branch of stepSize
+    const out = stepGeodesic(s, a, stepSize(s[1], rh, o.rOut), far ? H_TOL_FAR : o.hTol, o.maxRetry);
     retries += out.retries;
     if (!out.ok) return { fate: "untrusted", s: out.s, steps: step, retries, thMin };
     const sN = out.s;
