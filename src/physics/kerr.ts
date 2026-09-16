@@ -1,12 +1,12 @@
 export const M = 1;
 
 // Boyer–Lindquist coordinates are singular on the polar axis: g^{φφ} carries a 1/sin²θ that
-// diverges as θ→0,π. A ray grazing the axis then receives an unbounded p_θ kick and spuriously
-// plunges below the horizon, painting a thin black meridian seam (and a hard black cap on the
-// central image column). We regularize by flooring sin²θ in the divergent denominators only —
-// this bounds the metric inside a vanishingly thin polar cone (half-angle ≈ √POLE_S2 ≈ 1.8°)
-// and is inert everywhere else, so ISCO/shadow/parity are untouched.
-export const POLE_S2 = 1e-3;
+// diverges as θ→0,π. POLE_S2 floors sin²θ in that denominator ONLY to stop an exactly-on-axis
+// ray with p_φ = 0 from evaluating inf·0 = NaN. It is a NaN guard, not a physics cap: at 1e-12
+// the affected cone has half-angle 1e-6 rad, thousands of times below a pixel, so the centrifugal
+// barrier is exact everywhere a ray can feel it. (It used to be 1e-3 — a 1.8° cone inside which
+// the barrier vanished and rays tunnelled through the axis; see trace.ts for the integrator side.)
+export const POLE_S2 = 1e-12;
 
 export interface Metric { tt: number; tphi: number; rr: number; thth: number; phph: number; }
 
