@@ -8,6 +8,11 @@ import { photonOrbit } from "../src/physics/orbits";
  * chosen from. Skipped unless SWEEP=1 (PowerShell: $env:SWEEP=1; npx vitest run tests/sweep-htol.test.ts).
  * Two views: the spec's worst case (a = 0, i = 8 deg, broad axis wedge) and the default UI view
  * (a = 0.9, i = 72 deg). 32x32 rays per view at fovScale 14, the interactive default.
+ *
+ * The committed table (trace.ts) was measured before the far-field exemption: traceRay now applies
+ * the hTol override only for r < 1.5 * rOut and uses H_TOL_FAR beyond it, so a re-run's retries and
+ * meanSteps columns may differ from the committed numbers. The selection is unaffected -- the
+ * near-axis accuracy criterion and the f32 floor both live in the monitored near field.
  */
 const SWEEP = !!process.env.SWEEP;
 const ROBS = 1000, FOV = 14, N = 32, STEPS = 4800;

@@ -94,8 +94,11 @@ fn reflectAxis(s: State) -> State {
 }
 
 struct StepOut { s: State, dl: f32, retries: u32, ok: bool };
-// The final attempt is returned either way; ok = false tells the caller the trajectory can no
-// longer be trusted. A NaN drift compares false against the tolerance, so it is never accepted.
+// The final attempt is returned either way, with ok = false if it still failed; the caller proceeds
+// with it regardless (twin of trace.ts: a near-axis ray that exhausts the budget is still an
+// axis-crosser by continuity, a diverging one winds to budget exhaustion as before), so ok is
+// informational -- ?parity compares it against the CPU twin. A NaN drift compares false against
+// the tolerance, so it is never ok.
 fn stepGeodesic(s: State, a: f32, dl0: f32, hTol: f32) -> StepOut {
   let h0 = hquadScaled(s.x.y, s.x.z, a, s.p).x;
   var dl = dl0;

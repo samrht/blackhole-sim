@@ -220,8 +220,10 @@ export async function runParity(): Promise<{ maxErr: number; rows: number }> {
   // far field, long stride, a != 0. Unmonitored there (H_TOL_FAR): the f32 finite-difference force
   // at r = 1000 is noise (measured |dH|/scale 2.4e-3 on the GPU vs 2e-11 in f64), so with H_TOL the
   // GPU would halve where the CPU does not. Retries must be 0/0 (with H_TOL the GPU retries once,
-  // so 0/0 proves the exemption is wired) and the POSITIONS must agree (7e-6 measured; they verify
-  // the dl = 6 stride and the x-update path). The momenta are not compared: the same FD noise puts
+  // so 0/0 proves stepGeodesic honours its hTol argument -- the select() that picks H_TOL_FAR in
+  // raytrace.wgsl's loop is not exercised here, only by the ?shadow re-baseline and the fps) and
+  // the POSITIONS must agree (7.1e-6 measured, dominated by r: 994.000073 CPU vs 993.992981 GPU
+  // after the dl = 6 stride; they verify the stride and the x-update path). The momenta are not compared: the same FD noise puts
   // ~4e-4 per unit dl into p_r on the GPU (measured p_r -1.004375 vs CPU -1.002003 after dl = 6,
   // where the true change is 1.2e-5), a pre-existing far-field precision limit of rhs(), not a
   // statement about the shipped stepGeodesic bytes.

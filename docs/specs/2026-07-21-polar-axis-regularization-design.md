@@ -1,7 +1,7 @@
 # Polar-axis regularization — design
 
 **Date:** 2026-07-21
-**Status:** approved, pending implementation plan
+**Status:** implemented on fix/polar-axis (plan: docs/plans/2026-09-16-polar-axis-regularization.md, which records five deviations from this text — read those before trusting §1's "captured" mechanism or §3.2's literal |H| test). Two further rulings were made during implementation and are recorded in the plan's Outcome section, the SDD ledger and the commit messages of `a800561` and `a38bea8`: the plan's Deviation 4 (break to the (ξ, η) classifier on retry exhaustion) was itself reversed — the ray proceeds with the smallest-step attempt, this text's literal §3.2 wording — and the monitor is exempt in the far field (r > 1.5·rOut, `H_TOL_FAR`), so §3.2/§5's "global" monitor is near-field only.
 **Branch:** `fix/polar-axis` (to be created from `main`)
 
 ## 1. The defect
