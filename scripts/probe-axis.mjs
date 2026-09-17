@@ -1,9 +1,11 @@
 // Visual confirmation for the polar-axis fix: renders a = 0 with the sky and jet off at i = 72
 // and i = 8 degrees, and checks the band around the pole column is no darker than a band beside
-// it. The band is x in [488, 512] EXCLUDING the two axis columns 499-500 (alpha in ~0.05-0.5 M):
-// the exact axis column has xi ~ 0 and no centrifugal barrier, so it is clean on every build and
-// cannot show the defect -- the far-field axis-crossing streak lives on either side of it. The
-// axis columns' own dark fraction is printed for information only.
+// it, by two measures: the void-class dark fraction (catches the tunnelling wedge) and the mean
+// brightness ratio (catches the far-field axis-crossing streak, a ~50 % dimming). The band is
+// x in [488, 512] EXCLUDING the two axis columns 499-500 (alpha in ~0.05-0.5 M): the exact axis
+// column has xi ~ 0 and no centrifugal barrier, so it is clean on every build and cannot show the
+// defect -- the streak lives on either side of it. The axis columns' own dark fraction is printed
+// for information only.
 // main.ts reads only the `steps` query parameter, so the sliders are driven through the DOM and
 // each value is read back to prove it was applied.
 //
@@ -51,10 +53,10 @@ async function darkFraction(png, xs, y0, y1) {
     return dark / Math.max(1, (y1 - y0) * xs.length);
   }, [png.toString("base64"), xs, y0, y1]);
 }
-/** Mean RGB sum over the columns `xs` and rows [y0, y1) -- informational. The pre-cap streak was a
- *  ~50 % DIMMING of columns 496-503 (half the jittered samples escaped), not void-class pixels, so
- *  a dark-fraction count alone does not see it; the band/side brightness ratio does (~0.88 with
- *  the streak, ~0.99 without). */
+/** Mean RGB sum over the columns `xs` and rows [y0, y1). The pre-cap streak was a ~50 % DIMMING of
+ *  columns 496-503 (half the jittered samples escaped), not void-class pixels, so a dark-fraction
+ *  count alone does not see it; the band/side brightness ratio does (~0.88 with the streak, ~0.99
+ *  without) and is the second assertion below. */
 async function meanLum(png, xs, y0, y1) {
   return page.evaluate(async ([b64, xs, y0, y1]) => {
     const img = new Image(); img.src = "data:image/png;base64," + b64; await img.decode();
@@ -98,12 +100,18 @@ for (const incl of [72, 8]) {
   const band = await darkFraction(png, range(488, 512, [499, 500]), y0, y1), side = await darkFraction(png, range(548, 572), y0, y1);
   const axisCols = await darkFraction(png, [499, 500], y0, y1); // informational: xi ~ 0, no barrier
   const bandCols = range(488, 512, [499, 500]), sideCols = range(548, 572);
-  const lumRatio = (await meanLum(png, bandCols, y0, y1)) / Math.max(1, await meanLum(png, sideCols, y0, y1)); // informational
+  const lumRatio = (await meanLum(png, bandCols, y0, y1)) / Math.max(1, await meanLum(png, sideCols, y0, y1));
   // Before the fix the band beside the axis is a solid black wedge above the shadow at i = 8 and
   // carries a dark band at i = 72; the side band is lit disk. Allow 10% for the ISCO edge and AA
   // jitter.
-  const ok = top > 10 && band - side < 0.10;
-  console.log(`${ok ? "✓ PASS" : "✗ FAIL"}  i=${incl}°  shadowTop=${top}px  darkFrac band[488-512 minus 499-500]=${band.toFixed(3)} side[548-572]=${side.toFixed(3)} axisCols[499-500]=${axisCols.toFixed(3)} band/side brightness=${lumRatio.toFixed(3)}  -> ${file}`);
+  // Two assertions. The dark-fraction difference catches the tunnelling wedge (main: 0.927 vs 0.498
+  // at i = 8) but NOT the far-field axis-crossing streak, which was a ~50 % dimming: it passed on
+  // the pre-cap shader 4a98a7f (0.162 vs 0.157). The band/side brightness ratio does discriminate
+  // -- measured main 0.203, pre-cap 4a98a7f 0.875, post-cap 0.993 (i = 8; i = 72 reads 0.44 /
+  // 0.987 / 0.987) -- so 0.95 sits between the two measured branch states with margin on both
+  // sides: a discrimination threshold between known states, not a tuned one.
+  const ok = top > 10 && band - side < 0.10 && lumRatio >= 0.95;
+  console.log(`${ok ? "✓ PASS" : "✗ FAIL"}  i=${incl}°  shadowTop=${top}px  darkFrac band[488-512 minus 499-500]=${band.toFixed(3)} side[548-572]=${side.toFixed(3)} axisCols[499-500]=${axisCols.toFixed(3)} band/side brightness=${lumRatio.toFixed(3)} (>= 0.95)  -> ${file}`);
   if (!ok) failed = true;
 }
 if (diags.length) console.log("console diagnostics:", diags.join(" | "));
