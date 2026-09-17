@@ -226,7 +226,7 @@ fn skyDir(s: State, a: f32) -> vec3<f32> {
     // dl > 0 with p_r < 0 integrates INWARD along the reversed worldline.
     let r = s.x.y;
     let far = r > U.rOut * 1.5; // same threshold as the far branch of stepSize: monitor OFF out there
-    let st = stepGeodesic(s, a, stepSize(r, rh, U.rOut), select(H_TOL, H_TOL_FAR, far));
+    let st = stepGeodesic(s, a, stepSize(s, rh, U.rOut), select(H_TOL, H_TOL_FAR, far));
     // On retry exhaustion the smallest-step attempt is accepted and the ray proceeds; st.ok is
     // informational. Breaking to the (xi, eta) classifier here painted starfield over disk hits
     // for near-axis rays (it can only answer captured/escaped) -- a dark seam on the alpha = 0
@@ -250,9 +250,12 @@ fn skyDir(s: State, a: f32) -> vec3<f32> {
       }
     }
 
-    // disk crossing: equatorial plane th = PI/2 (take the first hit -> optically-thick top surface)
+    // disk crossing: equatorial plane th = PI/2 (take the first hit -> optically-thick top surface).
+    // A step that moved theta by more than 0.5 rad is not a plane crossing (a legitimate near-field
+    // step moves theta by <= ~0.07 rad): it is a diverged state that reflectAxis's single-crossing
+    // reduction cannot have made sense of, and interpolating a disk hit from it would be garbage.
     let f0 = s.x.z - PI*0.5; let f1 = sNew.x.z - PI*0.5;
-    if (f0 * f1 < 0.0) {
+    if (f0 * f1 < 0.0 && abs(sNew.x.z - s.x.z) < 0.5) {
       let frac = f0 / (f0 - f1);
       let rHit = mix(s.x.y, sNew.x.y, frac);
       if (rHit >= U.rIn && rHit <= U.rOut) {

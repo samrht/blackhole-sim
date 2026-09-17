@@ -53,11 +53,31 @@ fn rk4(s: State, a: f32, dl: f32) -> State {
                s.p + (k1.p+2.0*k2.p+2.0*k3.p+k4.p)*(dl/6.0));
 }
 
+// Far-field angular step cap. The far field is unmonitored (H_TOL_FAR below), so nothing but the
+// step controller bounds a stride there -- and a ray aimed at screen beta crosses the axis at
+// r ~ beta / sin(i), INSIDE the exempt zone whenever beta > 1.5 * rOut * sin(i) (beta > 8.3 M at
+// i = 8 deg). A dl = 3 stride at theta ~ 3e-3 carried theta to -9.2 and p_theta to -6e4: the ray
+// escaped and painted a dark streak beside the axis column above the shadow. The cap limits the
+// far stride to F_AXIS of the affine distance to the axis at the current angular rate
+// (theta_d * Sigma / |p_theta|, since dtheta/dl = p_theta / Sigma), floored at DL_FAR_MIN. Chosen
+// by tests/sweep-axiscap.test.ts (SWEEP=1). Twin constants in trace.ts.
+const F_AXIS = 0.1;
+const DL_FAR_MIN = 0.05;
+
 // Baseline step length: fine in the strong-field/disk region, long strides through the near-flat
 // far field (curvature ~M/r^3 is negligible there) so we don't burn thousands of steps just
-// travelling in from the distant observer. Twin of stepSize() in trace.ts.
-fn stepSize(r: f32, rh: f32, rOut: f32) -> f32 {
-  if (r > rOut * 1.5) { return clamp(0.04 * r, 0.6, 6.0); }
+// travelling in from the distant observer, capped near the axis (F_AXIS). Twin of stepSize() in
+// trace.ts.
+fn stepSize(s: State, rh: f32, rOut: f32) -> f32 {
+  let r = s.x.y;
+  if (r > rOut * 1.5) {
+    let base = clamp(0.04 * r, 0.6, 6.0);
+    let pth = s.p.z;
+    if (pth == 0.0) { return base; } // no angular motion: nothing to cap (and no division by zero)
+    // Sigma = r^2 + a^2 cos^2 th; the a^2 cos^2 th <= 1 term is < 3e-4 of r^2 >= 3600 here.
+    let thD = min(s.x.z, PI - s.x.z);
+    return min(base, max(DL_FAR_MIN, F_AXIS * thD * r * r / abs(pth)));
+  }
   return clamp(0.02 * (r - rh), 0.002, 0.5);
 }
 
@@ -77,6 +97,9 @@ const MAX_RETRY = 8u;
 const H_TOL_FAR = 1e30;
 
 // vec2(g^{mu nu} p_mu p_nu, sum of |terms|). gUp indices: 0=tt, 1=tphi, 2=rr, 3=thth, 4=phph.
+// Being RELATIVE, this measure cannot reject a step whose garbage momenta inflate the scale along
+// with the drift -- which is why the step controller (stepSize's F_AXIS cap), not the monitor, must
+// bound near-axis strides.
 fn hquadScaled(r: f32, th: f32, a: f32, p: vec4<f32>) -> vec2<f32> {
   let g = gUp(r, th, a);
   let t0 = g[0]*p.x*p.x; let t1 = 2.0*g[1]*p.x*p.w; let t2 = g[2]*p.y*p.y;
