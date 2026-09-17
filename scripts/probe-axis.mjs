@@ -51,6 +51,21 @@ async function darkFraction(png, xs, y0, y1) {
     return dark / Math.max(1, (y1 - y0) * xs.length);
   }, [png.toString("base64"), xs, y0, y1]);
 }
+/** Mean RGB sum over the columns `xs` and rows [y0, y1) -- informational. The pre-cap streak was a
+ *  ~50 % DIMMING of columns 496-503 (half the jittered samples escaped), not void-class pixels, so
+ *  a dark-fraction count alone does not see it; the band/side brightness ratio does (~0.88 with
+ *  the streak, ~0.99 without). */
+async function meanLum(png, xs, y0, y1) {
+  return page.evaluate(async ([b64, xs, y0, y1]) => {
+    const img = new Image(); img.src = "data:image/png;base64," + b64; await img.decode();
+    const cv = document.createElement("canvas"); cv.width = img.width; cv.height = img.height;
+    const g = cv.getContext("2d"); g.drawImage(img, 0, 0);
+    const d = g.getImageData(0, 0, cv.width, cv.height).data;
+    let sum = 0;
+    for (const x of xs) for (let y = y0; y < y1; y++) { const i = (y * cv.width + x) * 4; sum += d[i] + d[i + 1] + d[i + 2]; }
+    return sum / Math.max(1, (y1 - y0) * xs.length);
+  }, [png.toString("base64"), xs, y0, y1]);
+}
 const range = (lo, hi, skip = []) => Array.from({ length: hi - lo + 1 }, (_, k) => lo + k).filter((x) => !skip.includes(x));
 /** Top edge of the dark run containing the frame centre around column x (the shadow's upper edge).
  *  Uses the median luminance over x-2..x+2 per row, so an isolated lit pixel on the axis column
@@ -82,11 +97,13 @@ for (const incl of [72, 8]) {
   const y0 = 0, y1 = Math.max(1, top - 4);
   const band = await darkFraction(png, range(488, 512, [499, 500]), y0, y1), side = await darkFraction(png, range(548, 572), y0, y1);
   const axisCols = await darkFraction(png, [499, 500], y0, y1); // informational: xi ~ 0, no barrier
+  const bandCols = range(488, 512, [499, 500]), sideCols = range(548, 572);
+  const lumRatio = (await meanLum(png, bandCols, y0, y1)) / Math.max(1, await meanLum(png, sideCols, y0, y1)); // informational
   // Before the fix the band beside the axis is a solid black wedge above the shadow at i = 8 and
   // carries a dark band at i = 72; the side band is lit disk. Allow 10% for the ISCO edge and AA
   // jitter.
   const ok = top > 10 && band - side < 0.10;
-  console.log(`${ok ? "✓ PASS" : "✗ FAIL"}  i=${incl}°  shadowTop=${top}px  darkFrac band[488-512 minus 499-500]=${band.toFixed(3)} side[548-572]=${side.toFixed(3)} axisCols[499-500]=${axisCols.toFixed(3)}  -> ${file}`);
+  console.log(`${ok ? "✓ PASS" : "✗ FAIL"}  i=${incl}°  shadowTop=${top}px  darkFrac band[488-512 minus 499-500]=${band.toFixed(3)} side[548-572]=${side.toFixed(3)} axisCols[499-500]=${axisCols.toFixed(3)} band/side brightness=${lumRatio.toFixed(3)}  -> ${file}`);
   if (!ok) failed = true;
 }
 if (diags.length) console.log("console diagnostics:", diags.join(" | "));
