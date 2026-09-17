@@ -1,5 +1,9 @@
 // Visual confirmation for the polar-axis fix: renders a = 0 with the sky and jet off at i = 72
-// and i = 8 degrees, and checks the column through the pole is no darker than a column beside it.
+// and i = 8 degrees, and checks the band around the pole column is no darker than a band beside
+// it. The band is x in [488, 512] EXCLUDING the two axis columns 499-500 (alpha in ~0.05-0.5 M):
+// the exact axis column has xi ~ 0 and no centrifugal barrier, so it is clean on every build and
+// cannot show the defect -- the far-field axis-crossing streak lives on either side of it. The
+// axis columns' own dark fraction is printed for information only.
 // main.ts reads only the `steps` query parameter, so the sliders are driven through the DOM and
 // each value is read back to prove it was applied.
 //
@@ -32,23 +36,25 @@ async function setSlider(id, value) {
   if (Number(applied) !== Number(value)) throw new Error(`slider #${id} did not take ${value} (got ${applied})`);
 }
 
-/** Dark-pixel fraction of column x over rows [y0, y1). Decoded in-page from the PNG so no PNG lib is needed.
- *  "Dark" = RGB sum < 80: the shadow reads 0, the procedural void (what the tunnelled rays render
- *  as, stars aside) reads ~55 at the default exposure, and lit disk reads >= 300. */
-async function darkFraction(png, x, y0, y1) {
-  return page.evaluate(async ([b64, x, y0, y1]) => {
+/** Mean dark-pixel fraction over the columns `xs` and rows [y0, y1). Decoded in-page from the PNG
+ *  so no PNG lib is needed. "Dark" = RGB sum < 80: the shadow reads 0, the procedural void (what
+ *  the tunnelled rays render as, stars aside) reads ~55 at the default exposure, and lit disk
+ *  reads >= 300. */
+async function darkFraction(png, xs, y0, y1) {
+  return page.evaluate(async ([b64, xs, y0, y1]) => {
     const img = new Image(); img.src = "data:image/png;base64," + b64; await img.decode();
     const cv = document.createElement("canvas"); cv.width = img.width; cv.height = img.height;
     const g = cv.getContext("2d"); g.drawImage(img, 0, 0);
     const d = g.getImageData(0, 0, cv.width, cv.height).data;
     let dark = 0;
-    for (let y = y0; y < y1; y++) { const i = (y * cv.width + x) * 4; if (d[i] + d[i + 1] + d[i + 2] < 80) dark++; }
-    return dark / Math.max(1, y1 - y0);
-  }, [png.toString("base64"), x, y0, y1]);
+    for (const x of xs) for (let y = y0; y < y1; y++) { const i = (y * cv.width + x) * 4; if (d[i] + d[i + 1] + d[i + 2] < 80) dark++; }
+    return dark / Math.max(1, (y1 - y0) * xs.length);
+  }, [png.toString("base64"), xs, y0, y1]);
 }
+const range = (lo, hi, skip = []) => Array.from({ length: hi - lo + 1 }, (_, k) => lo + k).filter((x) => !skip.includes(x));
 /** Top edge of the dark run containing the frame centre around column x (the shadow's upper edge).
  *  Uses the median luminance over x-2..x+2 per row, so an isolated lit pixel on the axis column
- *  inside the shadow (an f32 near-axis residual, see README limitation (a)) does not stop the walk. */
+ *  inside the shadow (a near-axis residual, see README limitation (a)) does not stop the walk. */
 async function shadowTop(png, x) {
   return page.evaluate(async ([b64, x]) => {
     const img = new Image(); img.src = "data:image/png;base64," + b64; await img.decode();
@@ -74,11 +80,13 @@ for (const incl of [72, 8]) {
   (await import("node:fs")).writeFileSync(file, png);
   const cx = 500, top = await shadowTop(png, cx);
   const y0 = 0, y1 = Math.max(1, top - 4);
-  const axis = await darkFraction(png, cx, y0, y1), side = await darkFraction(png, cx + 60, y0, y1);
-  // Before the fix the axis column is ~100% dark above the shadow at i = 8 and carries a solid
-  // band at i = 72; the side column is lit disk. Allow 10% for the ISCO edge and AA jitter.
-  const ok = top > 10 && axis - side < 0.10;
-  console.log(`${ok ? "✓ PASS" : "✗ FAIL"}  i=${incl}°  shadowTop=${top}px  darkFrac axis=${axis.toFixed(3)} side=${side.toFixed(3)}  -> ${file}`);
+  const band = await darkFraction(png, range(488, 512, [499, 500]), y0, y1), side = await darkFraction(png, range(548, 572), y0, y1);
+  const axisCols = await darkFraction(png, [499, 500], y0, y1); // informational: xi ~ 0, no barrier
+  // Before the fix the band beside the axis is a solid black wedge above the shadow at i = 8 and
+  // carries a dark band at i = 72; the side band is lit disk. Allow 10% for the ISCO edge and AA
+  // jitter.
+  const ok = top > 10 && band - side < 0.10;
+  console.log(`${ok ? "✓ PASS" : "✗ FAIL"}  i=${incl}°  shadowTop=${top}px  darkFrac band[488-512 minus 499-500]=${band.toFixed(3)} side[548-572]=${side.toFixed(3)} axisCols[499-500]=${axisCols.toFixed(3)}  -> ${file}`);
   if (!ok) failed = true;
 }
 if (diags.length) console.log("console diagnostics:", diags.join(" | "));
