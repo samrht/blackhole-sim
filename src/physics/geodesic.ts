@@ -1,4 +1,4 @@
-import { metricUpper } from "./kerr";
+import { metricUpper, metricUpperGrad } from "./kerr";
 
 function hquad(r: number, th: number, a: number, pt: number, pr: number, pth: number, pphi: number): number {
   const g = metricUpper(r, th, a);
@@ -12,12 +12,11 @@ export function nullRadialMomentum(r: number, th: number, a: number, pt: number,
   return Math.sqrt(Math.max(0, -rest / g.rr));
 }
 
-/** Central-difference half-step for the force terms. The CPU default is 1e-5; the shader's rhs()
- *  in integrator-shared.wgsl uses 1e-4 (f32 cannot resolve 1e-5 at r ~ 1e3). The ?parity
- *  comparator passes h = 1e-4 so it steps the same finite-difference scheme the GPU does. */
+/** Central-difference half-step of rhsFD, the finite-difference reference kept for tests; the
+ *  integrator uses the analytic rhs. */
 export const FD_H = 1e-5;
 
-export function rhs(s: Float64Array, a: number, h = FD_H): Float64Array {
+export function rhsFD(s: Float64Array, a: number, h = FD_H): Float64Array {
   const [, r, th, , pt, pr, pth, pphi] = s;
   const g = metricUpper(r, th, a);
   const dt = g.tt * pt + g.tphi * pphi;
@@ -29,16 +28,27 @@ export function rhs(s: Float64Array, a: number, h = FD_H): Float64Array {
   return new Float64Array([dt, dr, dth, dphi, 0, -0.5 * dQdr, -0.5 * dQdth, 0]);
 }
 
-export function rk4(s: Float64Array, a: number, dl: number, h = FD_H): Float64Array {
+/** Hamilton's equations with exact forces: dp_mu/dl = -1/2 d(g^{ab} p_a p_b)/dx^mu, from
+ *  metricUpperGrad. p_t and p_phi are Killing (their forces are exactly 0). */
+export function rhs(s: Float64Array, a: number): Float64Array {
+  const [, r, th, , pt, pr, pth, pphi] = s;
+  const { g, dr: gr, dth: gt } = metricUpperGrad(r, th, a);
+  const dQdr = gr.tt * pt * pt + 2 * gr.tphi * pt * pphi + gr.rr * pr * pr + gr.thth * pth * pth + gr.phph * pphi * pphi;
+  const dQdth = gt.tt * pt * pt + 2 * gt.tphi * pt * pphi + gt.rr * pr * pr + gt.thth * pth * pth + gt.phph * pphi * pphi;
+  return new Float64Array([g.tt * pt + g.tphi * pphi, g.rr * pr, g.thth * pth, g.tphi * pt + g.phph * pphi,
+    0, -0.5 * dQdr, -0.5 * dQdth, 0]);
+}
+
+export function rk4(s: Float64Array, a: number, dl: number): Float64Array {
   const add = (x: Float64Array, k: Float64Array, f: number) => {
     const o = new Float64Array(8);
     for (let i = 0; i < 8; i++) o[i] = x[i] + k[i] * f;
     return o;
   };
-  const k1 = rhs(s, a, h);
-  const k2 = rhs(add(s, k1, dl / 2), a, h);
-  const k3 = rhs(add(s, k2, dl / 2), a, h);
-  const k4 = rhs(add(s, k3, dl), a, h);
+  const k1 = rhs(s, a);
+  const k2 = rhs(add(s, k1, dl / 2), a);
+  const k3 = rhs(add(s, k2, dl / 2), a);
+  const k4 = rhs(add(s, k3, dl), a);
   const o = new Float64Array(8);
   for (let i = 0; i < 8; i++) o[i] = s[i] + (dl / 6) * (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i]);
   return o;

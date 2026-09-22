@@ -82,6 +82,33 @@ import { stepGeodesic, traceRay, F_AXIS, DL_FAR_MIN, H_TOL, H_TOL_FAR, MAX_RETRY
  * near-axis far-field error (F_AXIS 0.1 / DL_FAR_MIN 0.05, unmonitored; Q errors 0.1 %-400 %), not
  * whether the far stride is accurate. Follow-up: a far-stride saving first needs that near-axis
  * far-field passage converged (monitor it, or tighten the cap), then a re-sweep.
+ *
+ * Confirmed under exact forces (metricUpperGrad, 2026-09-23, 0.7 min). References: V1 unconv 0/1024,
+ * max disk 5.56e-4 M; V2 unconv 0/1024, 1.91e-3 M, sky 1.56e-6 rad; A unconv 0/121, 3.09e-4 M;
+ * B unconv 1/65 (1.5 %, was 3/65), 9.16e-4 M, sky 2.82e-5 rad; fates unchanged. Table (diskWorse
+ * and meanSteps identical to the above; skyWorse, the max deltas and a few flip counts move):
+ *   K_FAR  DL_MAX  newFlips  diskWorse  skyWorse  maxDiskDelta(M)  maxSkyDelta(rad)  meanSteps
+ *   0.04   6       0         0          0         0.00e+0          0.00e+0           344.1  <- ship
+ *   0.04   20      0         48         5         1.68e+1          3.85e-3           254.4
+ *   0.04   50      0         51         5         1.55e+1          1.92e-2           246.2
+ *   0.04   150     0         51         5         1.55e+1          1.92e-2           246.2
+ *   0.08   6       0         56         4         1.53e+1          2.77e-3           335.0
+ *   0.08   20      0         75         3         1.49e+1          8.99e-3           232.2
+ *   0.08   50      0         73         5         1.42e+1          8.74e-3           212.8
+ *   0.08   150     0         72         5         1.98e+1          4.39e-3           211.3
+ *   0.12   6       0         56         3         1.53e+1          2.77e-3           336.3
+ *   0.12   20      3         80         5         1.94e+1          8.99e-3           226.4
+ *   0.12   50      3         78         4         2.41e+1          2.79e-1           204.1
+ *   0.12   150     4         76         5         1.56e+1          5.92e-2           190.9
+ *   0.2    6       0         56         3         1.53e+1          2.77e-3           336.3
+ *   0.2    20      7         101        5         2.77e+1          8.99e-3           215.8
+ *   0.2    50      7         81         50        2.19e+1          5.19e-1           190.8
+ *   0.2    150     8         91         48        2.79e+1          1.10e-1           176.0
+ *   0.3    6       0         56         3         1.53e+1          2.77e-3           336.3
+ *   0.3    20      10        102        51        2.45e+1          8.99e-3           205.5
+ *   0.3    50      8         131        49        2.63e+1          5.19e-1           187.7
+ *   0.3    150     15        133        49        2.52e+1          1.10e-1           172.5
+ * Under the same rule every other pair still fails; SELECTED K_FAR = 0.04, DL_FAR_MAX = 6.
  */
 const SWEEP = !!process.env.SWEEP;
 const ROBS = 1000, ROUT = 40, FOV = 14, MAXSTEPS = 4800, REF_MAXSTEPS = 400000;

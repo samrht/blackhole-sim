@@ -231,17 +231,15 @@ export async function runParity(): Promise<{ maxErr: number; rows: number }> {
     }
     throw new Error(`integrator parity: no state found for case "${label}"`);
   }
-  // far field, long stride, a != 0. Unmonitored there (H_TOL_FAR): the f32 finite-difference force
-  // at r = 1000 is noise (measured |dH|/scale 2.4e-3 on the GPU vs 2e-11 in f64), so with H_TOL the
-  // GPU would halve where the CPU does not. Retries must be 0/0 (with H_TOL the GPU retries once,
-  // so 0/0 proves stepGeodesic honours its hTol argument -- the select() that picks H_TOL_FAR in
-  // raytrace.wgsl's loop is not exercised here, only by the ?shadow re-baseline and the fps) and
-  // the POSITIONS must agree (7.1e-6 measured, dominated by r: 994.000073 CPU vs 993.992981 GPU
-  // after the dl = 6 stride). The stride itself is compared through the sentinel (uncapped far
-  // branch: 6). The momenta are not compared: the same FD noise puts ~4e-4 per unit dl into p_r on
-  // the GPU (measured p_r -1.004375 vs CPU -1.002003 after dl = 6, where the true change is
-  // 1.2e-5), a pre-existing far-field precision limit of rhs() in f32, not a statement about the
-  // shipped stepGeodesic bytes.
+  // far field, long stride, a != 0. Unmonitored there (H_TOL_FAR). Retries must be 0/0 (0/0 proves
+  // stepGeodesic honours its hTol argument -- the select() that picks H_TOL_FAR in raytrace.wgsl's
+  // loop is not exercised here, only by the ?shadow re-baseline and the fps) and the POSITIONS must
+  // agree. The stride itself is compared through the sentinel (uncapped far branch: 6). History:
+  // under finite-difference forces the f32 force at r = 1000 was noise (GPU |dH|/scale 2.4e-3 vs
+  // 2e-11 in f64; p_r -1.004375 GPU vs -1.002003 CPU after dl = 6), which is why the exemption and
+  // positions-only comparison exist. With exact forces (Task 5, 2026-09-23) the GPU's |dH|/scale for
+  // this step is 2.7e-8 (0 retries even at H_TOL) and every state component, momenta included,
+  // agrees to <= 3.0e-8 relative; comparing the momenta too (nCmp = 8) is a follow-up.
   icases.push({ label: "far", s: screenToState(4, 3, 0.9, 1.2, 1000), a: 0.9, dl0: SENTINEL, hTol: H_TOL_FAR, nCmp: 4 });
   // far field, NEAR THE AXIS: the F_AXIS cap branch of stepSize. The reviewer's streak ray
   // (alpha = 0.1, beta = 12 at i = 8 deg) crosses the axis at r ~ 80, inside the exempt zone; the
@@ -267,14 +265,13 @@ export async function runParity(): Promise<{ maxErr: number; rows: number }> {
   icases.push({ label: "retry", s: strongEq.s, a: strongEq.a, dl0: retryDl0, hTol: H_TOL, nCmp: 8 });
   // a barely-resolved barrier step near the axis (alpha = 0.05 ray, theta ~ 1.6e-3, dl0 = 0.5 ->
   // accepted at 0.25 after one halving). One RK4 step takes p_theta from -4.20 to -1.32 through
-  // the 1/sin^2 barrier. The state IS compared: the shipped comparator steps with the GPU's
-  // finite-difference half-step (h = 1e-4, see FD_H in geodesic.ts). An earlier revision compared
-  // only retries/ok here and attributed a 2 % p_theta divergence (CPU -1.3487 vs GPU -1.3212) to
-  // f32; that was the CPU's default h = 1e-5 vs the GPU's 1e-4 -- central-difference truncation on
-  // 1/theta^2 is ~2 h^2 / theta^2 ~ 0.8 % at this theta -- not precision. At h = 1e-4 the f64
-  // step gives p_theta -1.3217, 5e-4 from the GPU (~2e-4 relative), which is what this case now
-  // measures. The retry count is still the shipped-bytes statement: the GPU must halve exactly
-  // where trace.ts does.
+  // the 1/sin^2 barrier. The state IS compared. Both twins now use exact metric derivatives
+  // (metricUpperGrad / gUpGrad), so the comparator steps the same equations as the GPU with no
+  // finite-difference half-step (earlier revisions had to pass the GPU's h = 1e-4 to the CPU: the
+  // CPU default 1e-5 differed by ~0.8 % in p_theta at this theta, and even at h = 1e-4 the state
+  // agreed only to 2.3e-4). Measured under exact forces: 6.79e-5 relative, the largest of all 53
+  // parity rows (f32 through the barrier; every other integrator case is <= 2.9e-7). The retry
+  // count is still the shipped-bytes statement: the GPU must halve exactly where trace.ts does.
   icases.push(findState("barrier", screenToState(0.05, 6, 0, I8, 1000), 0, (_, out) => out.retries >= 1));
   // a step that crosses the axis (xi = 0): only reflectAxis can flip the sign of p_theta here
   icases.push(findState("reflect", screenToState(0, 6, 0, I8, 1000), 0, (s, out) => out.s[6] * s[6] < 0));
@@ -296,14 +293,13 @@ export async function runParity(): Promise<{ maxErr: number; rows: number }> {
   await iread.mapAsync(GPUMapMode.READ);
   const igpu = new Float32Array(iread.getMappedRange().slice(0));
   // The GPU starts from the f32-rounded state, so compare against the CPU stepping that same
-  // rounded state; otherwise the input rounding (not the shader) would dominate the error. The
-  // CPU steps with the GPU's FD half-step (1e-4) for the same reason: the comparator must step the
-  // same scheme, and trace.ts's default 1e-5 differs by up to 1e-2 on a barrier step.
-  const GPU_FD_H = 1e-4;
+  // rounded state; otherwise the input rounding (not the shader) would dominate the error. Both
+  // twins use exact metric derivatives (metricUpperGrad / gUpGrad), so the CPU steps the same
+  // equations as the GPU with no finite-difference half-step to match.
   const cpuStep = (c: ICase) => {
     const s32 = Float64Array.from(Array.from(c.s, Math.fround));
     const dl0 = c.dl0 < 0 ? Math.fround(stepSize(s32, rhOf(c.a), ROUT)) : Math.fround(c.dl0);
-    return { dl0, out: stepGeodesic(s32, c.a, dl0, Math.fround(c.hTol), MAX_RETRY, GPU_FD_H) };
+    return { dl0, out: stepGeodesic(s32, c.a, dl0, Math.fround(c.hTol), MAX_RETRY) };
   };
   icases.forEach((c, i) => {
     const { dl0, out: cpu } = cpuStep(c);

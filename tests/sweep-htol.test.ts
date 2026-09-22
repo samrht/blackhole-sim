@@ -13,6 +13,15 @@ import { photonOrbit } from "../src/physics/orbits";
  * the hTol override only for r < 1.5 * rOut and uses H_TOL_FAR beyond it, so a re-run's retries and
  * meanSteps columns may differ from the committed numbers. The selection is unaffected -- the
  * near-axis accuracy criterion and the f32 floor both live in the monitored near field.
+ *
+ * Confirmed under exact forces (metricUpperGrad, 2026-09-23; retry cap columns 4/8/12 identical):
+ *   hTol  meanSteps  retries  exhausted  budget  disk/captured/escaped  |rHit-truth| M
+ *   1e-2  338.7      10       0          0       1913/87/48             0.3381  (fails accuracy)
+ *   1e-3  338.7      53       0          0       1913/87/48             0.0098  <- ship (largest survivor)
+ *   1e-4  338.7      238      0          0       1913/87/48             0.0098
+ *   1e-5  338.9      1000     0          0       1913/87/48             0.0033
+ *   1e-6  339.3      3154     0          0       1913/87/48             0.0001  (below the f32 floor)
+ * Converged reference rHit 4.86391 M. Same selection: H_TOL = 1e-3, MAX_RETRY = 8.
  */
 const SWEEP = !!process.env.SWEEP;
 const ROBS = 1000, FOV = 14, N = 32, STEPS = 4800;

@@ -1,5 +1,5 @@
 import { metricUpper } from "./kerr";
-import { rk4, FD_H } from "./geodesic";
+import { rk4 } from "./geodesic";
 
 /**
  * CPU twin of the render loop's INTEGRATION logic (src/render/integrator-shared.wgsl is the sole
@@ -11,7 +11,7 @@ import { rk4, FD_H } from "./geodesic";
  *  hquadScaled). Chosen from tests/sweep-htol.test.ts (SWEEP=1): 1e-3, 1e-4, 1e-5 all survived
  *  (exhausted = 0 on both views, near-axis rHit within 0.02 M of the converged reference); 1e-2
  *  failed accuracy and 1e-6 fell below the f32 floor; picked the largest (cheapest) survivor.
- *  Twin constant in integrator-shared.wgsl. */
+ *  Confirmed under exact forces (2026-09-23): same table shape, same selection. Twin constant in integrator-shared.wgsl. */
 export const H_TOL = 1e-3;
 /** Maximum number of step halvings. On exhaustion the smallest-step attempt is accepted anyway and
  *  the ray proceeds (ok = false is informational; traceRay counts it in `exhausted`). Chosen from
@@ -19,11 +19,15 @@ export const H_TOL = 1e-3;
  *  never approached); shipped one size up from the smallest surviving value (4) for margin.
  *  Twin constant in integrator-shared.wgsl. */
 export const MAX_RETRY = 8;
-/** Far-field exemption: beyond rOut * 1.5 (the far branch of stepSize) the monitor is OFF. The f32
- *  finite-difference force is pure noise at r ~ 1e3 (ulp 6e-5 vs the FD half-step 1e-4; measured
- *  |dH|/scale 2.4e-3 on the GPU vs 2e-11 in f64 for the same step), so halving on dH there costs
- *  steps for nothing while curvature ~M/r^3 is negligible. Still a NaN guard: abs(NaN) <= x is
- *  false. Twin constant in integrator-shared.wgsl. */
+/** Far-field exemption: beyond rOut * 1.5 (the far branch of stepSize) the monitor is OFF. Still a
+ *  NaN guard: abs(NaN) <= x is false. Historical rationale: under finite-difference forces the f32
+ *  force was pure noise at r ~ 1e3 (ulp 6e-5 vs the FD half-step 1e-4; measured |dH|/scale 2.4e-3 on
+ *  the GPU vs 2e-11 in f64 for the same step), so halving on dH there cost steps for nothing.
+ *  Re-checked under exact forces (Task 5, 2026-09-23): the GPU's |dH|/scale is now 2.7e-8 on the
+ *  parity "far" step and 9.9e-9 on the near-axis "far-axis" step (0 retries at H_TOL on both), so
+ *  that premise no longer holds; lifting the exemption is a follow-up with its own gate design
+ *  (it changes the unmonitored near-axis far-field passage, see K_FAR). Twin constant in
+ *  integrator-shared.wgsl. */
 export const H_TOL_FAR = 1e30;
 /** Far-field angular step cap. The far field is unmonitored (H_TOL_FAR), so nothing but the step
  *  controller bounds a stride there -- and a ray aimed at screen beta crosses the axis at
@@ -33,7 +37,7 @@ export const H_TOL_FAR = 1e30;
  *  The cap limits the far stride to F_AXIS of the affine distance to the axis at the current
  *  angular rate (theta_d * Sigma / |p_theta|, since dtheta/dl = p_theta / Sigma), floored at
  *  DL_FAR_MIN. Chosen from tests/sweep-axiscap.test.ts (SWEEP=1) against a converged reference
- *  monitored everywhere; see the table in that file. Twin constants in integrator-shared.wgsl. */
+ *  monitored everywhere; see the table in that file (confirmed under exact forces, 2026-09-23). Twin constants in integrator-shared.wgsl. */
 export const F_AXIS = 0.1;
 export const DL_FAR_MIN = 0.05;
 
@@ -46,7 +50,8 @@ export const DL_FAR_MIN = 0.05;
  *  (unmonitored, F_AXIS cap); a candidate only shifts the step-grid phase there, which reshuffles
  *  the shipped controller's under-resolved axis passage, making some rays worse and others better
  *  (see the sweep's header). Follow-up: converge that passage first (monitor it or tighten the cap),
- *  then re-sweep the far stride. Twin constants in integrator-shared.wgsl. */
+ *  then re-sweep the far stride. Confirmed under exact forces (2026-09-23). Twin constants in
+ *  integrator-shared.wgsl. */
 export const K_FAR = 0.04;
 export const DL_FAR_MAX = 6;
 
@@ -100,16 +105,16 @@ export interface StepOut { s: Float64Array; ok: boolean; retries: number; dl: nu
  *  caller proceeds with it regardless (a near-axis ray that exhausts the budget is still an
  *  axis-crosser by continuity, and a diverging one winds to budget exhaustion as before) and only
  *  records the exhaustion. NaN drift compares false against the tolerance, so it is never ok. */
-export function stepGeodesic(s: Float64Array, a: number, dl0: number, hTol = H_TOL, maxRetry = MAX_RETRY, h = FD_H): StepOut {
+export function stepGeodesic(s: Float64Array, a: number, dl0: number, hTol = H_TOL, maxRetry = MAX_RETRY): StepOut {
   const [h0] = hquadScaled(s[1], s[2], a, s[4], s[5], s[6], s[7]);
   let dl = dl0;
   for (let k = 0; k < maxRetry; k++) {
-    const sN = rk4(s, a, dl, h);
+    const sN = rk4(s, a, dl);
     const [h1, scale] = hquadScaled(sN[1], sN[2], a, sN[4], sN[5], sN[6], sN[7]);
     if (Math.abs(h1 - h0) <= hTol * scale) return { s: reflectAxis(sN), ok: true, retries: k, dl };
     dl *= 0.5;
   }
-  const sN = rk4(s, a, dl, h);
+  const sN = rk4(s, a, dl);
   const [h1, scale] = hquadScaled(sN[1], sN[2], a, sN[4], sN[5], sN[6], sN[7]);
   const ok = Math.abs(h1 - h0) <= hTol * scale;
   return { s: reflectAxis(sN), ok, retries: maxRetry, dl };

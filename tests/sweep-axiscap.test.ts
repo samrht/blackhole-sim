@@ -52,6 +52,12 @@ import { stepGeodesic, traceRay, F_AXIS, DL_FAR_MIN, H_TOL, H_TOL_FAR, MAX_RETRY
  * momenta inflate its scale), so the cap, not the monitor, is what buys accuracy there. The
  * remaining 45 wrong rays at 0.1/0.05 are radius errors > 0.02 M (half a pixel) with the right
  * fate; a tighter cap trades them for steps (0.05: 35 wrong at +27 %).
+ *
+ * Confirmed under exact forces (metricUpperGrad, 2026-09-23): the table is identical to the one
+ * above to the printed precision except A.steps 0.25/0.05 332.5 (was 332.4), B.steps 0.25/0.05
+ * 469.2, 0.1/0.05 493.2, 0.1/0.02 496.8, 0.05/0.02 553.4 (each 0.1 lower); flips and wrong counts
+ * unchanged, reference convergence 1.18e-3 M (was 2.0e-3), reference fates unchanged. Same
+ * selection: F_AXIS = 0.1, DL_FAR_MIN = 0.05.
  */
 const SWEEP = !!process.env.SWEEP;
 const ROBS = 1000, RIN = 6, ROUT = 40;

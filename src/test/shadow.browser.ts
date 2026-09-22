@@ -18,14 +18,15 @@ import { classify } from "../physics/shadow";
  *  (eta < 27) cross the equatorial plane at r = 3.05-4.02 M and register as disk hits BEFORE they
  *  reach the horizon (on the beta < 0 side even |beta| = 3.9 hits at r = 3.3 M), verified on the
  *  f64 CPU twin. So the dark span is the lensed silhouette of the emitter's inner edge, and
- *  `calibration` (= shadowRadiusM / analyticRadiusM, currently 0.749) is the ratio of that
+ *  `calibration` (= shadowRadiusM / analyticRadiusM, currently 0.761) is the ratio of that
  *  silhouette to the critical curve -- a regression number, not a camera-calibration factor. The
  *  earlier reading of it as "camera calibration, not physics" (~0.87 before the polar-axis fix)
  *  was a misdiagnosis: the 0.87 also contained the old POLE_S2 floor's tunnelling artefact, which
  *  hid the far-side crossings of the xi = 0 rays on this very column; with the axis handled
- *  physically the number moved to 0.749 and is self-consistent. A true critical-curve gate (an
- *  emitter that stops outside the capture region, or a (xi, eta) classification image) is a
- *  tracked follow-up. The field names are kept for the gate's stability.
+ *  physically the number moved to 0.749 and is self-consistent. (0.749 -> 0.761 with exact metric
+ *  derivatives: a lit axis pixel inside the shadow had stopped this column's scan ~3 px early.)
+ *  A true critical-curve gate (an emitter that stops outside the capture region, or a (xi, eta)
+ *  classification image) is a tracked follow-up. The field names are kept for the gate's stability.
  *  The rigorous numerical gate for the ported math is the ?parity test. */
 export async function measureShadow(canvas: HTMLCanvasElement, maxStepsOverride = 8000) {
   const r = new Renderer(); await r.init(canvas);

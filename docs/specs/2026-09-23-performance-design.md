@@ -1,8 +1,15 @@
 # Performance — design
 
 **Date:** 2026-09-23
-**Status:** approved design, pending implementation plan
+**Status:** implemented on perf/smooth-first
 **Branch:** `perf/smooth-first` (to be created from `main` at `5cd99f9`)
+
+## Outcome
+
+- Bench (nvidia ampere, 1280×720 / 1920×1080 ms/frame; compare only back-to-back pairs, the laptop drifts thermally): baseline 110.0 / 262.3; Task 2 GPU readout 122.1 / 322.2 (noise, no GPU change); Task 3 uncapped loop at scale 1.0 146.0 / 356.8 → 147.5 / 369.9 back-to-back (noise; the gain is the adaptive scale, down to 50 % while animating); Task 4 far stride: no change (kept); Task 5 exact derivatives `b4e3f08` 110.6 / 277.9 and 117.3 / 315.0 → 71.8 / 164.5 and 72.6 / 185.5 back-to-back (about −37 %).
+- Final gates: `npm test` 85 passed, 3 skipped; build clean; `?parity` PASS 6.789e-5 over 53 cases (was 2.663e-4); `?shadow` PASS 3.95 M / 0.761 (was 3.89 / 0.749: a lit axis pixel inside the shadow no longer stops the centre-column scan); sky 200; probe-axis PASS ×2; probe-scale all PASS.
+- Constants: K_FAR 0.04 / DL_FAR_MAX 6 kept by the Task 4 sweep; H_TOL 1e-3, MAX_RETRY 8, F_AXIS 0.1, DL_FAR_MIN 0.05, K_FAR / DL_FAR_MAX all confirmed under exact forces by re-running the three sweeps.
+- Follow-up: the GPU's |ΔH|/scale on the far-field parity step is now 2.7e-8 (was 2.4e-3 under FD), so the far-field monitor exemption's premise is gone; converging the near-axis far-field passage (r 60–150) should come before any far-stride saving.
 
 ## 1. Problem, as measured
 

@@ -58,3 +58,29 @@ export function metricUpper(r: number, theta: number, a: number): Metric {
 export function omegaZAMO(r: number, theta: number, a: number): number {
   return 2 * M * a * r / bigA(r, theta, a);
 }
+
+export interface MetricGrad { g: Metric; dr: Metric; dth: Metric; }
+
+/** Inverse metric and its exact r- and theta-derivatives (quotient rule, f' = (N' - f D') / D).
+ *  Replaces finite differences in the integrator: one evaluation instead of four extra. Semantics
+ *  match metricUpper exactly, including the POLE_S2 floor, whose theta-derivative is 0 below the
+ *  floor (the floored denominator is constant there). Twin: gUpGrad in integrator-shared.wgsl. */
+export function metricUpperGrad(r: number, theta: number, a: number): MetricGrad {
+  const s = Math.sin(theta), c = Math.cos(theta), s2 = s * s, sc = s * c;
+  const floored = s2 < POLE_S2, s2d = floored ? POLE_S2 : s2, ds2d = floored ? 0 : 2 * sc;
+  const a2 = a * a, r2 = r * r, ra = r2 + a2;
+  const Sig = r2 + a2 * c * c, dSigR = 2 * r, dSigT = -2 * a2 * sc;
+  const D = r2 - 2 * M * r + a2, dDR = 2 * r - 2 * M;
+  const A = ra * ra - a2 * D * s2, dAR = 4 * r * ra - a2 * dDR * s2, dAT = -2 * a2 * D * sc;
+  const SD = Sig * D, dSDR = dSigR * D + Sig * dDR, dSDT = dSigT * D;
+  const tt = -A / SD, tphi = -2 * M * a * r / SD, rr = D / Sig, thth = 1 / Sig;
+  const N = D - a2 * s2, P = SD * s2d, phph = N / P;
+  const dPR = dSDR * s2d, dPT = dSDT * s2d + SD * ds2d;
+  return {
+    g: { tt, tphi, rr, thth, phph },
+    dr: { tt: (-dAR - tt * dSDR) / SD, tphi: (-2 * M * a - tphi * dSDR) / SD, rr: (dDR - rr * dSigR) / Sig,
+          thth: -thth * dSigR / Sig, phph: (dDR - phph * dPR) / P },
+    dth: { tt: (-dAT - tt * dSDT) / SD, tphi: -tphi * dSDT / SD, rr: -rr * dSigT / Sig,
+           thth: -thth * dSigT / Sig, phph: (-2 * a2 * sc - phph * dPT) / P },
+  };
+}
