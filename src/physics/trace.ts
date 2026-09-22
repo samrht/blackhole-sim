@@ -38,8 +38,11 @@ export const F_AXIS = 0.1;
 export const DL_FAR_MIN = 0.05;
 
 /** Far-field stride: dl = K_FAR * r clamped to [0.6, DL_FAR_MAX] beyond rOut * 1.5, before the
- *  F_AXIS angular cap. Chosen from tests/sweep-farstride.test.ts (SWEEP=1). Twin constants in
- *  integrator-shared.wgsl. */
+ *  F_AXIS angular cap. Kept at 0.04 / 6 by tests/sweep-farstride.test.ts (SWEEP=1): against a
+ *  converged monitored reference, no longer stride in K in {0.04..0.3} x MAX in {6..150} kept every
+ *  ray within half a pixel of today's error (the cheapest, 0.04/20, would cut mean steps 26 % but
+ *  moves 48 disk hits by up to 17 M and 3 sky directions), so the shipped pair was selected (mean
+ *  steps unchanged, 344.1). Twin constants in integrator-shared.wgsl. */
 export const K_FAR = 0.04;
 export const DL_FAR_MAX = 6;
 

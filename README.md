@@ -67,6 +67,8 @@ slower on the dev laptop).
 While animating, the render scale drops to as low as 50 % to hold ~60 fps; at the 1280×720 baseline cost that is roughly 27.5 ms at 50 %.
 The numbers drift run to run with GPU temperature: in the same session, HEAD before this change (`5c7e23b`) measured 146.0 / 356.8 and this change 147.5 / 369.9 back-to-back.
 
+Far-field stride: `tests/sweep-farstride.test.ts` (`SWEEP=1`) swept K_FAR ∈ {0.04 … 0.3} × DL_FAR_MAX ∈ {6 … 150} against a converged, monitored-everywhere reference with the rule "no ray worse than today by more than half a pixel". No longer stride passed (the cheapest, 0.04 / 20, would cut mean steps per ray 26 % but moves 48 disk hits and 3 sky directions), so K_FAR = 0.04, DL_FAR_MAX = 6 are kept and there is no row for it: nothing changed on the GPU.
+
 ## Status
 
 Tier 1 (single-GPU, real-time image) complete and verified.
@@ -123,7 +125,7 @@ classification image — is a follow-up. (For what it is worth, the interactive 
 i = 8° puts the shadow's top edge at 5.2 M by the same vertical scale, i.e. at √27; the camera
 was never the problem.)
 
-**Current gates (fix/polar-axis):** `npm test` 82 passed, 2 skipped (the two sweeps, run with
+**Current gates (fix/polar-axis):** `npm test` 82 passed, 3 skipped (the three sweeps, run with
 `SWEEP=1`); `?parity` PASS, maxRelErr 2.663e-4 over 53 cases — re-baselined from 9.690e-7 over 45
 because the eight integrator cases dominate (a full f32 RK4 step carries more error than a
 metric component; the forced-retry case's p_r sets the maximum; the barrier state, now compared,
