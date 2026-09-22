@@ -18,7 +18,9 @@ export class Renderer {
   brightHPipe!: GPUComputePipeline; blurVPipe!: GPUComputePipeline;
   computeBind!: GPUBindGroup; presentBind!: GPUBindGroup;
   brightHBind!: GPUBindGroup; blurVBind!: GPUBindGroup;
-  width = 0; height = 0; bw = 0; bh = 0; // bw/bh = quarter-res bloom dimensions
+  displayW = 0; displayH = 0;          // framebuffer size (canvas pixels)
+  scale = 1;                           // internal render scale in [0.5, 1]; see setScale
+  width = 0; height = 0; bw = 0; bh = 0; // INTERNAL trace size and its quarter-res bloom size
   renderBloom = true; // off for the structural shadow test (measures the raw geometric shadow)
   adapterInfo: GpuInfo = { vendor: "", architecture: "", description: "" };
 
@@ -47,15 +49,32 @@ export class Renderer {
 
   resize(canvas: HTMLCanvasElement) {
     const dpr = Math.min(devicePixelRatio || 1, 1.5);
-    this.width = Math.floor(canvas.clientWidth * dpr);
-    this.height = Math.floor(canvas.clientHeight * dpr);
-    canvas.width = this.width; canvas.height = this.height;
+    this.displayW = Math.floor(canvas.clientWidth * dpr);
+    this.displayH = Math.floor(canvas.clientHeight * dpr);
+    canvas.width = this.displayW; canvas.height = this.displayH;
     this.ctx.configure({ device: this.device, format: this.format, alphaMode: "opaque" });
-    this.accumBuf = this.device.createBuffer({ size: this.width * this.height * 16, usage: GPUBufferUsage.STORAGE });
-    this.bw = Math.ceil(this.width / 4); this.bh = Math.ceil(this.height / 4); // quarter-res bloom
+    // Sized for scale 1 (the largest the internal size can reach), so setScale never reallocates.
+    this.accumBuf = this.device.createBuffer({ size: this.displayW * this.displayH * 16, usage: GPUBufferUsage.STORAGE });
+    const bloomBytes = Math.ceil(this.displayW / 4) * Math.ceil(this.displayH / 4) * 16; // quarter-res bloom
+    this.bloomA = this.device.createBuffer({ size: bloomBytes, usage: GPUBufferUsage.STORAGE });
+    this.bloomB = this.device.createBuffer({ size: bloomBytes, usage: GPUBufferUsage.STORAGE });
+    this.applyScale();
+  }
 
-    this.bloomA = this.device.createBuffer({ size: this.bw * this.bh * 16, usage: GPUBufferUsage.STORAGE });
-    this.bloomB = this.device.createBuffer({ size: this.bw * this.bh * 16, usage: GPUBufferUsage.STORAGE });
+  /** Internal size from the display size and scale. Buffers are sized for scale 1 and indexed at the
+   *  internal width, so a scale change never reallocates (and needs no rebind). */
+  private applyScale() {
+    this.width = Math.max(1, Math.round(this.displayW * this.scale));
+    this.height = Math.max(1, Math.round(this.displayH * this.scale));
+    this.bw = Math.ceil(this.width / 4); this.bh = Math.ceil(this.height / 4);
+  }
+  /** Returns true when the internal size changed (the caller must restart accumulation). */
+  setScale(s: number): boolean {
+    const v = Math.min(1, Math.max(0.5, s));
+    if (v === this.scale) return false;
+    const w = this.width, h = this.height;
+    this.scale = v; this.applyScale();
+    return this.width !== w || this.height !== h;
   }
 
   /** Upload the CPU-computed T(r) and color(T) lookup tables as read-only storage buffers. */
@@ -168,22 +187,22 @@ export class Renderer {
   /** Render one frame to an offscreen texture and read the presented pixels back to the CPU
    *  (tightly-packed RGBA8/BGRA8, row-stride removed). Used by validation harnesses. */
   async readbackPresented(u: UniformValues): Promise<{ data: Uint8Array; w: number; h: number }> {
-    const tex = this.device.createTexture({ size: [this.width, this.height], format: this.format,
+    const tex = this.device.createTexture({ size: [this.displayW, this.displayH], format: this.format,
       usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC });
     this.device.queue.writeBuffer(this.uniformBuf, 0, packUniforms(u));
     const enc = this.device.createCommandEncoder();
     this.recordCompute(enc);
     const rp = enc.beginRenderPass({ colorAttachments: [{ view: tex.createView(), clearValue: { r: 0, g: 0, b: 0, a: 1 }, loadOp: "clear", storeOp: "store" }] });
     rp.setPipeline(this.presentPipe); rp.setBindGroup(0, this.presentBind); rp.draw(3); rp.end();
-    const bpr = Math.ceil(this.width * 4 / 256) * 256; // bytesPerRow must be a multiple of 256
-    const buf = this.device.createBuffer({ size: bpr * this.height, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
-    enc.copyTextureToBuffer({ texture: tex }, { buffer: buf, bytesPerRow: bpr }, [this.width, this.height]);
+    const bpr = Math.ceil(this.displayW * 4 / 256) * 256; // bytesPerRow must be a multiple of 256
+    const buf = this.device.createBuffer({ size: bpr * this.displayH, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+    enc.copyTextureToBuffer({ texture: tex }, { buffer: buf, bytesPerRow: bpr }, [this.displayW, this.displayH]);
     this.device.queue.submit([enc.finish()]);
     await buf.mapAsync(GPUMapMode.READ);
     const padded = new Uint8Array(buf.getMappedRange().slice(0));
-    const data = new Uint8Array(this.width * this.height * 4);
-    for (let y = 0; y < this.height; y++) data.set(padded.subarray(y * bpr, y * bpr + this.width * 4), y * this.width * 4);
+    const data = new Uint8Array(this.displayW * this.displayH * 4);
+    for (let y = 0; y < this.displayH; y++) data.set(padded.subarray(y * bpr, y * bpr + this.displayW * 4), y * this.displayW * 4);
     buf.unmap();
-    return { data, w: this.width, h: this.height };
+    return { data, w: this.displayW, h: this.displayH };
   }
 }

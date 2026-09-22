@@ -22,7 +22,7 @@ const page = await browser.newPage({ viewport: { width: 1000, height: 680 } });
 const diags = [];
 page.on("console", (m) => { if (m.type() === "warning" || m.type() === "error") diags.push(m.text()); });
 page.on("pageerror", (e) => diags.push("PAGEERROR " + e.message));
-await page.goto(BASE + "/", { waitUntil: "load", timeout: 20000 });
+await page.goto(BASE + "/?scale=1", { waitUntil: "load", timeout: 20000 });
 // The slider handlers are attached after the async WebGPU init, just before the render loop
 // starts; the first frame writes a number into #spp, so wait for that before touching anything.
 await page.waitForFunction(() => /^\d+$/.test(document.getElementById("spp").textContent), null, { timeout: 30000 });

@@ -18,7 +18,7 @@ This isn't a stylized visualization — it's a real general-relativistic ray tra
 ## Requirements
 
 - A WebGPU-capable browser: **Chrome/Edge 113+** or **Safari 18+**
-- A dedicated GPU is strongly recommended. This was scoped to Tier 1 of a 3-tier physics spec specifically to run on modest hardware (target: NVIDIA RTX 3050 Laptop, 4GB), with progressive frame accumulation capped around 15fps to stay responsive — full GR ray tracing is inherently expensive per pixel, so performance on integrated graphics may still be limited.
+- A dedicated GPU is strongly recommended. This was scoped to Tier 1 of a 3-tier physics spec specifically to run on modest hardware (target: NVIDIA RTX 3050 Laptop, 4GB), with an uncapped render loop that drops the internal resolution to as low as 50 % while animating to stay responsive (full resolution when paused) — full GR ray tracing is inherently expensive per pixel, so performance on integrated graphics may still be limited.
 
 ## Quickstart
 
@@ -32,7 +32,9 @@ npm run build     # production build
 Validation routes (append to the dev URL):
 - `?parity` — CPU↔GPU parity check for the core physics math, including the shadow-edge classifier, the camera mapping and the constraint-monitored integrator step and its step controller, all compiled from the same shared WGSL fragments the renderer uses (53 cases; the metric cases run the shipped `integrator-shared.wgsl` bytes too)
 - `?shadow` — structural check that the Schwarzschild (a = 0) render has a centred dark region ringed by disk, with a plausible radius; the number it records is the lensed inner edge of its emitter, not the critical curve (see Status), and is a regression gate rather than a √27 M assertion
-- `node scripts/probe-axis.mjs` — visual check of the polar-axis fix: drives the sliders to a = 0, sky and jet off, at i = 72° and 8°, and asserts the band beside the pole column (x ∈ [488, 512] minus the two axis columns, |α| ≈ 0.05–0.5 M) has no more void-class pixels than a band beside it AND that the band's mean brightness is at least 0.95 of the side band's (the far-field streak was a ~50 % dimming, invisible to a dark-pixel count: measured 0.203 on main, 0.875 on the pre-cap branch build, 0.993 with the cap); fails on main and on the pre-cap build; also prints the axis columns' own dark fraction; writes `axis-i72.png` / `axis-i8.png`
+- `node scripts/probe-axis.mjs` — visual check of the polar-axis fix: drives the sliders to a = 0, sky and jet off, at i = 72° and 8°, and asserts the band beside the pole column (x ∈ [488, 512] minus the two axis columns, |α| ≈ 0.05–0.5 M) has no more void-class pixels than a band beside it AND that the band's mean brightness is at least 0.95 of the side band's (the far-field streak was a ~50 % dimming, invisible to a dark-pixel count: measured 0.203 on main, 0.875 on the pre-cap branch build, 0.993 with the cap); fails on main and on the pre-cap build; also prints the axis columns' own dark fraction; writes `axis-i72.png` / `axis-i8.png`; runs at `?scale=1` so it always measures a full-resolution frame
+- `node scripts/probe-scale.mjs` — adaptive render scale: pinned `?scale=0.5` survives a resize and a tiny odd viewport lit and warning-free, and pausing an unpinned, scaled-down view restores 100 %
+- `?scale=0.5` … `1` pins the internal render scale and disables the adaptive controller
 
 ## Architecture
 
@@ -60,6 +62,10 @@ slower on the dev laptop).
 |---|---|---|---|
 | Baseline (`4ba0543`) | nvidia ampere | 110.0 | 262.3 |
 | GPU readout (no perf change expected) | nvidia ampere | 122.1 | 322.2 |
+| Uncapped loop + adaptive scale (scale 1.0) | nvidia ampere | 140.6 | 351.4 |
+
+While animating, the render scale drops to as low as 50 % to hold ~60 fps; at the 1280×720 baseline cost that is roughly 27.5 ms at 50 %.
+The numbers drift run to run with GPU temperature: in the same session, HEAD before this change (`5c7e23b`) measured 146.0 / 356.8 and this change 147.5 / 369.9 back-to-back.
 
 ## Status
 
@@ -117,7 +123,7 @@ classification image — is a follow-up. (For what it is worth, the interactive 
 i = 8° puts the shadow's top edge at 5.2 M by the same vertical scale, i.e. at √27; the camera
 was never the problem.)
 
-**Current gates (fix/polar-axis):** `npm test` 70 passed, 2 skipped (the two sweeps, run with
+**Current gates (fix/polar-axis):** `npm test` 82 passed, 2 skipped (the two sweeps, run with
 `SWEEP=1`); `?parity` PASS, maxRelErr 2.663e-4 over 53 cases — re-baselined from 9.690e-7 over 45
 because the eight integrator cases dominate (a full f32 RK4 step carries more error than a
 metric component; the forced-retry case's p_r sets the maximum; the barrier state, now compared,

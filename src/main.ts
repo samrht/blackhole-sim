@@ -1,5 +1,6 @@
 import { Renderer } from "./render/gpu";
 import type { UniformValues } from "./render/uniforms";
+import { ScaleController } from "./render/scale";
 import { describeGpu, isIntegratedGpu } from "./render/gpuinfo";
 import { buildTempLUT, buildColorLUT } from "./physics/lookups";
 import { iscoRadius, photonOrbit } from "./physics/orbits";
@@ -44,6 +45,14 @@ ratio to analytic critical curve = ${res.calibration} (NOT a calibration — the
   const $ = (id: string) => document.getElementById(id)!;
   $("gpu").textContent = describeGpu(r.adapterInfo);
   if (isIntegratedGpu(r.adapterInfo)) $("gpuwarn").hidden = false;
+  // ?scale=0.5 .. 1 pins the internal render scale and disables the controller (debugging, probes).
+  const scaleParam = new URLSearchParams(location.search).get("scale");
+  const pinnedScale = scaleParam !== null && isFinite(+scaleParam) ? Math.min(1, Math.max(0.5, +scaleParam)) : null;
+  if (pinnedScale !== null) r.setScale(pinnedScale);
+  const ctl = new ScaleController();
+  const rscaleEl = $("rscale");
+  const showScale = () => { rscaleEl.textContent = `${Math.round(r.scale * 100)}%`; };
+  showScale();
 
   const state = { a: 0.9, incl: 72, exposure: 1.6, timeScale: 1.0, turbAmp: 0.6, breatheAmp: 0.0, playing: true, flareScale: 1.0, jetStrength: 1.0, jetGamma: 5.0, jetLength: 60.0, jetKnots: 0.7, skyStrength: 1.0, maxSteps: 4800 };
   const SPEED = 20;        // coordinate-time M advanced per real second at timeScale = 1
@@ -160,31 +169,35 @@ ratio to analytic critical curve = ${res.calibration} (NOT a calibration — the
     .then((bmp) => { r.uploadSky(bmp); r.rebind(); skyReady = true; reset(); })
     .catch(() => { /* offline / decode error — skyReady stays false, procedural starfield stays */ });
 
-  // On slower GPUs, cap accumulation to ~15 fps so the tab stays responsive.
-  // Lower maxSteps reduces per-frame GPU time; quality is recovered by accumulation over time.
-  const TARGET_MS = 67; // ~15 fps cap so the tab stays responsive on modest GPUs
-  let lastFrame = 0;
+  // Uncapped: render every animation frame. While animating, the ScaleController trades internal
+  // resolution for frame rate (target ~60 fps, never below half resolution); paused, the scale snaps
+  // back to 1 and the progressive running mean converges to a sharp still.
   function loop(now: number) {
-    if (now - lastFrame >= TARGET_MS) {
-      const dt = lastNow ? (now - lastNow) / 1000 : 0; lastNow = now;
-      if (state.playing) simTime += dt * SPEED;   // advance coordinate time only while playing
-      lastFrame = now;
-      // Playing: fixed EMA (blend==1 on the reset frame to clear). Paused: progressive running mean.
-      const blend = state.playing ? (sample === 0 ? 1 : EMA_BLEND) : 1 / (sample + 1);
-      const u: UniformValues = {
-        resW: r.width, resH: r.height, a: state.a, incl: state.incl * Math.PI / 180,
-        rObs: 1000, fovScale: 14, rIn, rOut, Tpeak: T_PEAK, exposure: state.exposure,
-        time: simTime, frame: sample, reset: sample === 0 ? 1 : 0, maxSteps: state.maxSteps,
-        blend, timeScale: state.timeScale, turbAmp: state.turbAmp,
-        breatheAmp: state.breatheAmp, nSpots: baseSpots.length,
-        jetStrength: state.jetStrength, jetGamma: state.jetGamma,
-        jetLength: state.jetLength, jetKnots: state.jetKnots,
-        skyStrength: skyReady ? state.skyStrength : 0,
-      };
-      r.frame(u);
-      sample++;
-      if ((sample & 7) === 0 || sample < 4) sppEl.textContent = String(sample);
+    const dt = lastNow ? now - lastNow : 0; lastNow = now;
+    if (state.playing) simTime += (dt / 1000) * SPEED;
+    if (pinnedScale === null) {
+      if (state.playing) {
+        const ns = ctl.update(dt, now);
+        if (ns !== null && r.setScale(ns)) { reset(); showScale(); }
+      } else if (r.scale !== 1) {
+        r.setScale(1); ctl.reset(1); reset(); showScale();
+      }
     }
+    // Playing: fixed EMA (blend==1 on the reset frame to clear). Paused: progressive running mean.
+    const blend = state.playing ? (sample === 0 ? 1 : EMA_BLEND) : 1 / (sample + 1);
+    const u: UniformValues = {
+      resW: r.width, resH: r.height, outW: r.displayW, outH: r.displayH, a: state.a, incl: state.incl * Math.PI / 180,
+      rObs: 1000, fovScale: 14, rIn, rOut, Tpeak: T_PEAK, exposure: state.exposure,
+      time: simTime, frame: sample, reset: sample === 0 ? 1 : 0, maxSteps: state.maxSteps,
+      blend, timeScale: state.timeScale, turbAmp: state.turbAmp,
+      breatheAmp: state.breatheAmp, nSpots: baseSpots.length,
+      jetStrength: state.jetStrength, jetGamma: state.jetGamma,
+      jetLength: state.jetLength, jetKnots: state.jetKnots,
+      skyStrength: skyReady ? state.skyStrength : 0,
+    };
+    r.frame(u);
+    sample++;
+    if ((sample & 7) === 0 || sample < 4) sppEl.textContent = String(sample);
     requestAnimationFrame(loop);
   }
   requestAnimationFrame(loop);
