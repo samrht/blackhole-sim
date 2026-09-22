@@ -4,7 +4,7 @@ import { photonOrbit } from "../physics/orbits";
 import type { UniformValues } from "../render/uniforms";
 import { classify } from "../physics/shadow";
 
-/** Structural smoke test + calibration diagnostic for the Schwarzschild (a=0) shadow.
+/** Structural smoke test for the Schwarzschild (a=0) shadow, plus a regression-gated radius.
  *
  *  We light a flat emitter from the photon orbit outward and view nearly face-on (10°, clear of
  *  the camera's pole-on degeneracy), so the image is a bright disk wrapping a centred dark capture
@@ -12,15 +12,20 @@ import { classify } from "../physics/shadow";
  *  stay in the equatorial plane and never trigger the theta-crossing test) for the dark span.
  *
  *  PASS = a centred shadow exists, is ringed by disk emission, and has a physically-plausible
- *  apparent radius. We deliberately do NOT assert the textbook sqrt(27)*M to within a few percent:
- *  the rendered radius differs from the analytic sqrt(27)*M by a constant camera-calibration factor
- *  (`calibration` in the return value, measured ~0.87). This is NOT a physics error and NOT a step-
- *  budget artifact -- this route runs at a high step budget and the value is flat across budgets
- *  (see docs/specs/2026-07-20-photon-ring-detail-design.md §3.4). It comes from the Tier-1 camera
- *  mapping screen coordinates to photon initial conditions heuristically (p_theta = beta,
- *  p_phi = -alpha*sin i) with no normalization, so `fovScale` is not calibrated in true M units.
- *  Recalibrating to a normalized Bardeen camera would rescale every image in the project and is
- *  tracked as a separate follow-up.
+ *  apparent radius. We deliberately do NOT assert the textbook sqrt(27)*M: the dark span this
+ *  route measures is NOT the critical curve. With the emitter starting at rIn = 3 M (the photon
+ *  orbit, inside the capture region) the centre column's captured-class rays with 4.2 <= beta < 5.196
+ *  (eta < 27) cross the equatorial plane at r = 3.05-4.02 M and register as disk hits BEFORE they
+ *  reach the horizon (on the beta < 0 side even |beta| = 3.9 hits at r = 3.3 M), verified on the
+ *  f64 CPU twin. So the dark span is the lensed silhouette of the emitter's inner edge, and
+ *  `calibration` (= shadowRadiusM / analyticRadiusM, currently 0.749) is the ratio of that
+ *  silhouette to the critical curve -- a regression number, not a camera-calibration factor. The
+ *  earlier reading of it as "camera calibration, not physics" (~0.87 before the polar-axis fix)
+ *  was a misdiagnosis: the 0.87 also contained the old POLE_S2 floor's tunnelling artefact, which
+ *  hid the far-side crossings of the xi = 0 rays on this very column; with the axis handled
+ *  physically the number moved to 0.749 and is self-consistent. A true critical-curve gate (an
+ *  emitter that stops outside the capture region, or a (xi, eta) classification image) is a
+ *  tracked follow-up. The field names are kept for the gate's stability.
  *  The rigorous numerical gate for the ported math is the ?parity test. */
 export async function measureShadow(canvas: HTMLCanvasElement, maxStepsOverride = 8000) {
   const r = new Renderer(); await r.init(canvas);

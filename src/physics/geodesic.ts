@@ -12,29 +12,33 @@ export function nullRadialMomentum(r: number, th: number, a: number, pt: number,
   return Math.sqrt(Math.max(0, -rest / g.rr));
 }
 
-export function rhs(s: Float64Array, a: number): Float64Array {
+/** Central-difference half-step for the force terms. The CPU default is 1e-5; the shader's rhs()
+ *  in integrator-shared.wgsl uses 1e-4 (f32 cannot resolve 1e-5 at r ~ 1e3). The ?parity
+ *  comparator passes h = 1e-4 so it steps the same finite-difference scheme the GPU does. */
+export const FD_H = 1e-5;
+
+export function rhs(s: Float64Array, a: number, h = FD_H): Float64Array {
   const [, r, th, , pt, pr, pth, pphi] = s;
   const g = metricUpper(r, th, a);
   const dt = g.tt * pt + g.tphi * pphi;
   const dr = g.rr * pr;
   const dth = g.thth * pth;
   const dphi = g.tphi * pt + g.phph * pphi;
-  const h = 1e-5;
   const dQdr = (hquad(r + h, th, a, pt, pr, pth, pphi) - hquad(r - h, th, a, pt, pr, pth, pphi)) / (2 * h);
   const dQdth = (hquad(r, th + h, a, pt, pr, pth, pphi) - hquad(r, th - h, a, pt, pr, pth, pphi)) / (2 * h);
   return new Float64Array([dt, dr, dth, dphi, 0, -0.5 * dQdr, -0.5 * dQdth, 0]);
 }
 
-export function rk4(s: Float64Array, a: number, dl: number): Float64Array {
+export function rk4(s: Float64Array, a: number, dl: number, h = FD_H): Float64Array {
   const add = (x: Float64Array, k: Float64Array, f: number) => {
     const o = new Float64Array(8);
     for (let i = 0; i < 8; i++) o[i] = x[i] + k[i] * f;
     return o;
   };
-  const k1 = rhs(s, a);
-  const k2 = rhs(add(s, k1, dl / 2), a);
-  const k3 = rhs(add(s, k2, dl / 2), a);
-  const k4 = rhs(add(s, k3, dl), a);
+  const k1 = rhs(s, a, h);
+  const k2 = rhs(add(s, k1, dl / 2), a, h);
+  const k3 = rhs(add(s, k2, dl / 2), a, h);
+  const k4 = rhs(add(s, k3, dl), a, h);
   const o = new Float64Array(8);
   for (let i = 0; i < 8; i++) o[i] = s[i] + (dl / 6) * (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i]);
   return o;

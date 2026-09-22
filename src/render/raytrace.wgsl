@@ -13,51 +13,6 @@ struct Uniforms {
 @group(0) @binding(5) var skyTex: texture_2d<f32>;
 @group(0) @binding(6) var skySamp: sampler;
 
-const PI = 3.141592653589793;
-
-fn delta_(r: f32, a: f32) -> f32 { return r*r - 2.0*r + a*a; }
-fn sigma_(r: f32, th: f32, a: f32) -> f32 { let c = cos(th); return r*r + a*a*c*c; }
-fn bigA_(r: f32, th: f32, a: f32) -> f32 { let s = sin(th); return pow(r*r+a*a,2.0) - a*a*delta_(r,a)*s*s; }
-
-// upper metric components (tt, tphi, rr, thth, phph)
-// POLE_S2 floors sin^2(th) in the divergent 1/sin^2 denominator of g^{phi phi}; matches
-// src/physics/kerr.ts. Regularizes the Boyer-Lindquist polar axis so axis-grazing rays no
-// longer get an unbounded p_th kick (which painted a black meridian seam + central cap).
-const POLE_S2 = 1e-3;
-fn gUp(r: f32, th: f32, a: f32) -> array<f32,5> {
-  let s2 = sin(th)*sin(th); let s2d = max(s2, POLE_S2);
-  let Sig = sigma_(r,th,a); let d = delta_(r,a); let A = bigA_(r,th,a);
-  return array<f32,5>( -A/(Sig*d), -2.0*a*r/(Sig*d), d/Sig, 1.0/Sig, (d - a*a*s2)/(Sig*d*s2d) );
-}
-fn gLow(r: f32, th: f32, a: f32) -> array<f32,5> {
-  let s2 = sin(th)*sin(th); let Sig = sigma_(r,th,a); let d = delta_(r,a);
-  return array<f32,5>( -(1.0-2.0*r/Sig), -2.0*a*r*s2/Sig, Sig/d, Sig, (r*r+a*a+2.0*a*a*r*s2/Sig)*s2 );
-}
-fn omegaKep(r: f32, a: f32) -> f32 { return 1.0/(pow(r,1.5) + a); } // prograde, M=1
-
-fn hquad(r: f32, th: f32, a: f32, p: vec4<f32>) -> f32 {
-  let g = gUp(r,th,a);
-  return g[0]*p.x*p.x + 2.0*g[1]*p.x*p.w + g[2]*p.y*p.y + g[3]*p.z*p.z + g[4]*p.w*p.w;
-}
-// state s = (t,r,th,phi, pt,pr,pth,pphi) packed as two vec4
-struct State { x: vec4<f32>, p: vec4<f32> };
-fn rhs(s: State, a: f32) -> State {
-  let r = s.x.y; let th = s.x.z; let g = gUp(r,th,a);
-  let dx = vec4<f32>(g[0]*s.p.x + g[1]*s.p.w, g[2]*s.p.y, g[3]*s.p.z, g[1]*s.p.x + g[4]*s.p.w);
-  let h = 1e-4;
-  let dQdr = (hquad(r+h,th,a,s.p) - hquad(r-h,th,a,s.p))/(2.0*h);
-  let dQdth = (hquad(r,th+h,a,s.p) - hquad(r,th-h,a,s.p))/(2.0*h);
-  let dp = vec4<f32>(0.0, -0.5*dQdr, -0.5*dQdth, 0.0);
-  return State(dx, dp);
-}
-fn addS(s: State, k: State, f: f32) -> State { return State(s.x + k.x*f, s.p + k.p*f); }
-fn rk4(s: State, a: f32, dl: f32) -> State {
-  let k1 = rhs(s,a); let k2 = rhs(addS(s,k1,dl*0.5),a);
-  let k3 = rhs(addS(s,k2,dl*0.5),a); let k4 = rhs(addS(s,k3,dl),a);
-  return State(s.x + (k1.x+2.0*k2.x+2.0*k3.x+k4.x)*(dl/6.0),
-               s.p + (k1.p+2.0*k2.p+2.0*k3.p+k4.p)*(dl/6.0));
-}
-
 // linearly-interpolated lookup into a 1-D storage-buffer LUT (portable; no float-filterable feature)
 fn sampleTemp(r: f32) -> f32 {
   let n = arrayLength(&tempLUT);
@@ -270,12 +225,14 @@ fn skyDir(s: State, a: f32) -> vec3<f32> {
   for (var step = 0u; step < U.maxSteps; step++) {
     // dl > 0 with p_r < 0 integrates INWARD along the reversed worldline.
     let r = s.x.y;
-    // distance-adaptive step: fine in the strong-field/disk region, large strides through the
-    // near-flat far field (curvature ~M/r^3 is negligible there) so we don't burn thousands of
-    // steps just travelling in from the distant observer at r0.
-    var dl = clamp(0.02 * (r - rh), 0.002, 0.5);
-    if (r > U.rOut * 1.5) { dl = clamp(0.04 * r, 0.6, 6.0); }
-    let sNew = rk4(s, a, dl);
+    let far = r > U.rOut * 1.5; // same threshold as the far branch of stepSize: monitor OFF out there
+    let st = stepGeodesic(s, a, stepSize(s, rh, U.rOut), select(H_TOL, H_TOL_FAR, far));
+    // On retry exhaustion the smallest-step attempt is accepted and the ray proceeds; st.ok is
+    // informational. Breaking to the (xi, eta) classifier here painted starfield over disk hits
+    // for near-axis rays (it can only answer captured/escaped) -- a dark seam on the alpha = 0
+    // column. A genuinely diverging ray still winds to budget exhaustion and reaches the
+    // classifier below as before; a NaN state still ends in the `usable` guard.
+    let dl = st.dl; let sNew = st.s;
 
     // Optically-thin jet: integrate emissivity * relativistic beaming along the ray. The disk
     // hit below still `break`s (opaque), so jet segments behind the disk/horizon are occluded.
@@ -293,9 +250,12 @@ fn skyDir(s: State, a: f32) -> vec3<f32> {
       }
     }
 
-    // disk crossing: equatorial plane th = PI/2 (take the first hit -> optically-thick top surface)
+    // disk crossing: equatorial plane th = PI/2 (take the first hit -> optically-thick top surface).
+    // A step that moved theta by more than 0.5 rad is not a plane crossing (a legitimate near-field
+    // step moves theta by <= ~0.07 rad): it is a diverged state that reflectAxis's single-crossing
+    // reduction cannot have made sense of, and interpolating a disk hit from it would be garbage.
     let f0 = s.x.z - PI*0.5; let f1 = sNew.x.z - PI*0.5;
-    if (f0 * f1 < 0.0) {
+    if (f0 * f1 < 0.0 && abs(sNew.x.z - s.x.z) < 0.5) {
       let frac = f0 / (f0 - f1);
       let rHit = mix(s.x.y, sNew.x.y, frac);
       if (rHit >= U.rIn && rHit <= U.rOut) {

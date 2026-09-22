@@ -2,6 +2,7 @@ import { metricUpper, metricLower } from "../physics/kerr";
 import { omegaKepler } from "../physics/orbits";
 import { gFactorKepler } from "../physics/redshift";
 import parityWGSL from "../render/parity.wgsl?raw";
+import integratorSharedWGSL from "../render/integrator-shared.wgsl?raw";
 import { turbulence } from "../physics/emission";
 import turbParityWGSL from "../render/turb-parity.wgsl?raw";
 import { jetEmission, dopplerBoost } from "../physics/jet";
@@ -12,6 +13,8 @@ import shadowParityWGSL from "../render/shadow-parity.wgsl?raw";
 import { screenToState, screenToXiEta } from "../physics/camera";
 import cameraSharedWGSL from "../render/camera-shared.wgsl?raw";
 import cameraParityWGSL from "../render/camera-parity.wgsl?raw";
+import { stepGeodesic, stepSize, H_TOL, H_TOL_FAR, MAX_RETRY } from "../physics/trace";
+import integratorParityWGSL from "../render/integrator-parity.wgsl?raw";
 
 /** Runs the WGSL metric/orbit/g-factor helpers on fixed inputs and returns the max relative
  *  error vs the TypeScript core. f32 GPU vs f64 CPU keeps this in the ~1e-6..1e-4 range. */
@@ -28,7 +31,7 @@ export async function runParity(): Promise<{ maxErr: number; rows: number }> {
   device.queue.writeBuffer(inBuf, 0, inArr);
   const outBuf = device.createBuffer({ size: cases.length * 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
   const readBuf = device.createBuffer({ size: cases.length * 16, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
-  const mod = device.createShaderModule({ code: parityWGSL });
+  const mod = device.createShaderModule({ code: integratorSharedWGSL + parityWGSL });
   const pipe = device.createComputePipeline({ layout: "auto", compute: { module: mod, entryPoint: "main" } });
   const bind = device.createBindGroup({ layout: pipe.getBindGroupLayout(0), entries: [
     { binding: 0, resource: { buffer: inBuf } }, { binding: 1, resource: { buffer: outBuf } }] });
@@ -188,5 +191,143 @@ export async function runParity(): Promise<{ maxErr: number; rows: number }> {
     const got = [cgpu[i*8+0], cgpu[i*8+1], cgpu[i*8+2], cgpu[i*8+3], cgpu[i*8+4], cgpu[i*8+5]];
     for (let k = 0; k < 6; k++) maxErr = Math.max(maxErr, Math.abs(got[k] - cpu[k]) / (1 + Math.abs(cpu[k])));
   });
-  return { maxErr, rows: cases.length + tcases.length + jcases.length + scases.length + ccases.length };
+  // --- integrator parity (CPU trace.ts vs the SHIPPED stepGeodesic + stepSize in integrator-shared.wgsl) ---
+  // Same shared-fragment discipline as the shadow and camera blocks. The cases are found by
+  // walking real trajectories on the CPU until a state with the wanted property appears, so each
+  // one is guaranteed to exercise the branch it is named for; a case that cannot be found throws,
+  // which fails the route rather than silently testing nothing.
+  //
+  // What this gate covers: stepGeodesic (monitor, halving, retry count, ok flag), stepSize (the
+  // shader computes its own stride on the dl0 < 0 sentinel -- near branch, far branch and the
+  // far-field F_AXIS cap -- and reports it back), reflectAxis, and the constants H_TOL/MAX_RETRY.
+  // What it does NOT cover: the render loop in raytrace.wgsl around those calls -- its
+  // select(H_TOL, H_TOL_FAR, far) predicate, the disk test and its |delta theta| guard, the
+  // capture/escape tests -- which are exercised only by ?shadow and scripts/probe-axis.mjs.
+  // Catch threshold, concretely: a one-step state desync of >~ 2e-3 absolute in the momenta or
+  // ~6e-3 in r on the near-field cases (relative error 1e-3 on values of O(1..6)); a retry, ok,
+  // constant or stride mismatch scores >= 1 (retry/ok/constants) or >~ 1e-3 relative (dl0).
+  const I8 = (8 * Math.PI) / 180;
+  const ROUT = 40; // the renderer's disk edge; sets the far-field threshold rOut * 1.5 in stepSize
+  // hTol is what the renderer would use at that state (H_TOL, or H_TOL_FAR in the unmonitored far
+  // field). dl0 < 0 = sentinel: both sides compute the stride with their own stepSize from the same
+  // (f32-rounded) state and the strides are compared; only "retry" supplies its own oversized dl0.
+  // nCmp = how many leading state components are compared: 8 = the whole state, 4 = the positions
+  // only (see "far").
+  type ICase = { label: string; s: Float64Array; a: number; dl0: number; hTol: number; nCmp: number };
+  const icases: ICase[] = [];
+  const rhOf = (a: number) => 1 + Math.sqrt(Math.max(0, 1 - a * a));
+  const SENTINEL = -1;
+  /** Walk from s0 with the shipped step controller (renderer tolerances: H_TOL_FAR beyond
+   *  rOut * 1.5, H_TOL inside) until pred(s, out) holds; return that pre-step state with the
+   *  tolerance the renderer would use there. */
+  function findState(label: string, s0: Float64Array, a: number, pred: (s: Float64Array, out: ReturnType<typeof stepGeodesic>) => boolean): ICase {
+    let s = s0;
+    for (let k = 0; k < 20000; k++) {
+      const hTol = s[1] > ROUT * 1.5 ? H_TOL_FAR : H_TOL;
+      const out = stepGeodesic(s, a, stepSize(s, rhOf(a), ROUT), hTol);
+      if (pred(s, out)) return { label, s, a, dl0: SENTINEL, hTol, nCmp: 8 };
+      if (!out.ok || out.s[1] <= rhOf(a) * 1.005 || out.s[1] > 1200) break;
+      s = out.s;
+    }
+    throw new Error(`integrator parity: no state found for case "${label}"`);
+  }
+  // far field, long stride, a != 0. Unmonitored there (H_TOL_FAR): the f32 finite-difference force
+  // at r = 1000 is noise (measured |dH|/scale 2.4e-3 on the GPU vs 2e-11 in f64), so with H_TOL the
+  // GPU would halve where the CPU does not. Retries must be 0/0 (with H_TOL the GPU retries once,
+  // so 0/0 proves stepGeodesic honours its hTol argument -- the select() that picks H_TOL_FAR in
+  // raytrace.wgsl's loop is not exercised here, only by the ?shadow re-baseline and the fps) and
+  // the POSITIONS must agree (7.1e-6 measured, dominated by r: 994.000073 CPU vs 993.992981 GPU
+  // after the dl = 6 stride). The stride itself is compared through the sentinel (uncapped far
+  // branch: 6). The momenta are not compared: the same FD noise puts ~4e-4 per unit dl into p_r on
+  // the GPU (measured p_r -1.004375 vs CPU -1.002003 after dl = 6, where the true change is
+  // 1.2e-5), a pre-existing far-field precision limit of rhs() in f32, not a statement about the
+  // shipped stepGeodesic bytes.
+  icases.push({ label: "far", s: screenToState(4, 3, 0.9, 1.2, 1000), a: 0.9, dl0: SENTINEL, hTol: H_TOL_FAR, nCmp: 4 });
+  // far field, NEAR THE AXIS: the F_AXIS cap branch of stepSize. The reviewer's streak ray
+  // (alpha = 0.1, beta = 12 at i = 8 deg) crosses the axis at r ~ 80, inside the exempt zone; the
+  // pre-cap stride of 3.2 carried theta to -9.2 there. Found by walking until theta < 0.02 while
+  // still in the far field, so the capped stride (well below the 0.04 r base) is what both sides
+  // must compute. Unmonitored (H_TOL_FAR), so retries are 0/0; whole state compared.
+  icases.push(findState("far-axis", screenToState(0.1, 12, 0, I8, 1000), 0, (s) => s[2] < 0.02 && s[1] > ROUT * 1.5));
+  // strong field, equatorial (beta = 0 at i = pi/2 stays in the plane); alpha = 2 => L_z = 2, well
+  // inside the prograde critical curve at a = 0.9, so the ray reaches r < 6 before capture
+  const strongEq = findState("strong-eq", screenToState(2, 0, 0.9, Math.PI / 2, 1000), 0.9, (s) => s[1] < 6);
+  icases.push(strongEq);
+  // near the capture margin (a = 0, b = 4 is captured; rh = 2)
+  icases.push(findState("near-horizon", screenToState(4, 0, 0, Math.PI / 2, 1000), 0, (s) => s[1] < 2.3));
+  // approaching the axis, before the turning point, no retry expected
+  icases.push(findState("near-axis", screenToState(0.05, 6, 0, I8, 1000), 0, (s) => s[2] < 0.01));
+  // a step that the monitor actually halves (retries >= 1) -- the whole point of the feature. A
+  // well-conditioned forced retry: the strong-eq state with an oversized stride (the renderer
+  // would use ~0.09 here). Both sides must halve the same number of times AND agree on the state.
+  // A vacuous case (CPU retries = 0) throws, so the route cannot pass while testing nothing. This
+  // is the one case that supplies its own dl0 (no sentinel).
+  const retryDl0 = 2.0;
+  if (stepGeodesic(strongEq.s, strongEq.a, retryDl0, H_TOL).retries < 1) throw new Error("integrator parity: \"retry\" case is vacuous (CPU retries = 0)");
+  icases.push({ label: "retry", s: strongEq.s, a: strongEq.a, dl0: retryDl0, hTol: H_TOL, nCmp: 8 });
+  // a barely-resolved barrier step near the axis (alpha = 0.05 ray, theta ~ 1.6e-3, dl0 = 0.5 ->
+  // accepted at 0.25 after one halving). One RK4 step takes p_theta from -4.20 to -1.32 through
+  // the 1/sin^2 barrier. The state IS compared: the shipped comparator steps with the GPU's
+  // finite-difference half-step (h = 1e-4, see FD_H in geodesic.ts). An earlier revision compared
+  // only retries/ok here and attributed a 2 % p_theta divergence (CPU -1.3487 vs GPU -1.3212) to
+  // f32; that was the CPU's default h = 1e-5 vs the GPU's 1e-4 -- central-difference truncation on
+  // 1/theta^2 is ~2 h^2 / theta^2 ~ 0.8 % at this theta -- not precision. At h = 1e-4 the f64
+  // step gives p_theta -1.3217, 5e-4 from the GPU (~2e-4 relative), which is what this case now
+  // measures. The retry count is still the shipped-bytes statement: the GPU must halve exactly
+  // where trace.ts does.
+  icases.push(findState("barrier", screenToState(0.05, 6, 0, I8, 1000), 0, (_, out) => out.retries >= 1));
+  // a step that crosses the axis (xi = 0): only reflectAxis can flip the sign of p_theta here
+  icases.push(findState("reflect", screenToState(0, 6, 0, I8, 1000), 0, (s, out) => out.s[6] * s[6] < 0));
+  const IN_F = 12, OUT_F = 16; // floats per StepIn (48 bytes) / StepRes (64 bytes: x, p, info, extra)
+  const iin = device.createBuffer({ size: icases.length * IN_F * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+  const iarr = new Float32Array(icases.length * IN_F);
+  icases.forEach((c, i) => { iarr.set([c.s[0], c.s[1], c.s[2], c.s[3], c.s[4], c.s[5], c.s[6], c.s[7], c.a, c.dl0, c.hTol, ROUT], i * IN_F); });
+  device.queue.writeBuffer(iin, 0, iarr);
+  const iout = device.createBuffer({ size: icases.length * OUT_F * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
+  const iread = device.createBuffer({ size: icases.length * OUT_F * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+  const imod = device.createShaderModule({ code: integratorSharedWGSL + integratorParityWGSL });
+  const ipipe = device.createComputePipeline({ layout: "auto", compute: { module: imod, entryPoint: "main" } });
+  const ibind = device.createBindGroup({ layout: ipipe.getBindGroupLayout(0), entries: [
+    { binding: 0, resource: { buffer: iin } }, { binding: 1, resource: { buffer: iout } }] });
+  const ienc = device.createCommandEncoder();
+  const icp = ienc.beginComputePass(); icp.setPipeline(ipipe); icp.setBindGroup(0, ibind); icp.dispatchWorkgroups(icases.length); icp.end();
+  ienc.copyBufferToBuffer(iout, 0, iread, 0, icases.length * OUT_F * 4);
+  device.queue.submit([ienc.finish()]);
+  await iread.mapAsync(GPUMapMode.READ);
+  const igpu = new Float32Array(iread.getMappedRange().slice(0));
+  // The GPU starts from the f32-rounded state, so compare against the CPU stepping that same
+  // rounded state; otherwise the input rounding (not the shader) would dominate the error. The
+  // CPU steps with the GPU's FD half-step (1e-4) for the same reason: the comparator must step the
+  // same scheme, and trace.ts's default 1e-5 differs by up to 1e-2 on a barrier step.
+  const GPU_FD_H = 1e-4;
+  const cpuStep = (c: ICase) => {
+    const s32 = Float64Array.from(Array.from(c.s, Math.fround));
+    const dl0 = c.dl0 < 0 ? Math.fround(stepSize(s32, rhOf(c.a), ROUT)) : Math.fround(c.dl0);
+    return { dl0, out: stepGeodesic(s32, c.a, dl0, Math.fround(c.hTol), MAX_RETRY, GPU_FD_H) };
+  };
+  icases.forEach((c, i) => {
+    const { dl0, out: cpu } = cpuStep(c);
+    for (let k = 0; k < c.nCmp; k++) {
+      const got = igpu[i * OUT_F + k], want = cpu.s[k];
+      maxErr = Math.max(maxErr, Math.abs(got - want) / (1 + Math.abs(want)));
+    }
+    // Retry count and ok flag: any mismatch scores >= 1.0 and fails the route outright. A retry
+    // mismatch on the "retry" case means H_TOL is at the f32 noise floor (see the "far" and
+    // "barrier" comments above for the two precision stories this harness had to separate).
+    maxErr = Math.max(maxErr, Math.abs(igpu[i * OUT_F + 8] - cpu.retries));
+    maxErr = Math.max(maxErr, Math.abs(igpu[i * OUT_F + 9] - (cpu.ok ? 1 : 0)));
+    // The constants themselves, so a desync between trace.ts and the fragment cannot hide.
+    maxErr = Math.max(maxErr, Math.abs(igpu[i * OUT_F + 10] - H_TOL) / H_TOL);
+    maxErr = Math.max(maxErr, Math.abs(igpu[i * OUT_F + 11] - MAX_RETRY));
+    // The stride: the shader's own stepSize on sentinel cases (its far-field cap included), the
+    // supplied dl0 otherwise. Relative, like the state.
+    maxErr = Math.max(maxErr, Math.abs(igpu[i * OUT_F + 12] - dl0) / (1 + Math.abs(dl0)));
+  });
+  console.log("integrator parity cases", icases.map((c) => c.label),
+    "cpu retries", icases.map((c) => cpuStep(c).out.retries),
+    "gpu retries", icases.map((_, i) => igpu[i * OUT_F + 8]),
+    "cpu dl0", icases.map((c) => cpuStep(c).dl0.toPrecision(6)),
+    "gpu dl0", icases.map((_, i) => igpu[i * OUT_F + 12].toPrecision(6)),
+    "state relErr", icases.map((c, i) => { const { out } = cpuStep(c); let e = 0; for (let k = 0; k < c.nCmp; k++) e = Math.max(e, Math.abs(igpu[i * OUT_F + k] - out.s[k]) / (1 + Math.abs(out.s[k]))); return e.toExponential(2); }));
+  return { maxErr, rows: cases.length + tcases.length + jcases.length + scases.length + ccases.length + icases.length };
 }

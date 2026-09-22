@@ -1,7 +1,7 @@
 # Polar-axis regularization — design
 
 **Date:** 2026-07-21
-**Status:** approved, pending implementation plan
+**Status:** implemented on fix/polar-axis and revised after the final whole-branch review (2026-09-17): the far branch of the step controller is capped near the axis (`F_AXIS` = 0.1, `DL_FAR_MIN` = 0.05, both twins) because the far-field monitor exemption left the axis crossing of every beta > 1.5 rOut sin i ray unbounded -- the i = 8 deg streak the first cut had called an f32 residual was that, in f64; the |delta theta| < 0.5 disk-test guard, the h = 1e-4 parity comparator (the "barrier" 2 % divergence was the CPU/GPU FD half-step, not f32) and the sentinel-driven stride gate in `?parity` came with it (plan Outcome, "Final-review fix wave"). Remaining residual: ~6 lit pixels inside the shadow on the axis column at i = 8 deg, unpinned. (Plan: docs/plans/2026-09-16-polar-axis-regularization.md, which records five deviations from this text — read those before trusting §1's "captured" mechanism or §3.2's literal |H| test). Two further rulings were made during implementation and are recorded in the plan's Outcome section, the SDD ledger and the commit messages of `a800561` and `a38bea8`: the plan's Deviation 4 (break to the (ξ, η) classifier on retry exhaustion) was itself reversed — the ray proceeds with the smallest-step attempt, this text's literal §3.2 wording — and the monitor is exempt in the far field (r > 1.5·rOut, `H_TOL_FAR`), so §3.2/§5's "global" monitor is near-field only.
 **Branch:** `fix/polar-axis` (to be created from `main`)
 
 ## 1. The defect
