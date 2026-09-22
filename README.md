@@ -59,6 +59,7 @@ slower on the dev laptop).
 | Change | Adapter | 1280×720 ms/frame | 1920×1080 ms/frame |
 |---|---|---|---|
 | Baseline (`4ba0543`) | nvidia ampere | 110.0 | 262.3 |
+| GPU readout (no perf change expected) | nvidia ampere | 122.1 | 322.2 |
 
 ## Status
 

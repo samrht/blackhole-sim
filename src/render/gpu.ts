@@ -1,4 +1,5 @@
 import { packUniforms, UniformValues, UNIFORM_SIZE } from "./uniforms";
+import type { GpuInfo } from "./gpuinfo";
 import presentWGSL from "./present.wgsl?raw";
 import raytraceWGSL from "./raytrace.wgsl?raw";
 import shadowSharedWGSL from "./shadow-shared.wgsl?raw";
@@ -19,11 +20,14 @@ export class Renderer {
   brightHBind!: GPUBindGroup; blurVBind!: GPUBindGroup;
   width = 0; height = 0; bw = 0; bh = 0; // bw/bh = quarter-res bloom dimensions
   renderBloom = true; // off for the structural shadow test (measures the raw geometric shadow)
+  adapterInfo: GpuInfo = { vendor: "", architecture: "", description: "" };
 
   async init(canvas: HTMLCanvasElement) {
     if (!navigator.gpu) throw new Error("WebGPU not available — use Chrome/Edge.");
     const adapter = await navigator.gpu.requestAdapter();
     if (!adapter) throw new Error("No GPU adapter.");
+    const info = (adapter as GPUAdapter & { info?: Partial<GpuInfo> }).info ?? {};
+    this.adapterInfo = { vendor: info.vendor ?? "", architecture: info.architecture ?? "", description: info.description ?? "" };
     this.device = await adapter.requestDevice();
     this.ctx = canvas.getContext("webgpu")!;
     this.format = navigator.gpu.getPreferredCanvasFormat();

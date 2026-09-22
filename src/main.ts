@@ -1,5 +1,6 @@
 import { Renderer } from "./render/gpu";
 import type { UniformValues } from "./render/uniforms";
+import { describeGpu, isIntegratedGpu } from "./render/gpuinfo";
 import { buildTempLUT, buildColorLUT } from "./physics/lookups";
 import { iscoRadius, photonOrbit } from "./physics/orbits";
 import type { HotSpot } from "./physics/emission";
@@ -40,6 +41,10 @@ ratio to analytic critical curve = ${res.calibration} (NOT a calibration — the
     throw e;
   }
 
+  const $ = (id: string) => document.getElementById(id)!;
+  $("gpu").textContent = describeGpu(r.adapterInfo);
+  if (isIntegratedGpu(r.adapterInfo)) $("gpuwarn").hidden = false;
+
   const state = { a: 0.9, incl: 72, exposure: 1.6, timeScale: 1.0, turbAmp: 0.6, breatheAmp: 0.0, playing: true, flareScale: 1.0, jetStrength: 1.0, jetGamma: 5.0, jetLength: 60.0, jetKnots: 0.7, skyStrength: 1.0, maxSteps: 4800 };
   const SPEED = 20;        // coordinate-time M advanced per real second at timeScale = 1
   const EMA_BLEND = 0.15;  // trailing-window weight while animating
@@ -61,7 +66,6 @@ ratio to analytic critical curve = ${res.calibration} (NOT a calibration — the
   const T_PEAK = 3.0e4;
 
   // --- DOM controls + live physics readouts -------------------------------------------------
-  const $ = (id: string) => document.getElementById(id)!;
   const spin = $("spin") as HTMLInputElement, incl = $("incl") as HTMLInputElement, exp = $("exp") as HTMLInputElement;
   const spinv = $("spinv"), inclv = $("inclv"), expv = $("expv");
   const rhEl = $("rh"), riscoEl = $("risco"), rphEl = $("rph"), sppEl = $("spp");
