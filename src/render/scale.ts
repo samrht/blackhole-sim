@@ -1,7 +1,8 @@
 /** Internal-resolution controller for the animated view ("smooth first", spec 3.3). Feed it each
- *  frame's wall-clock delta; it keeps a smoothed frame time and nudges the render scale down (x0.9)
+ *  frame's GPU work time (main.ts passes Renderer.gpuMs; the rAF delta is vsync-quantised and cannot
+ *  signal headroom). It keeps a smoothed frame time and nudges the render scale down (x0.9)
  *  when frames are slower than SLOW_MS and up (x1.1) when faster than FAST_MS, within [MIN, MAX],
- *  at most once per HOLD_MS so the image does not pump. Deltas above MAX_DT_MS (tab switch, stall)
+ *  at most once per HOLD_MS so the image does not pump. Times above MAX_DT_MS (tab switch, stall)
  *  are not a performance signal and are ignored. */
 export const SCALE = { MIN: 0.5, MAX: 1, SLOW_MS: 18, FAST_MS: 13, DOWN: 0.9, UP: 1.1, HOLD_MS: 500, ALPHA: 0.2, MAX_DT_MS: 250 };
 

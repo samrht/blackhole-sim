@@ -53,6 +53,8 @@ ratio to analytic critical curve = ${res.calibration} (NOT a calibration — the
   const rscaleEl = $("rscale");
   const showScale = () => { rscaleEl.textContent = `${Math.round(r.scale * 100)}%`; };
   showScale();
+  const fpsEl = $("fps");
+  let dtEma = 0, lastFpsShow = 0; // display rate (what the user sees): EMA of rAF deltas, shown <= 2x/s
 
   const state = { a: 0.9, incl: 72, exposure: 1.6, timeScale: 1.0, turbAmp: 0.6, breatheAmp: 0.0, playing: true, flareScale: 1.0, jetStrength: 1.0, jetGamma: 5.0, jetLength: 60.0, jetKnots: 0.7, skyStrength: 1.0, maxSteps: 4800 };
   const SPEED = 20;        // coordinate-time M advanced per real second at timeScale = 1
@@ -170,14 +172,20 @@ ratio to analytic critical curve = ${res.calibration} (NOT a calibration — the
     .catch(() => { /* offline / decode error — skyReady stays false, procedural starfield stays */ });
 
   // Uncapped: render every animation frame. While animating, the ScaleController trades internal
-  // resolution for frame rate (target ~60 fps, never below half resolution); paused, the scale snaps
-  // back to 1 and the progressive running mean converges to a sharp still.
+  // resolution for frame rate (it targets ~60 fps, never below half resolution; what a given GPU
+  // actually reaches is shown in the FPS and Render-scale readouts); paused, the scale snaps back to
+  // 1 and the progressive running mean converges to a sharp still.
   function loop(now: number) {
     const dt = lastNow ? now - lastNow : 0; lastNow = now;
     if (state.playing) simTime += (dt / 1000) * SPEED;
+    if (dt > 0 && dt < 250) dtEma = dtEma ? dtEma + 0.1 * (dt - dtEma) : dt;
+    if (now - lastFpsShow >= 500 && dtEma > 0) { fpsEl.textContent = (1000 / dtEma).toFixed(0); lastFpsShow = now; }
     if (pinnedScale === null) {
       if (state.playing) {
-        const ns = ctl.update(dt, now);
+        // Controlled on GPU work time per frame, not the rAF delta: rAF is vsync-quantised (never
+        // below 16.7 ms at 60 Hz, inside the 13-18 ms dead band), so after any slow spell a
+        // rAF-driven controller could only ratchet down. NaN until the first frame completes.
+        const ns = ctl.update(r.gpuMs, now);
         if (ns !== null && r.setScale(ns)) { reset(); showScale(); }
       } else if (r.scale !== 1) {
         r.setScale(1); ctl.reset(1); reset(); showScale();

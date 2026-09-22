@@ -22,6 +22,11 @@ export class Renderer {
   scale = 1;                           // internal render scale in [0.5, 1]; see setScale
   width = 0; height = 0; bw = 0; bh = 0; // INTERNAL trace size and its quarter-res bloom size
   renderBloom = true; // off for the structural shadow test (measures the raw geometric shadow)
+  /** GPU work time (ms) of the most recently completed frame: its busy interval, from the later of
+   *  its submit and the previous frame's completion to its own completion (onSubmittedWorkDone,
+   *  never awaited). NaN until the first frame completes. Feeds the ScaleController. */
+  gpuMs = NaN;
+  private lastDone = 0; // performance.now() at the previous frame's completion
   adapterInfo: GpuInfo = { vendor: "", architecture: "", description: "" };
 
   async init(canvas: HTMLCanvasElement) {
@@ -181,7 +186,17 @@ export class Renderer {
     this.recordCompute(enc);
     const rp = enc.beginRenderPass({ colorAttachments: [{ view: this.ctx.getCurrentTexture().createView(), clearValue: { r: 0, g: 0, b: 0, a: 1 }, loadOp: "clear", storeOp: "store" }] });
     rp.setPipeline(this.presentPipe); rp.setBindGroup(0, this.presentBind); rp.draw(3); rp.end();
+    const t0 = performance.now();
     this.device.queue.submit([enc.finish()]);
+    // Not awaited: the render loop stays non-blocking; the value lands a frame or so later. This
+    // frame's work starts at the later of its submit and the previous frame's completion, so the
+    // busy interval excludes time spent queued behind earlier frames. (Plain submit-to-done latency
+    // counted the whole uncapped queue, read ~4x the real work at 500x340 and never let the
+    // controller climb; measured 2026-09-23, see final-fix-report.md.)
+    this.device.queue.onSubmittedWorkDone().then(() => {
+      const t1 = performance.now();
+      this.gpuMs = t1 - Math.max(t0, this.lastDone); this.lastDone = t1;
+    }, () => {});
   }
 
   /** Render one frame to an offscreen texture and read the presented pixels back to the CPU

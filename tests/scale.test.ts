@@ -19,13 +19,16 @@ describe("ScaleController", () => {
     expect(c.scale).toBe(0.5);
   });
 
-  it("holds steady inside the dead band (60 Hz vsync = 16.7 ms)", () => {
+  // Frame times between FAST_MS (13) and SLOW_MS (18) are "good enough": no change either way.
+  // (The signal is the GPU work time per frame, not the vsync-quantised rAF delta.)
+  it("holds steady inside the 13-18 ms dead band", () => {
     const c = new ScaleController();
     c.reset(0.7);
     feed(c, 16.7, 600);
     expect(c.scale).toBe(0.7);
   });
 
+  // A fast signal (GPU headroom) climbs from the floor back to full resolution while animating.
   it("climbs back to exactly 1.0 when frames are fast", () => {
     const c = new ScaleController();
     c.reset(0.5);
