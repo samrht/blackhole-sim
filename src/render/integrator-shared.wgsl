@@ -64,6 +64,10 @@ fn rk4(s: State, a: f32, dl: f32) -> State {
 const F_AXIS = 0.1;
 const DL_FAR_MIN = 0.05;
 
+// Far-field stride (see K_FAR / DL_FAR_MAX in trace.ts). Twin constants.
+const K_FAR = 0.04;
+const DL_FAR_MAX = 6.0;
+
 // Baseline step length: fine in the strong-field/disk region, long strides through the near-flat
 // far field (curvature ~M/r^3 is negligible there) so we don't burn thousands of steps just
 // travelling in from the distant observer, capped near the axis (F_AXIS). Twin of stepSize() in
@@ -71,7 +75,7 @@ const DL_FAR_MIN = 0.05;
 fn stepSize(s: State, rh: f32, rOut: f32) -> f32 {
   let r = s.x.y;
   if (r > rOut * 1.5) {
-    let base = clamp(0.04 * r, 0.6, 6.0);
+    let base = clamp(K_FAR * r, 0.6, DL_FAR_MAX);
     let pth = s.p.z;
     if (pth == 0.0) { return base; } // no angular motion: nothing to cap (and no division by zero)
     // Sigma = r^2 + a^2 cos^2 th; the a^2 cos^2 th <= 1 term is < 3e-4 of r^2 >= 3600 here.

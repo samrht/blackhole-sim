@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { screenToState } from "../src/physics/camera";
-import { stepGeodesic, traceRay, F_AXIS, DL_FAR_MIN, H_TOL, H_TOL_FAR, MAX_RETRY, type Fate } from "../src/physics/trace";
+import { stepGeodesic, traceRay, F_AXIS, DL_FAR_MIN, H_TOL, H_TOL_FAR, MAX_RETRY, K_FAR, DL_FAR_MAX, type Fate } from "../src/physics/trace";
 
 /**
  * Measurement, not a test: prints the F_AXIS x DL_FAR_MIN table the far-field angular step cap in
@@ -63,7 +63,7 @@ type Res = { fate: Fate; rHit: number; steps: number };
 function stepSizeLocal(s: Float64Array, rh: number, rOut: number, fAxis: number, dlFarMin: number): number {
   const r = s[1];
   if (r > rOut * 1.5) {
-    const base = Math.min(6, Math.max(0.6, 0.04 * r));
+    const base = Math.min(DL_FAR_MAX, Math.max(0.6, K_FAR * r));
     const pth = s[6];
     if (pth === 0 || fAxis === Infinity) return base;
     const thD = Math.min(s[2], Math.PI - s[2]);

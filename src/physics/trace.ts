@@ -37,12 +37,18 @@ export const H_TOL_FAR = 1e30;
 export const F_AXIS = 0.1;
 export const DL_FAR_MIN = 0.05;
 
+/** Far-field stride: dl = K_FAR * r clamped to [0.6, DL_FAR_MAX] beyond rOut * 1.5, before the
+ *  F_AXIS angular cap. Chosen from tests/sweep-farstride.test.ts (SWEEP=1). Twin constants in
+ *  integrator-shared.wgsl. */
+export const K_FAR = 0.04;
+export const DL_FAR_MAX = 6;
+
 /** Baseline step length: fine in the strong-field/disk region, long strides through the near-flat
  *  far field, capped near the axis (F_AXIS). Twin of stepSize() in integrator-shared.wgsl. */
 export function stepSize(s: Float64Array, rh: number, rOut: number): number {
   const r = s[1];
   if (r > rOut * 1.5) {
-    const base = Math.min(6, Math.max(0.6, 0.04 * r));
+    const base = Math.min(DL_FAR_MAX, Math.max(0.6, K_FAR * r));
     const pth = s[6];
     if (pth === 0) return base; // no angular motion: nothing to cap (and no division by zero)
     // Sigma = r^2 + a^2 cos^2 th; the a^2 cos^2 th <= 1 term is < 3e-4 of r^2 >= 3600 here.
