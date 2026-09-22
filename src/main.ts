@@ -186,7 +186,8 @@ ratio to analytic critical curve = ${res.calibration} (NOT a calibration — the
         // below 16.7 ms at 60 Hz, inside the 13-18 ms dead band), so after any slow spell a
         // rAF-driven controller could only ratchet down. NaN until the first frame completes.
         const ns = ctl.update(r.gpuMs, now);
-        if (ns !== null && r.setScale(ns)) { reset(); showScale(); }
+        // Show the controller's new scale even when the internal size did not change (then no reset).
+        if (ns !== null) { if (r.setScale(ns)) reset(); showScale(); }
       } else if (r.scale !== 1) {
         r.setScale(1); ctl.reset(1); reset(); showScale();
       }

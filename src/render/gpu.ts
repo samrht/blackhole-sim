@@ -68,6 +68,9 @@ export class Renderer {
 
   /** Internal size from the display size and scale. Buffers are sized for scale 1 and indexed at the
    *  internal width, so a scale change never reallocates (and needs no rebind). */
+  // Each side rounds independently, so the internal aspect can differ from the display's by under
+  // one internal pixel (e.g. 301x157 -> 151x79 at 0.5, 0.3 %); the present pass stretches it back.
+  // Accepted: invisible at these sizes and it keeps the internal grid integral.
   private applyScale() {
     this.width = Math.max(1, Math.round(this.displayW * this.scale));
     this.height = Math.max(1, Math.round(this.displayH * this.scale));
@@ -202,6 +205,7 @@ export class Renderer {
   /** Render one frame to an offscreen texture and read the presented pixels back to the CPU
    *  (tightly-packed RGBA8/BGRA8, row-stride removed). Used by validation harnesses. */
   async readbackPresented(u: UniformValues): Promise<{ data: Uint8Array; w: number; h: number }> {
+    if (this.scale !== 1) throw new Error("readbackPresented requires scale 1 (validation routes run at full resolution)");
     const tex = this.device.createTexture({ size: [this.displayW, this.displayH], format: this.format,
       usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC });
     this.device.queue.writeBuffer(this.uniformBuf, 0, packUniforms(u));
