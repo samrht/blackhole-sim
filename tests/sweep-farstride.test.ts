@@ -35,9 +35,9 @@ import { stepGeodesic, traceRay, F_AXIS, DL_FAR_MIN, H_TOL, H_TOL_FAR, MAX_RETRY
  * fewest mean steps (over ALL rays -- it is the cost); ties -> smaller K, then smaller MAX.
  *
  * Measured 2026-09-23 (f64, 1.1 min):
- *   reference V1 a=0 i=8: unconv 0/1024 (0.0 %), ref1-vs-ref2 max disk 5.56e-4 M, max sky 0 rad, fates {"disk":966,"captured":58}
+ *   reference V1 a=0 i=8: unconv 0/1024 (0.0 %), ref1-vs-ref2 max disk 5.56e-4 M, max sky 0.00e+0 rad, fates {"disk":966,"captured":58}
  *   reference V2 a=0.9 i=72: unconv 0/1024 (0.0 %), ref1-vs-ref2 max disk 1.91e-3 M, max sky 1.55e-6 rad, fates {"disk":947,"captured":29,"escaped":48}
- *   reference A axis band i=8: unconv 0/121 (0.0 %), ref1-vs-ref2 max disk 3.00e-4 M, max sky 0 rad, fates {"disk":121}
+ *   reference A axis band i=8: unconv 0/121 (0.0 %), ref1-vs-ref2 max disk 3.00e-4 M, max sky 0.00e+0 rad, fates {"disk":121}
  *   reference B axis column i=1: unconv 3/65 (4.6 %), ref1-vs-ref2 max disk 9.80e-4 M, max sky 7.43e-5 rad, fates {"captured":20,"escaped":5,"disk":40}
  *   K_FAR  DL_MAX  newFlips  diskWorse  skyWorse  maxDiskDelta(M)  maxSkyDelta(rad)  meanSteps  dSteps%
  *   0.04   6       0         0          0         0.00e+0          0.00e+0           344.1      0.0
@@ -61,10 +61,27 @@ import { stepGeodesic, traceRay, F_AXIS, DL_FAR_MIN, H_TOL, H_TOL_FAR, MAX_RETRY
  *   0.3    50      7         131        48        2.63e+1          5.21e-1           187.7      -45.5
  *   0.3    150     14        133        48        2.52e+1          1.08e-1           172.5      -49.9
  *   SELECTED K_FAR = 0.04, DL_FAR_MAX = 6 (mean steps 344.1 vs 344.1)
- * No longer stride survives: every candidate makes some rays worse by > half a pixel, and not only
- * on the axis sets -- per set (scratch breakdown) 0.04/20 has 6 V1 disk rays and 2 V2 sky rays
- * worse, 29 on A, 13 + 1 on B; 0.08/6 has 6 V1, 2 + 2 V2, 48 A. The shipped stride stays; the far
- * field is not where the default view's cost can be cut without visible error.
+ * Every other pair fails the binding no-worse-than-today rule (per set, scratch breakdown: 0.04/20
+ * has 6 V1 disk rays and 2 V2 sky rays worse, 29 on A, 13 + 1 on B; 0.08/6 has 6 V1, 2 + 2 V2, 48
+ * A), so 0.04 / 6 stays. What this does NOT show is that long far strides are inaccurate. Review
+ * probe (Carter constant Q conservation, a = 0, worst rays under 0.04/20):
+ *   - Above r = 150 the candidate matches the shipped trajectory to ~2e-9 in Q (first step below
+ *     150: Q 139.722854690 shipped vs 139.722854396 candidate).
+ *   - The error enters between r = 150 and r = 60, where both controllers' strides are identical,
+ *     the monitor is off (H_TOL_FAR) and the ray passes the pole at r ~ beta / sin i: shipped Q
+ *     139.72 -> 139.52 (-0.14 %), candidate 139.72 -> 145.95 (+4.5 %), REF1 139.7229 -> 139.7228.
+ *     The candidate only shifts the step-grid phase (first step below 150 at 147.17 vs 148.40).
+ *   - It cuts both ways: set A, alpha = 0.08, beta = 10.5, the SHIPPED pair is off by 12.6 M (Q
+ *     110 -> 551, a spurious axis crossing) while 0.04/20 is within 3e-3 M; at beta = 9.5 the roles
+ *     reverse.
+ *   - The worst rays are primary images at rHit 8-11 M, not near-critical; every regressed V1 ray
+ *     is in the alpha = +-0.4375 columns beside the axis (theta_min ~ 5e-3). The two V2 sky rays
+ *     (alpha = +-0.4375, beta = -13.56) drift on the outbound far leg, Q drift 3.4e-4 shipped vs
+ *     4.8e-4 candidate vs 4e-8 in REF1: a real but small stride effect, also beside the axis.
+ * So the table measures whether a candidate reshuffles the shipped controller's under-resolved
+ * near-axis far-field error (F_AXIS 0.1 / DL_FAR_MIN 0.05, unmonitored; Q errors 0.1 %-400 %), not
+ * whether the far stride is accurate. Follow-up: a far-stride saving first needs that near-axis
+ * far-field passage converged (monitor it, or tighten the cap), then a re-sweep.
  */
 const SWEEP = !!process.env.SWEEP;
 const ROBS = 1000, ROUT = 40, FOV = 14, MAXSTEPS = 4800, REF_MAXSTEPS = 400000;

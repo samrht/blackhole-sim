@@ -67,7 +67,7 @@ slower on the dev laptop).
 While animating, the render scale drops to as low as 50 % to hold ~60 fps; at the 1280×720 baseline cost that is roughly 27.5 ms at 50 %.
 The numbers drift run to run with GPU temperature: in the same session, HEAD before this change (`5c7e23b`) measured 146.0 / 356.8 and this change 147.5 / 369.9 back-to-back.
 
-Far-field stride: `tests/sweep-farstride.test.ts` (`SWEEP=1`) swept K_FAR ∈ {0.04 … 0.3} × DL_FAR_MAX ∈ {6 … 150} against a converged, monitored-everywhere reference with the rule "no ray worse than today by more than half a pixel". No longer stride passed (the cheapest, 0.04 / 20, would cut mean steps per ray 26 % but moves 48 disk hits and 3 sky directions), so K_FAR = 0.04, DL_FAR_MAX = 6 are kept and there is no row for it: nothing changed on the GPU.
+Far-field stride: `tests/sweep-farstride.test.ts` (`SWEEP=1`) keeps K_FAR = 0.04, DL_FAR_MAX = 6 (no row: nothing changed on the GPU) because every longer pair fails its rule, no ray worse than today by more than 0.02 M (disk) / half a pixel (sky) against a converged reference. The failures are not far-stride inaccuracy: they come from near-axis rays whose unmonitored, capped passage at r = 60–150 is under-resolved today, and a different step-grid phase reshuffles that error (some rays worse, others better). A far-stride saving first needs that passage converged, then a re-sweep.
 
 ## Status
 
