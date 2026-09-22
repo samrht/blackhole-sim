@@ -2,12 +2,15 @@
 
 **Date:** 2026-09-23
 **Status:** implemented on perf/smooth-first
-**Branch:** `perf/smooth-first` (to be created from `main` at `5cd99f9`)
+**Branch:** `perf/smooth-first` (created from `main` at `77c1bd9`)
 
 ## Outcome
 
-- Bench (nvidia ampere, 1280×720 / 1920×1080 ms/frame; compare only back-to-back pairs, the laptop drifts thermally): baseline 110.0 / 262.3; Task 2 GPU readout 122.1 / 322.2 (noise, no GPU change); Task 3 uncapped loop at scale 1.0 146.0 / 356.8 → 147.5 / 369.9 back-to-back (noise; the gain is the adaptive scale, down to 50 % while animating); Task 4 far stride: no change (kept); Task 5 exact derivatives `b4e3f08` 110.6 / 277.9 and 117.3 / 315.0 → 71.8 / 164.5 and 72.6 / 185.5 back-to-back (about −37 %).
-- Final gates: `npm test` 85 passed, 3 skipped; build clean; `?parity` PASS 6.789e-5 over 53 cases (was 2.663e-4); `?shadow` PASS 3.95 M / 0.761 (was 3.89 / 0.749: a lit axis pixel inside the shadow no longer stops the centre-column scan); sky 200; probe-axis PASS ×2; probe-scale all PASS.
+- Bench (nvidia ampere, 1280×720 / 1920×1080 ms/frame; compare only back-to-back pairs, the laptop drifts thermally): baseline 110.0 / 262.3; Task 2 GPU readout 122.1 / 322.2 (noise, no GPU change); Task 3 uncapped loop at scale 1.0 146.0 / 356.8 → 147.5 / 369.9 back-to-back (noise; the gain is the adaptive scale, down to 50 % while animating); Task 4 far stride: no change (kept); Task 5 exact derivatives `b4e3f08` 110.6 / 277.9 and 117.3 / 315.0 → 71.8 / 164.5 and 72.6 / 185.5 back-to-back (≈ −35…−38 % at 1280×720, ≈ −41 % at 1920×1080).
+- Success criterion, as measured (RTX 3050 Laptop; the RTX 5050 was not available): 60 fps is the controller's *target*, not a result. Full resolution ≈ 72 ms at 1280×720 and ≈ 165–186 ms at 1920×1080, so at the 50 % floor ≈ 18 ms (~55 fps) and ≈ 41–46 ms (~22–24 fps). An FPS readout next to Render scale shows what a machine achieves.
+- Controller signal (final review I1): §3.3's rAF-delta EMA is replaced by the GPU busy time per frame (`Renderer.gpuMs`, from `onSubmittedWorkDone`, excluding time queued behind earlier frames). rAF deltas are vsync-quantised (16.7 ms at 60 Hz sits in the 13–18 ms dead band), so the scale could only ratchet down while animating. Thresholds unchanged.
+- §3.4's sweep rules were superseded during implementation: the sweep used a converged monitored reference and the rule "no ray worse than today by more than 0.02 M disk / half a pixel sky" (header of `tests/sweep-farstride.test.ts`).
+- Final gates: `npm test` 87 passed, 3 skipped; build clean; `?parity` PASS 6.789e-5 over 53 cases (was 2.663e-4); `?shadow` PASS 3.95 M / 0.761 (was 3.89 / 0.749: a lit axis pixel inside the shadow no longer stops the centre-column scan); sky 200; probe-axis PASS ×2; probe-scale all PASS (pause check ran).
 - Constants: K_FAR 0.04 / DL_FAR_MAX 6 kept by the Task 4 sweep; H_TOL 1e-3, MAX_RETRY 8, F_AXIS 0.1, DL_FAR_MIN 0.05, K_FAR / DL_FAR_MAX all confirmed under exact forces by re-running the three sweeps.
 - Follow-up: the GPU's |ΔH|/scale on the far-field parity step is now 2.7e-8 (was 2.4e-3 under FD), so the far-field monitor exemption's premise is gone; converging the near-axis far-field passage (r 60–150) should come before any far-stride saving.
 
@@ -70,7 +73,8 @@ never blocks rendering. `Renderer` exposes the adapter info it received.
   work in `U.res`). Two floats are appended, `outW, outH` (display size), used only by `present.wgsl` for
   the upsample and the vignette. `UNIFORM_SIZE` grows 96 → 112 bytes; `uniforms.ts`, its test and every
   WGSL `Uniforms` struct that needs the new fields are updated together.
-- **Controller (animating only):** smoothed frame time from rAF deltas (EMA). If > 18 ms, scale ×0.9; if
+- **Controller (animating only):** smoothed frame time from rAF deltas (EMA; *implemented as the GPU busy
+  time per frame instead, see Outcome*). If > 18 ms, scale ×0.9; if
   < 13 ms, scale ×1.1; clamped to [0.5, 1.0]; at most one change per 500 ms (hysteresis so the image does
   not pump). A scale change is a reset (`blend = 1`), exactly as a slider change is today.
 - **Paused:** scale snaps to 1.0 and the existing progressive running mean converges to a sharp still.
@@ -78,6 +82,11 @@ never blocks rendering. `Renderer` exposes the adapter info it received.
   change cannot move their numbers.
 
 ### 3.4 Far-field stride
+
+> **Superseded during implementation** (controller ruling, SDD ledger): the shipped controller is not a
+> converged reference near the axis and an absolute half-pixel sky rule is unsatisfiable for near-critical
+> rays; the sweep instead used a converged monitored reference and the rule "no ray worse than today by
+> more than 0.02 M disk / half a pixel sky" — see the header of `tests/sweep-farstride.test.ts`.
 
 `stepSize`'s far branch (`r > 1.5·rOut`) is today `clamp(0.04·r, 0.6, 6.0)`, then the angular axis cap
 (`F_AXIS = 0.1`, `DL_FAR_MIN = 0.05`). It becomes `clamp(K_FAR·r, 0.6, DL_FAR_MAX)` followed by the same
