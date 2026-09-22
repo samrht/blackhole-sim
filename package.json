@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "verify:gpu": "node scripts/verify-gpu.mjs"
+    "verify:gpu": "node scripts/verify-gpu.mjs",
+    "bench": "node scripts/bench.mjs"
   },
   "devDependencies": {
     "@types/node": "^25.9.1",

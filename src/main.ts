@@ -24,6 +24,10 @@ SHADOW ${res.ok ? "PASS" : "FAIL"} (structural) — centred dark shadow=${res.ha
 apparent radius ≈ ${res.shadowRadiusM} M; analytic critical curve = ${res.analyticRadiusM} M
 ratio to analytic critical curve = ${res.calibration} (NOT a calibration — the route measures the emitter's lensed inner edge, not the critical curve; see README)</pre>`;
   console.log("shadow", res);
+} else if (location.search.includes("bench")) {
+  // Idle route for scripts/bench.mjs: no render loop, no validation pass. The benchmark imports the
+  // Renderer through the dev server and drives it itself, so nothing else may compete for the GPU.
+  document.body.innerHTML = `<pre style="color:#888;padding:20px">bench route (idle)</pre>`;
 } else {
   // Normal interactive render.
   const r = new Renderer();

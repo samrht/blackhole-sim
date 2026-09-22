@@ -48,6 +48,18 @@ Kerr (1963); Carter (1968); Bardeen, Press & Teukolsky (1972); Bardeen (1973); N
 
 Milky-Way panorama: ESO/S. Brunier, CC BY 4.0 (eso0932a).
 
+## Performance
+
+`npm run bench` (dev server running) reports the WebGPU adapter and the median GPU time per frame of the
+default animated scene at full internal resolution. It forces Chrome onto the discrete GPU
+(`--force_high_performance_gpu`); in a normal browser, set Chrome to *High performance* in Windows
+Settings → System → Display → Graphics, otherwise WebGPU may run on the integrated GPU (measured 5–8×
+slower on the dev laptop).
+
+| Change | Adapter | 1280×720 ms/frame | 1920×1080 ms/frame |
+|---|---|---|---|
+| Baseline (`4ba0543`) | nvidia ampere | 110.0 | 262.3 |
+
 ## Status
 
 Tier 1 (single-GPU, real-time image) complete and verified.
