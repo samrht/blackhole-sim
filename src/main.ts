@@ -160,7 +160,9 @@ ratio to analytic critical curve = ${res.calibration} (NOT a calibration — the
   const jet = $("jet") as HTMLInputElement, jg = $("jg") as HTMLInputElement, jk = $("jk") as HTMLInputElement;
   const jetv = $("jetv"), jgv = $("jgv"), jkv = $("jkv");
 
-  jet.addEventListener("input", () => { state.jetStrength = +jet.value; jetv.textContent = state.jetStrength.toFixed(1); reset(); });
+  // Two significant digits below 0.1 (M87*'s calibrated jet is 0.0034).
+  const showJet = () => { jetv.textContent = state.jetStrength >= 0.1 || state.jetStrength === 0 ? state.jetStrength.toFixed(1) : state.jetStrength.toPrecision(2); };
+  jet.addEventListener("input", () => { state.jetStrength = +jet.value; showJet(); reset(); });
   jg.addEventListener("input", () => { state.jetGamma = +jg.value; jgv.textContent = state.jetGamma.toFixed(1); reset(); });
   jk.addEventListener("input", () => { state.jetKnots = +jk.value; jkv.textContent = state.jetKnots.toFixed(2); reset(); });
 
@@ -180,18 +182,18 @@ ratio to analytic critical curve = ${res.calibration} (NOT a calibration — the
 
   function applyPreset(p: Preset) {
     state.a = p.a; state.incl = p.inclDeg; state.massSun = p.massSun; state.lambda = p.lambda;
-    state.jetStrength = p.jet ? 1 : 0;
+    state.jetStrength = p.jetStrength;
     spin.value = String(p.a); spinv.textContent = p.a.toFixed(3);
     incl.value = String(p.inclDeg); inclv.textContent = String(p.inclDeg);
     mass.value = String(Math.log10(p.massSun)); showMass();
     acc.value = String(Math.log10(p.lambda)); showAcc();
-    jet.value = String(state.jetStrength); jetv.textContent = state.jetStrength.toFixed(1);
+    jet.value = String(state.jetStrength); showJet();
     pcap.textContent = p.caption; pcap.hidden = !p.caption;
     rebuildLUTs(); physicsChanged();
   }
   /** The opening view: what "Default view" restores after a preset or custom changes. */
   const DEFAULT_VIEW: Preset = { id: "default", name: "Default view", massSun: CUSTOM_DEFAULT.massSun, a: 0.9, inclDeg: 72,
-    lambda: CUSTOM_DEFAULT.lambda, jet: true, caption: "" };
+    lambda: CUSTOM_DEFAULT.lambda, jetStrength: 1, caption: "" };
   presetSel.addEventListener("change", () => {
     const p = presetSel.value === "default" ? DEFAULT_VIEW : PRESETS.find((q) => q.id === presetSel.value);
     if (p) applyPreset(p);

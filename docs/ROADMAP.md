@@ -43,9 +43,10 @@ this file is the queue. Each item gets its own spec (and plan) before code, as e
 
 ## Open questions from the presets work
 
-- [ ] **Jet brightness vs the disk**: the jet is phenomenological and not normalised like the disk.
-  M87\*'s beamed jet (17 deg) covers the top of its shadow; the default view's jet is ~2.6 EV dimmer
-  relative to the disk after the exposure retune. Decide a jet scale (or per-preset jet strength).
+- [x] **Jet brightness vs the disk** (2026-10-01): presets calibrate the jet where an observation
+  bounds it. M87\*: EHT horizon-scale jet base <= ~10 % of the ring -> jet strength 0.1 / 29.8
+  (measured jet/disk light ratio at strength 1). Cyg X-1 / GRS 1915+105: unmeasured, model default,
+  said in their captions. The default view keeps strength 1 (not a real object).
 
 ## Product / UX (later, by agreement)
 

@@ -5,7 +5,7 @@ const browser = await chromium.launch({ channel: "chrome", headless: true, args:
 const page = await browser.newPage({ viewport: { width: 1280, height: 760 } });
 await page.goto(BASE + "/", { waitUntil: "load" });
 await page.waitForFunction(() => /^\d+$/.test(document.getElementById("spp").textContent), null, { timeout: 30000 });
-const ids = await page.evaluate(() => [...document.getElementById("preset").options].map((o) => o.value));
+const ids = await page.evaluate(() => [...document.getElementById("preset").options].filter((o) => !o.disabled).map((o) => o.value));
 for (const id of ids) {
   await page.selectOption("#preset", id);
   await page.waitForTimeout(7000);
