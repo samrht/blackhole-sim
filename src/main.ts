@@ -1,6 +1,7 @@
 import { Renderer } from "./render/gpu";
 import type { UniformValues } from "./render/uniforms";
 import { ScaleController } from "./render/scale";
+import { geometryKey, BuildScheduler, chooseMode } from "./render/cache-plan";
 import { describeGpu, isIntegratedGpu } from "./render/gpuinfo";
 import { buildTempLUT, buildColorLUT } from "./physics/lookups";
 import { iscoRadius, photonOrbit } from "./physics/orbits";
@@ -71,6 +72,12 @@ ratio to analytic critical curve = ${res.calibration} (NOT a calibration — the
   const showScale = () => { rscaleEl.textContent = `${Math.round(r.scale * 100)}%`; };
   showScale();
   const fpsEl = $("fps");
+  // Geodesic cache (spec 2026-10-01): playing with an unchanged camera re-shades cached geodesics
+  // instead of re-tracing them. ?nocache (or a pinned ?scale) keeps the live path only.
+  const cacheOn = !new URLSearchParams(location.search).has("nocache") && pinnedScale === null;
+  const cmodeEl = $("cmode");
+  const sched = new BuildScheduler(r.cacheSets, r.displayH);
+  let geoKey = "", cachedFrame = 0, wasCached = false, liveScale = r.scale;
   let dtEma = 0, lastFpsShow = 0; // display rate (what the user sees): EMA of rAF deltas, shown <= 2x/s
 
   const state = { a: 0.9, incl: 72, exposure: 1.6, timeScale: 1.0, turbAmp: 0.6, breatheAmp: 0.0, playing: true, flareScale: 1.0, jetStrength: 1.0, jetGamma: 5.0, jetLength: 60.0, jetKnots: 0.7, skyStrength: 1.0, maxSteps: 4800 };
@@ -197,20 +204,35 @@ ratio to analytic critical curve = ${res.calibration} (NOT a calibration — the
     if (state.playing) simTime += (dt / 1000) * SPEED;
     if (dt > 0 && dt < 250) dtEma = dtEma ? dtEma + 0.1 * (dt - dtEma) : dt;
     if (now - lastFpsShow >= 500 && dtEma > 0) { fpsEl.textContent = (1000 / dtEma).toFixed(0); lastFpsShow = now; }
-    if (pinnedScale === null) {
-      if (state.playing) {
-        // Controlled on GPU work time per frame, not the rAF delta: rAF is vsync-quantised (never
-        // below 16.7 ms at 60 Hz, inside the 13-18 ms dead band), so after any slow spell a
-        // rAF-driven controller could only ratchet down. NaN until the first frame completes.
-        const ns = ctl.update(r.gpuMs, now);
-        // Show the controller's new scale even when the internal size did not change (then no reset).
-        if (ns !== null) { if (r.setScale(ns)) reset(); showScale(); }
-      } else if (r.scale !== 1) {
-        r.setScale(1); ctl.reset(1); reset(); showScale();
+    const geo = geometryKey({ a: state.a, incl: state.incl, fovScale: 14, rObs: 1000, rIn, rOut,
+      maxSteps: state.maxSteps, jetLength: state.jetLength, displayW: r.displayW, displayH: r.displayH });
+    if (geo !== geoKey) { geoKey = geo; sched.reset(r.cacheSets, r.displayH); r.resetCache(); }
+    // One background build slice per playing frame (the cache is only used while playing).
+    const slice = state.playing && cacheOn ? sched.next() : null;
+    const mode = chooseMode(state.playing, sched.completedSets, cacheOn);
+
+    if (mode === "cached") {
+      if (!wasCached) { liveScale = r.scale; r.setScale(1); showScale(); cachedFrame = 0; }
+    } else {
+      if (wasCached) { r.setScale(liveScale); ctl.reset(liveScale); reset(); showScale(); }
+      if (pinnedScale === null) {
+        if (state.playing) {
+          // Controlled on GPU work time per frame, not the rAF delta: rAF is vsync-quantised (never
+          // below 16.7 ms at 60 Hz, inside the 13-18 ms dead band), so after any slow spell a
+          // rAF-driven controller could only ratchet down. NaN until the first frame completes.
+          const ns = ctl.update(r.gpuMs, now);
+          // Show the controller's new scale even when the internal size did not change (then no reset).
+          if (ns !== null) { if (r.setScale(ns)) reset(); showScale(); }
+        } else if (r.scale !== 1) {
+          r.setScale(1); ctl.reset(1); reset(); showScale();
+        }
       }
     }
     // Playing: fixed EMA (blend==1 on the reset frame to clear). Paused: progressive running mean.
-    const blend = state.playing ? (sample === 0 ? 1 : EMA_BLEND) : 1 / (sample + 1);
+    // A cached run starts with blend 1 too, which rewrites every pixel (no stale live content).
+    const blend = mode === "cached" ? (cachedFrame === 0 ? 1 : EMA_BLEND)
+      : state.playing ? (sample === 0 ? 1 : EMA_BLEND) : 1 / (sample + 1);
+    const setIndex = mode === "cached" ? cachedFrame % sched.completedSets : 0;
     const u: UniformValues = {
       resW: r.width, resH: r.height, outW: r.displayW, outH: r.displayH, a: state.a, incl: state.incl * Math.PI / 180,
       rObs: 1000, fovScale: 14, rIn, rOut, Tpeak: T_PEAK, exposure: state.exposure,
@@ -219,9 +241,15 @@ ratio to analytic critical curve = ${res.calibration} (NOT a calibration — the
       breatheAmp: state.breatheAmp, nSpots: baseSpots.length,
       jetStrength: state.jetStrength, jetGamma: state.jetGamma,
       jetLength: state.jetLength, jetKnots: state.jetKnots,
-      skyStrength: skyReady ? state.skyStrength : 0,
+      skyStrength: skyReady ? state.skyStrength : 0, setIndex,
     };
-    r.frame(u);
+    r.frame(u, {
+      cachedSet: mode === "cached" ? setIndex : undefined,
+      build: slice ? { ...u, resW: r.displayW, resH: r.displayH, setIndex: slice.set, rowStart: slice.rowStart, rowEnd: slice.rowEnd } : undefined,
+    });
+    if (mode === "cached") cachedFrame++;
+    wasCached = mode === "cached";
+    cmodeEl.textContent = mode === "cached" ? `cached ${sched.completedSets}/${r.cacheSets}` : (r.cacheSets && cacheOn ? "live" : "off");
     sample++;
     if ((sample & 7) === 0 || sample < 4) sppEl.textContent = String(sample);
     requestAnimationFrame(loop);

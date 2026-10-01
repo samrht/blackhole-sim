@@ -63,6 +63,15 @@ const skyOk = skyResp.ok();
 console.log(`${skyOk ? "✓ PASS" : "✗ FAIL"}  /sky/milkyway-4k.jpg  (${skyResp.status()})`);
 if (!skyOk) failed = true;
 
+// Geodesic cache in the live app: reaches `cached`, survives a resize, no page errors.
+await page.goto(BASE + "/", { waitUntil: "load", timeout: 20000 });
+const cached = () => page.waitForFunction(() => (document.getElementById("cmode")?.textContent || "").startsWith("cached"), null, { timeout: 120000 }).then(() => true, () => false);
+let cacheOk = await cached();
+await page.setViewportSize({ width: 820, height: 560 });
+cacheOk = cacheOk && await cached();
+console.log(`${cacheOk && !errors.length ? "✓ PASS" : "✗ FAIL"}  cache reaches 'cached' and survives a resize`);
+if (!cacheOk || errors.length) failed = true;
+
 if (errors.length) console.log("console/page errors:", errors.join(" | "));
 await browser.close();
 process.exit(failed ? 1 : 0);
