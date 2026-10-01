@@ -30,23 +30,21 @@ describe("polar axis", () => {
     expect(res.fate).toBe("disk");
     const c1 = conserved(res.s, a);
     expect(Math.abs(c1.Lz - c0.Lz)).toBeLessThan(1e-6); // Killing: exact up to float noise
-    // eta and H are NOT conserved to the equatorial test's 1e-4 here: the finite-difference RK4
-    // integrator has a documented accuracy ceiling that a near-axis turning point exposes.
-    // Measured before this test was written (f64, provisional H_TOL = 1e-4, MAX_RETRY = 8):
-    // |d eta| = 0.12 of eta = 36 (0.3%), |H| = 4e-5 -- versus 11% and 1.3e-3 with the monitor
-    // effectively off (H_TOL = 1e-2). The bounds below reject the unmonitored integrator and
-    // accept the monitored one with ~3x margin; they are measured ceilings, not targets.
-    expect(Math.abs(c1.Q - c0.Q) / c0.Q).toBeLessThan(1e-2);
-    expect(Math.abs(c1.H)).toBeLessThan(1e-3);
-    // ...and over the WHOLE trajectory (spec 4.1), not just at the disk: measured 4.8e-5 with the
-    // far-field angular cap; the bound is the same measured ceiling as the end-state one above.
-    expect(res.maxAbsH).toBeLessThan(1e-3);
+    // eta and H across a near-axis turning point. History: under the H_TOL monitor alone the
+    // measured drift was |d eta|/eta 0.3 % and |H| 4e-5 (bounds 1e-2 / 1e-3), against 11 % and 1.3e-3
+    // with the monitor effectively off. Since the angular caps also bound the near field
+    // (2026-10-01) the passage is resolved: measured |dQ|/Q 2.8e-6, |H| 6.0e-8, max |H| over the
+    // trajectory (spec 4.1) 1.4e-7, |rHit - rHit(alpha = 0)| 2.1e-4 M (was 0.0095 M; 0.34 M
+    // unmonitored). The bounds below lock that in with ~10x margin; they are measured ceilings.
+    expect(Math.abs(c1.Q - c0.Q) / c0.Q).toBeLessThan(3e-5);
+    expect(Math.abs(c1.H)).toBeLessThan(1e-6);
+    expect(res.maxAbsH).toBeLessThan(2e-6);
     // The near-axis answer must converge on the on-axis (alpha = 0) limit: the disk-hit radius is
-    // continuous in alpha, so alpha = 0.05 must land within half a pixel (0.02 M at the
-    // interactive scale of ~24 px/M) of alpha = 0. Measured: 0.0095 M monitored, 0.34 M unmonitored.
+    // continuous in alpha, so alpha = 0.05 must land well within half a pixel (0.02 M at the
+    // interactive scale of ~24 px/M) of alpha = 0.
     const ref = traceRay(screenToState(0, beta, a, I8, ROBS), a, OPTS);
     expect(ref.fate).toBe("disk");
-    expect(Math.abs(res.rHit! - ref.rHit!)).toBeLessThan(0.02);
+    expect(Math.abs(res.rHit! - ref.rHit!)).toBeLessThan(2e-3);
   });
 
   it("a xi = 0 ray passes through the axis: phi shifts by pi, p_theta flips, disk is still found", () => {
@@ -133,21 +131,27 @@ describe("polar axis", () => {
   it("a step that moves theta by more than 0.5 rad is not accepted as a disk crossing", () => {
     // reflectAxis assumes a single crossing per step (theta -> -theta); a step that carried theta
     // through several radians is a diverged state, and interpolating a disk hit from it would be
-    // garbage. The render loop and traceRay guard the disk test with |delta theta| < 0.5. Exercise
-    // it directly: r = 20 (near field, stride 0.02 * (r - rh) = 0.36), theta = pi/2 - 0.3, and a
-    // p_theta so large that one stride moves theta by ~1 rad (dtheta/dl = p_theta / Sigma =
-    // p_theta / 400) across the plane. The monitor is switched off (hTol = 1e30) so the step is
-    // taken as is, and maxSteps = 1 isolates that single step. The same state with p_theta scaled
-    // to a ~0.4 rad move crosses the plane inside the guard and IS a disk hit near r = 20.
-    const a = 0, rh = 2, r = 20, th = Math.PI / 2 - 0.3;
-    const dl = stepSize(new Float64Array([0, r, th, 0, 1, -1, 0, 0]), rh, 40);
-    expect(dl).toBeCloseTo(0.36, 12);
-    const mk = (dth: number) => new Float64Array([0, r, th, 0, 1, -1, dth * r * r / dl, 0]);
+    // garbage. The render loop and traceRay guard the disk test with |delta theta| < 0.5. Since the
+    // angular caps also bound the near field (2026-10-01) a legitimate stride moves theta by at most
+    // ~F_AXIS of its distance to the axis, so the guard is a backstop: it is reachable only where
+    // the cap is clamped at its floor (0.002) and garbage momenta still move theta a lot. Exercise
+    // exactly that: r = 20, theta = pi/2 - 0.3, and a p_theta so large that the capped stride is the
+    // floor and one floor-sized step moves theta by ~1 rad across the plane (dtheta/dl = p_theta /
+    // Sigma = p_theta / 400). The monitor is switched off (hTol = 1e30) so the step is taken as is,
+    // and maxSteps = 1 isolates that single step. The same state with p_theta scaled to a ~0.4 rad
+    // move crosses the plane inside the guard and IS a disk hit near r = 20.
+    const a = 0, rh = 2, r = 20, th = Math.PI / 2 - 0.3, FLOOR = 0.002;
+    const mk = (dth: number) => new Float64Array([0, r, th, 0, 1, -1, dth * r * r / FLOOR, 0]);
+    expect(stepSize(mk(1.0), rh, 40)).toBe(FLOOR);
+    expect(stepSize(mk(0.4), rh, 40)).toBe(FLOOR);
+    // ...whereas a moderate p_theta is capped well below a plane-jumping move: ~0.1 * theta_d.
+    const mod = new Float64Array([0, r, th, 0, 1, -1, 5, 0]);
+    expect(stepSize(mod, rh, 40) * 5 / (r * r)).toBeLessThan(0.11 * th);
     const big = traceRay(mk(1.0), a, { ...OPTS, hTol: 1e30, maxSteps: 1 });
     expect(big.fate).toBe("budget"); // crossed the plane, |delta theta| ~ 1 > 0.5: not a hit
     expect(big.s[2]).toBeGreaterThan(Math.PI / 2);
     const small = traceRay(mk(0.4), a, { ...OPTS, hTol: 1e30, maxSteps: 1 });
     expect(small.fate).toBe("disk");
-    expect(Math.abs(small.rHit! - r)).toBeLessThan(2); // the (unphysical) p_theta also kicks p_r; measured 0.84
+    expect(Math.abs(small.rHit! - r)).toBeLessThan(2); // the (unphysical) p_theta also kicks p_r
   });
 });

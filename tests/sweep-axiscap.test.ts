@@ -59,7 +59,7 @@ import { stepGeodesic, traceRay, F_AXIS, DL_FAR_MIN, H_TOL, H_TOL_FAR, MAX_RETRY
  * unchanged, reference convergence 1.18e-3 M (was 2.0e-3), reference fates unchanged. Same
  * selection: F_AXIS = 0.1, DL_FAR_MIN = 0.05.
  */
-const SWEEP = !!process.env.SWEEP;
+const SWEEP = !!process.env.SWEEP; void SWEEP; // historical: the describe below is skipped
 const ROBS = 1000, RIN = 6, ROUT = 40;
 
 type Opts = { hTol: number; maxRetry: number; monitorFar: boolean; fAxis: number; dlFarMin: number; maxSteps?: number };
@@ -122,7 +122,10 @@ function score(rays: Float64Array[], ref: Res[], o: Opts) {
   return { flips, wrong, meanSteps: steps / rays.length };
 }
 
-describe.skipIf(!SWEEP)("F_AXIS / DL_FAR_MIN sweep (SWEEP=1)", () => {
+// HISTORICAL (2026-10-01): this sweep's local loop models the pre-2026-10-01 controller (far field
+// unmonitored, no F_PHI, no near-field caps), so its "local loop = traceRay" check no longer holds.
+// Kept for its recorded table; superseded by tests/sweep-farmonitor.test.ts.
+describe.skip("F_AXIS / DL_FAR_MIN sweep (SWEEP=1)", () => {
   it("prints the table", () => {
     const refOpts: Opts = { hTol: 1e-7, maxRetry: 24, monitorFar: true, fAxis: 0.05, dlFarMin: 0.02, maxSteps: 40000 };
     const refA = SET_A.map((s) => traceLocal(s, 0, refOpts)), refB = SET_B.map((s) => traceLocal(s, 0, refOpts));

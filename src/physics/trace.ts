@@ -19,18 +19,17 @@ export const H_TOL = 1e-3;
  *  never approached); shipped one size up from the smallest surviving value (4) for margin.
  *  Twin constant in integrator-shared.wgsl. */
 export const MAX_RETRY = 8;
-/** Far-field exemption: beyond rOut * 1.5 (the far branch of stepSize) the monitor is OFF. Still a
- *  NaN guard: abs(NaN) <= x is false. Historical rationale: under finite-difference forces the f32
- *  force was pure noise at r ~ 1e3 (ulp 6e-5 vs the FD half-step 1e-4; measured |dH|/scale 2.4e-3 on
- *  the GPU vs 2e-11 in f64 for the same step), so halving on dH there cost steps for nothing.
- *  Re-checked under exact forces (Task 5, 2026-09-23): the GPU's |dH|/scale is now 2.7e-8 on the
- *  parity "far" step and 9.9e-9 on the near-axis "far-axis" step (0 retries at H_TOL on both), so
- *  that premise no longer holds; lifting the exemption is a follow-up with its own gate design
- *  (it changes the unmonitored near-axis far-field passage, see K_FAR). Twin constant in
- *  integrator-shared.wgsl. */
-export const H_TOL_FAR = 1e30;
-/** Far-field angular step cap. The far field is unmonitored (H_TOL_FAR), so nothing but the step
- *  controller bounds a stride there -- and a ray aimed at screen beta crosses the axis at
+/** Far-field monitor tolerance, beyond rOut * 1.5 (the far branch of stepSize). Was 1e30 (monitor
+ *  OFF): under finite-difference forces the f32 force was pure noise at r ~ 1e3 (|dH|/scale 2.4e-3
+ *  on the GPU vs 2e-11 in f64 for the same step). Under exact forces the GPU's |dH|/scale is 2.7e-8
+ *  on the parity "far" step, so the far field is now monitored as a safety net, at 1e-5 (370x that
+ *  floor). With the angular caps in both fields it never fires on any ray of
+ *  tests/sweep-farmonitor.test.ts (SWEEP=1, identical to unmonitored); without the near-field
+ *  caps it was what held the near-axis far-field passage (77 -> 27 disk rays off). Twin constant
+ *  in integrator-shared.wgsl. */
+export const H_TOL_FAR = 1e-5;
+/** Far-field angular step cap. The far field was unmonitored when this was added, so nothing but
+ *  the step controller bounded a stride there -- and a ray aimed at screen beta crosses the axis at
  *  r ~ beta / sin(i), i.e. INSIDE the exempt zone whenever beta > 1.5 * rOut * sin(i) (beta > 8.3 M
  *  at i = 8 deg). A dl = 3 stride at theta ~ 3e-3 carried theta to -9.2 and p_theta to -6e4
  *  (H ~ 1e10): the ray escaped and painted a dark streak beside the axis column above the shadow.
@@ -41,33 +40,56 @@ export const H_TOL_FAR = 1e30;
 export const F_AXIS = 0.1;
 export const DL_FAR_MIN = 0.05;
 
+/** Far-field azimuthal step cap: dl <= F_PHI * r^2 sin^2(th) / |p_phi| (floored at DL_FAR_MIN), i.e.
+ *  at most F_PHI rad of azimuth per step (dphi/dl ~ p_phi / (r^2 sin^2 th) out there; frame dragging
+ *  ~ 2a/r^3 is negligible). A ray with p_phi != 0 swings through ~pi of azimuth where it turns in
+ *  theta beside the axis -- there p_theta ~ 0, so the F_AXIS cap is inactive -- and at longer far
+ *  strides that swing was under-resolved (sky rays 1-1.4 px off at i = 1 deg). angularCap applies
+ *  it in the near field too. Twin constant in integrator-shared.wgsl. */
+export const F_PHI = 0.1;
+
 /** Far-field stride: dl = K_FAR * r clamped to [0.6, DL_FAR_MAX] beyond rOut * 1.5, before the
- *  F_AXIS angular cap. Kept at 0.04 / 6 by tests/sweep-farstride.test.ts (SWEEP=1): its binding
- *  rule -- no ray worse than today's error by more than 0.02 M (disk) / half a pixel (sky), against
- *  a converged monitored reference -- fails every other pair in K {0.04..0.3} x MAX {6..150}. That
- *  is NOT evidence that long far strides are inaccurate: the regressed rays are near-axis rays whose
- *  error enters between r = 150 and r = 60, where every candidate's stride equals the shipped one
- *  (unmonitored, F_AXIS cap); a candidate only shifts the step-grid phase there, which reshuffles
- *  the shipped controller's under-resolved axis passage, making some rays worse and others better
- *  (see the sweep's header). Follow-up: converge that passage first (monitor it or tighten the cap),
- *  then re-sweep the far stride. Confirmed under exact forces (2026-09-23). Twin constants in
- *  integrator-shared.wgsl. */
-export const K_FAR = 0.04;
-export const DL_FAR_MAX = 6;
+ *  angular caps. 0.08 / 50 (was 0.04 / 6), chosen by tests/sweep-farmonitor.test.ts (SWEEP=1)
+ *  against a converged reference: no fate flips and no ray worse than the old controller (disk
+ *  +0.02 M; sky +0.5 px of ON-SCREEN displacement through the local lensing Jacobian) on 2338
+ *  sweep rays and 3265 held-out rays; mean steps + retries 348 -> 220 (-37 %, held-out 353 -> 217).
+ *  The old controller's longer-stride failures were near-field near-axis error (fixed by the
+ *  angular caps in the near branch), not far-stride error. 0.1 / 50 and 0.12 / 50 also pass at
+ *  -40 % with a worse worst sky ray (0.21 px vs 0.15 px); 0.08 / 50 shipped for margin. Twin
+ *  constants in integrator-shared.wgsl. */
+export const K_FAR = 0.08;
+export const DL_FAR_MAX = 50;
+
+/** Angular step caps, applied to both branches of stepSize: at most F_AXIS of the affine distance
+ *  to the axis at the current polar rate (dtheta/dl = p_theta / Sigma ~ p_theta / r^2) and at most
+ *  F_PHI rad of azimuth per step (dphi/dl ~ p_phi / (r^2 sin^2 th)), each floored at `floor`.
+ *  r^2 stands in for Sigma and the exact g^phiphi: step heuristics, identical in both twins.
+ *  In the near field (2026-10-01) they resolve the near-axis passages inside r = 1.5 rOut, which
+ *  H_TOL alone left up to 0.3 M off (the axis-line residual): 0 of 104 near-field axis-band rays
+ *  off by > 0.02 M (tests/sweep-farmonitor.test.ts, set N), at ~+1 % mean steps. Twin of
+ *  angularCap() in integrator-shared.wgsl. */
+export function angularCap(s: Float64Array, dl0: number, floor: number): number {
+  const r = s[1];
+  let dl = dl0;
+  const pth = s[6];
+  if (pth !== 0) { // no polar motion: nothing to cap (and no division by zero)
+    const thD = Math.min(s[2], Math.PI - s[2]);
+    dl = Math.min(dl, Math.max(floor, F_AXIS * thD * r * r / Math.abs(pth)));
+  }
+  const pph = s[7];
+  if (pph !== 0) {
+    const sn = Math.sin(s[2]);
+    dl = Math.min(dl, Math.max(floor, F_PHI * r * r * sn * sn / Math.abs(pph)));
+  }
+  return dl;
+}
 
 /** Baseline step length: fine in the strong-field/disk region, long strides through the near-flat
- *  far field, capped near the axis (F_AXIS). Twin of stepSize() in integrator-shared.wgsl. */
+ *  far field; both capped by angularCap. Twin of stepSize() in integrator-shared.wgsl. */
 export function stepSize(s: Float64Array, rh: number, rOut: number): number {
   const r = s[1];
-  if (r > rOut * 1.5) {
-    const base = Math.min(DL_FAR_MAX, Math.max(0.6, K_FAR * r));
-    const pth = s[6];
-    if (pth === 0) return base; // no angular motion: nothing to cap (and no division by zero)
-    // Sigma = r^2 + a^2 cos^2 th; the a^2 cos^2 th <= 1 term is < 3e-4 of r^2 >= 3600 here.
-    const thD = Math.min(s[2], Math.PI - s[2]);
-    return Math.min(base, Math.max(DL_FAR_MIN, F_AXIS * thD * r * r / Math.abs(pth)));
-  }
-  return Math.min(0.5, Math.max(0.002, 0.02 * (r - rh)));
+  if (r > rOut * 1.5) return angularCap(s, Math.min(DL_FAR_MAX, Math.max(0.6, K_FAR * r)), DL_FAR_MIN);
+  return angularCap(s, Math.min(0.5, Math.max(0.002, 0.02 * (r - rh))), 0.002);
 }
 
 /** g^{mu nu} p_mu p_nu (= 2H, exactly 0 for a null geodesic) together with the sum of |terms|.

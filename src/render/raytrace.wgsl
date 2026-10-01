@@ -253,19 +253,73 @@ fn shadeDisk(rHit: f32, phiHit: f32, g: f32, a: f32) -> vec3<f32> {
 }
 
 // Optically-thin jet radiance gathered over one step s -> sNew (zero outside the emitting region).
+// The jet quadrature is a left Riemann sum along the ray with samples at most JET_DL apart,
+// independent of the geodesic stride: a step longer than JET_DL is split into n = ceil(dl / JET_DL)
+// samples along its Cartesian chord, each weighted dl / n (n = 1 is the original single sample at
+// the step's start). The chord is the path to well under a sub-sample at these lengths. Before
+// 2026-10-01 the jet was sampled once per step, so its accuracy followed the geodesic stride; the
+// longer far strides (K_FAR) lost the emission of steps entering the jet's top from r > 1.5 rOut.
+// 0.25 against a fine-step GPU reference (face-on jet scene, pixels > 5 % off: 116 per-step,
+// 29 at 1.0, 7 at 0.5, 2 at 0.25). Steps whose chord stays outside the jet's bounding sphere are
+// skipped exactly, so rays that never come near the jet pay nothing.
+const JET_DL = 0.25;
+const JET_NSUB_MAX = 32u;
+// The jet sample points of one step, shared by jetStep (what it sums) and jetTouches (what the
+// geodesic cache bookmarks), so the two cannot disagree. Sample k of n sits at k/n along the
+// step's Cartesian chord; k = 0 is the step's start state itself.
+fn jetSubCount(dl: f32) -> u32 { return clamp(u32(ceil(dl / JET_DL)), 1u, JET_NSUB_MAX); }
+fn jetSample(s: State, p0: vec3<f32>, dvec: vec3<f32>, k: u32, n: u32) -> vec2<f32> {
+  if (k == 0u) { return vec2<f32>(s.x.y, s.x.z); }
+  let p = p0 + dvec * (f32(k) / f32(n));
+  let r = length(p);
+  return vec2<f32>(r, acos(clamp(p.z / r, -1.0, 1.0)));
+}
+// Exact skip: the emitter lies inside |z| <= jetLength, rho <= 1.2 funnelEdge(jetLength), so a
+// chord whose closest approach to the hole is beyond that bounding sphere sees no jet (its first
+// sample, the only one when n = 1, is then outside too and jetEmissionJ would return 0).
+fn jetChordMisses(p0: vec3<f32>, dvec: vec3<f32>) -> bool {
+  let fe = 1.2 * funnelEdgeJ(U.jetLength);
+  let rJet = sqrt(U.jetLength * U.jetLength + fe * fe);
+  let tc = clamp(-dot(p0, dvec) / dot(dvec, dvec), 0.0, 1.0);
+  return length(p0 + dvec * tc) > rJet;
+}
+
 fn jetStep(s: State, sNew: State, dl: f32) -> vec3<f32> {
-  let jz = s.x.y * cos(s.x.z);
-  let e = jetEmissionJ(s.x.y, s.x.z, U.time);
-  let dvec = cartOf(sNew.x) - cartOf(s.x);                  // inward step (camera -> hole)
+  let p0 = cartOf(s.x);
+  let dvec = cartOf(sNew.x) - p0;                           // inward step (camera -> hole)
   // guard normalize() against a zero-length step: a NaN mu here would poison the EMA accum
   // buffer permanently (mix(accum, NaN, blend) stays NaN). Effectively unreachable, cheap insurance.
-  if (e > 0.0 && dot(dvec, dvec) > 1e-12) {
-    let marchDir = normalize(dvec);
-    let axisSign = select(-1.0, 1.0, jz >= 0.0);
-    let mu = -axisSign * marchDir.z;                        // emitter outflow toward observer
-    return JET_TINT * (e * JET_GAIN) * boostJ(mu, U.jetGamma) * dl;
+  if (dot(dvec, dvec) <= 1e-12) { return vec3<f32>(0.0); }
+  if (jetChordMisses(p0, dvec)) { return vec3<f32>(0.0); }
+  let marchDir = normalize(dvec);
+  let n = jetSubCount(dl);
+  var acc = vec3<f32>(0.0);
+  for (var k = 0u; k < n; k++) {
+    let q = jetSample(s, p0, dvec, k, n);
+    let e = jetEmissionJ(q.x, q.y, U.time);
+    if (e > 0.0) {
+      let jz = q.x * cos(q.y);
+      let axisSign = select(-1.0, 1.0, jz >= 0.0);
+      let mu = -axisSign * marchDir.z;                      // emitter outflow toward observer
+      acc += JET_TINT * (e * JET_GAIN) * boostJ(mu, U.jetGamma) * (dl / f32(n));
+    }
   }
-  return vec3<f32>(0.0);
+  return acc;
+}
+
+// Geometric (jetStrength-independent): can this step's jetStep be non-zero for SOME jet strength
+// and time? True iff one of its sample points is inside the jet envelope -- jetEmissionJ is zero
+// outside it. The geodesic cache bookmarks exactly these steps, so its replay sums the same samples.
+fn jetTouches(s: State, sNew: State, dl: f32) -> bool {
+  let p0 = cartOf(s.x);
+  let dvec = cartOf(sNew.x) - p0;
+  if (dot(dvec, dvec) <= 1e-12 || jetChordMisses(p0, dvec)) { return false; }
+  let n = jetSubCount(dl);
+  for (var k = 0u; k < n; k++) {
+    let q = jetSample(s, p0, dvec, k, n);
+    if (inJetEnvelope(q.x, q.y)) { return true; }
+  }
+  return false;
 }
 
 // Where jetEmissionJ can be non-zero for SOME jetStrength/time (twin: inJetEnvelope in jet.ts).
@@ -311,10 +365,6 @@ fn traceRay(pix: vec2<u32>, jit: vec2<f32>, record: bool) -> TraceOut {
   var firstJ = 0u; var lastJ = 0u;
 
   for (var step = 0u; step < U.maxSteps; step++) {
-    if (record && inJetEnvelope(s.x.y, s.x.z)) {
-      if (!out.hasBm) { out.hasBm = true; out.bm = s; firstJ = step; }
-      lastJ = step;
-    }
     // dl > 0 with p_r < 0 integrates INWARD along the reversed worldline.
     let r = s.x.y;
     let far = r > U.rOut * 1.5; // same threshold as the far branch of stepSize: monitor OFF out there
@@ -329,6 +379,11 @@ fn traceRay(pix: vec2<u32>, jit: vec2<f32>, record: bool) -> TraceOut {
     // Optically-thin jet: integrate emissivity * relativistic beaming along the ray. The disk
     // hit below still `break`s (opaque), so jet segments behind the disk/horizon are occluded.
     if (U.jetStrength > 0.0) { jetAccum += jetStep(s, sNew, dl); }
+    // Cache bookmark: the first step whose jet samples can see the envelope, through the last one.
+    if (record && jetTouches(s, sNew, dl)) {
+      if (!out.hasBm) { out.hasBm = true; out.bm = s; firstJ = step; }
+      lastJ = step;
+    }
 
     // disk crossing: equatorial plane th = PI/2 (take the first hit -> optically-thick top surface).
     // A step that moved theta by more than 0.5 rad is not a plane crossing (a legitimate near-field
@@ -414,7 +469,7 @@ fn storeComposite(idx: u32, color: vec3<f32>, jetAccum: vec3<f32>) {
 }
 
 // Re-integrate a bookmarked jet stretch: the same steps, in the same order, as traceRay took from
-// the bookmark through the last step whose start state was inside the jet envelope.
+// the bookmark through the last step whose jet samples touched the envelope (jetTouches).
 fn replayJet(bm: State, nJet: u32) -> vec3<f32> {
   let a = U.a;
   let rh = 1.0 + sqrt(max(0.0, 1.0 - a*a));

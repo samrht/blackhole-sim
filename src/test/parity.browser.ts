@@ -13,7 +13,7 @@ import shadowParityWGSL from "../render/shadow-parity.wgsl?raw";
 import { screenToState, screenToXiEta } from "../physics/camera";
 import cameraSharedWGSL from "../render/camera-shared.wgsl?raw";
 import cameraParityWGSL from "../render/camera-parity.wgsl?raw";
-import { stepGeodesic, stepSize, H_TOL, H_TOL_FAR, MAX_RETRY } from "../physics/trace";
+import { stepGeodesic, stepSize, H_TOL, H_TOL_FAR, MAX_RETRY, F_PHI, DL_FAR_MIN } from "../physics/trace";
 import integratorParityWGSL from "../render/integrator-parity.wgsl?raw";
 
 /** Runs the WGSL metric/orbit/g-factor helpers on fixed inputs and returns the max relative
@@ -199,7 +199,8 @@ export async function runParity(): Promise<{ maxErr: number; rows: number }> {
   //
   // What this gate covers: stepGeodesic (monitor, halving, retry count, ok flag), stepSize (the
   // shader computes its own stride on the dl0 < 0 sentinel -- near branch, far branch and the
-  // far-field F_AXIS cap -- and reports it back), reflectAxis, and the constants H_TOL/MAX_RETRY.
+  // F_AXIS and F_PHI caps of angularCap in both branches -- and reports it back), reflectAxis, and the constants
+  // H_TOL/MAX_RETRY/H_TOL_FAR.
   // What it does NOT cover: the render loop in raytrace.wgsl around those calls -- its
   // select(H_TOL, H_TOL_FAR, far) predicate, the disk test and its |delta theta| guard, the
   // capture/escape tests -- which are exercised only by ?shadow and scripts/probe-axis.mjs.
@@ -208,11 +209,10 @@ export async function runParity(): Promise<{ maxErr: number; rows: number }> {
   // constant or stride mismatch scores >= 1 (retry/ok/constants) or >~ 1e-3 relative (dl0).
   const I8 = (8 * Math.PI) / 180;
   const ROUT = 40; // the renderer's disk edge; sets the far-field threshold rOut * 1.5 in stepSize
-  // hTol is what the renderer would use at that state (H_TOL, or H_TOL_FAR in the unmonitored far
-  // field). dl0 < 0 = sentinel: both sides compute the stride with their own stepSize from the same
-  // (f32-rounded) state and the strides are compared; only "retry" supplies its own oversized dl0.
+  // hTol is what the renderer would use at that state (H_TOL, or H_TOL_FAR in the far field). dl0 < 0 = sentinel: both sides compute the stride with their own stepSize from the same
+  // (f32-rounded) state and the strides are compared; "retry" and "barrier" supply their own dl0.
   // nCmp = how many leading state components are compared: 8 = the whole state, 4 = the positions
-  // only (see "far").
+  // only (no case uses it any more; kept for a future far-field precision story).
   type ICase = { label: string; s: Float64Array; a: number; dl0: number; hTol: number; nCmp: number };
   const icases: ICase[] = [];
   const rhOf = (a: number) => 1 + Math.sqrt(Math.max(0, 1 - a * a));
@@ -231,22 +231,32 @@ export async function runParity(): Promise<{ maxErr: number; rows: number }> {
     }
     throw new Error(`integrator parity: no state found for case "${label}"`);
   }
-  // far field, long stride, a != 0. Unmonitored there (H_TOL_FAR). Retries must be 0/0 (0/0 proves
-  // stepGeodesic honours its hTol argument -- the select() that picks H_TOL_FAR in raytrace.wgsl's
-  // loop is not exercised here, only by the ?shadow re-baseline and the fps) and the POSITIONS must
-  // agree. The stride itself is compared through the sentinel (uncapped far branch: 6). History:
-  // under finite-difference forces the f32 force at r = 1000 was noise (GPU |dH|/scale 2.4e-3 vs
-  // 2e-11 in f64; p_r -1.004375 GPU vs -1.002003 CPU after dl = 6), which is why the exemption and
-  // positions-only comparison exist. With exact forces (Task 5, 2026-09-23) the GPU's |dH|/scale for
-  // this step is 2.7e-8 (0 retries even at H_TOL) and every state component, momenta included,
-  // agrees to <= 3.0e-8 relative; comparing the momenta too (nCmp = 8) is a follow-up.
-  icases.push({ label: "far", s: screenToState(4, 3, 0.9, 1.2, 1000), a: 0.9, dl0: SENTINEL, hTol: H_TOL_FAR, nCmp: 4 });
+  // far field, long stride, a != 0, monitored at H_TOL_FAR. Retries must agree (0/0) and the WHOLE
+  // state is compared; the stride is compared through the sentinel (uncapped far branch: K_FAR r
+  // clamped to DL_FAR_MAX = 50). History: under finite-difference forces the f32 force at r = 1000
+  // was noise (GPU |dH|/scale 2.4e-3 vs 2e-11 in f64), so this case compared positions only and the
+  // far field was unmonitored; with exact forces the GPU's |dH|/scale for this step is 2.7e-8 and
+  // the momenta agree to <= 3.0e-8 relative, which is what made monitoring the far field possible.
+  icases.push({ label: "far", s: screenToState(4, 3, 0.9, 1.2, 1000), a: 0.9, dl0: SENTINEL, hTol: H_TOL_FAR, nCmp: 8 });
   // far field, NEAR THE AXIS: the F_AXIS cap branch of stepSize. The reviewer's streak ray
-  // (alpha = 0.1, beta = 12 at i = 8 deg) crosses the axis at r ~ 80, inside the exempt zone; the
+  // (alpha = 0.1, beta = 12 at i = 8 deg) crosses the axis at r ~ 80, in the far field; the
   // pre-cap stride of 3.2 carried theta to -9.2 there. Found by walking until theta < 0.02 while
-  // still in the far field, so the capped stride (well below the 0.04 r base) is what both sides
-  // must compute. Unmonitored (H_TOL_FAR), so retries are 0/0; whole state compared.
+  // still in the far field, so the capped stride (well below the K_FAR r base) is what both sides
+  // must compute. Monitored at H_TOL_FAR; whole state compared.
   icases.push(findState("far-axis", screenToState(0.1, 12, 0, I8, 1000), 0, (s) => s[2] < 0.02 && s[1] > ROUT * 1.5));
+  // far field, the F_PHI azimuthal cap BINDING: a p_phi != 0 ray looking down the axis (i = 1 deg)
+  // swings through ~pi of azimuth where it turns in theta, p_theta ~ 0 so F_AXIS is inactive.
+  // Found by walking until the azimuthal cap is the smallest stride and above its DL_FAR_MIN floor.
+  icases.push(findState("far-phi", screenToState(0.75, 8, 0, Math.PI / 180, 1000), 0, (s) => {
+    if (s[1] <= ROUT * 1.5 || s[7] === 0) return false;
+    const sn = Math.sin(s[2]), capPhi = F_PHI * s[1] * s[1] * sn * sn / Math.abs(s[7]);
+    return capPhi > DL_FAR_MIN && Math.abs(stepSize(s, rhOf(0), ROUT) - capPhi) < 1e-12 * capPhi;
+  }));
+  // NEAR field, an angular cap BINDING (angularCap also bounds the near branch since 2026-10-01): the
+  // alpha = 0.05 ray turns beside the axis at r ~ 43, inside rOut * 1.5. Found by walking until the
+  // capped stride is below the near branch's own clamp(0.02 (r - rh), 0.002, 0.5).
+  icases.push(findState("near-cap", screenToState(0.05, 6, 0, I8, 1000), 0, (s) =>
+    s[1] <= ROUT * 1.5 && stepSize(s, rhOf(0), ROUT) < 0.5 * Math.min(0.5, Math.max(0.002, 0.02 * (s[1] - rhOf(0))))));
   // strong field, equatorial (beta = 0 at i = pi/2 stays in the plane); alpha = 2 => L_z = 2, well
   // inside the prograde critical curve at a = 0.9, so the ray reaches r < 6 before capture
   const strongEq = findState("strong-eq", screenToState(2, 0, 0.9, Math.PI / 2, 1000), 0.9, (s) => s[1] < 6);
@@ -259,7 +269,7 @@ export async function runParity(): Promise<{ maxErr: number; rows: number }> {
   // well-conditioned forced retry: the strong-eq state with an oversized stride (the renderer
   // would use ~0.09 here). Both sides must halve the same number of times AND agree on the state.
   // A vacuous case (CPU retries = 0) throws, so the route cannot pass while testing nothing. This
-  // is the one case that supplies its own dl0 (no sentinel).
+  // and "barrier" are the cases that supply their own dl0 (no sentinel).
   const retryDl0 = 2.0;
   if (stepGeodesic(strongEq.s, strongEq.a, retryDl0, H_TOL).retries < 1) throw new Error("integrator parity: \"retry\" case is vacuous (CPU retries = 0)");
   icases.push({ label: "retry", s: strongEq.s, a: strongEq.a, dl0: retryDl0, hTol: H_TOL, nCmp: 8 });
@@ -272,7 +282,13 @@ export async function runParity(): Promise<{ maxErr: number; rows: number }> {
   // agreed only to 2.3e-4). Measured under exact forces: 6.79e-5 relative, the largest of all 53
   // parity rows (f32 through the barrier; every other integrator case is <= 2.9e-7). The retry
   // count is still the shipped-bytes statement: the GPU must halve exactly where trace.ts does.
-  icases.push(findState("barrier", screenToState(0.05, 6, 0, I8, 1000), 0, (_, out) => out.retries >= 1));
+  // Since the angular caps bound the near field (2026-10-01) the renderer's own stride resolves
+  // this passage and never halves, so the case supplies the pre-cap stride (0.5, the near branch's
+  // ceiling) at the first state within 1.6e-3 rad of the axis; a vacuous case (CPU retries = 0) throws.
+  const barrierAt = findState("barrier", screenToState(0.05, 6, 0, I8, 1000), 0, (s) => s[2] < 1.6e-3);
+  const barrierDl0 = 0.5;
+  if (stepGeodesic(barrierAt.s, 0, barrierDl0, H_TOL).retries < 1) throw new Error("integrator parity: \"barrier\" case is vacuous (CPU retries = 0)");
+  icases.push({ ...barrierAt, dl0: barrierDl0 });
   // a step that crosses the axis (xi = 0): only reflectAxis can flip the sign of p_theta here
   icases.push(findState("reflect", screenToState(0, 6, 0, I8, 1000), 0, (s, out) => out.s[6] * s[6] < 0));
   const IN_F = 12, OUT_F = 16; // floats per StepIn (48 bytes) / StepRes (64 bytes: x, p, info, extra)
@@ -315,7 +331,8 @@ export async function runParity(): Promise<{ maxErr: number; rows: number }> {
     // The constants themselves, so a desync between trace.ts and the fragment cannot hide.
     maxErr = Math.max(maxErr, Math.abs(igpu[i * OUT_F + 10] - H_TOL) / H_TOL);
     maxErr = Math.max(maxErr, Math.abs(igpu[i * OUT_F + 11] - MAX_RETRY));
-    // The stride: the shader's own stepSize on sentinel cases (its far-field cap included), the
+    maxErr = Math.max(maxErr, Math.abs(igpu[i * OUT_F + 13] - H_TOL_FAR) / H_TOL_FAR);
+    // The stride: the shader's own stepSize on sentinel cases (its far-field caps included), the
     // supplied dl0 otherwise. Relative, like the state.
     maxErr = Math.max(maxErr, Math.abs(igpu[i * OUT_F + 12] - dl0) / (1 + Math.abs(dl0)));
   });

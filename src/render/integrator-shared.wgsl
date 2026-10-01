@@ -70,8 +70,8 @@ fn rk4(s: State, a: f32, dl: f32) -> State {
                s.p + (k1.p+2.0*k2.p+2.0*k3.p+k4.p)*(dl/6.0));
 }
 
-// Far-field angular step cap. The far field is unmonitored (H_TOL_FAR below), so nothing but the
-// step controller bounds a stride there -- and a ray aimed at screen beta crosses the axis at
+// Far-field angular step cap. The far field was unmonitored when this was added, so nothing but the
+// step controller bounded a stride there -- and a ray aimed at screen beta crosses the axis at
 // r ~ beta / sin(i), INSIDE the exempt zone whenever beta > 1.5 * rOut * sin(i) (beta > 8.3 M at
 // i = 8 deg). A dl = 3 stride at theta ~ 3e-3 carried theta to -9.2 and p_theta to -6e4: the ray
 // escaped and painted a dark streak beside the axis column above the shadow. The cap limits the
@@ -81,25 +81,42 @@ fn rk4(s: State, a: f32, dl: f32) -> State {
 const F_AXIS = 0.1;
 const DL_FAR_MIN = 0.05;
 
-// Far-field stride (see K_FAR / DL_FAR_MAX in trace.ts). Twin constants.
-const K_FAR = 0.04;
-const DL_FAR_MAX = 6.0;
+// Far-field azimuthal step cap and stride (see F_PHI, K_FAR / DL_FAR_MAX in trace.ts). Twin constants.
+const F_PHI = 0.1;
+const K_FAR = 0.08;
+const DL_FAR_MAX = 50.0;
 
 // Baseline step length: fine in the strong-field/disk region, long strides through the near-flat
 // far field (curvature ~M/r^3 is negligible there) so we don't burn thousands of steps just
-// travelling in from the distant observer, capped near the axis (F_AXIS). Twin of stepSize() in
+// travelling in from the distant observer; both capped by angularCap. Twin of stepSize() in
 // trace.ts.
+// Angular step caps, applied to both branches of stepSize: at most F_AXIS of the affine distance to
+// the axis at the current polar rate (dtheta/dl = p_theta / Sigma ~ p_theta / r^2), and at most
+// F_PHI rad of azimuth per step (dphi/dl ~ p_phi / (r^2 sin^2 th)), each floored at `floor`.
+// r^2 stands in for Sigma and for the exact g^phiphi: Sigma >= r^2 makes the polar cap slightly
+// stricter, and both are step heuristics (the CPU twin uses the same expressions, so parity holds).
+fn angularCap(s: State, dl0: f32, floor: f32) -> f32 {
+  let r = s.x.y;
+  var dl = dl0;
+  let pth = s.p.z;
+  if (pth != 0.0) { // no polar motion: nothing to cap (and no division by zero)
+    let thD = min(s.x.z, PI - s.x.z);
+    dl = min(dl, max(floor, F_AXIS * thD * r * r / abs(pth)));
+  }
+  let pph = s.p.w;
+  if (pph != 0.0) {
+    let sn = sin(s.x.z);
+    dl = min(dl, max(floor, F_PHI * r * r * sn * sn / abs(pph)));
+  }
+  return dl;
+}
+
 fn stepSize(s: State, rh: f32, rOut: f32) -> f32 {
   let r = s.x.y;
   if (r > rOut * 1.5) {
-    let base = clamp(K_FAR * r, 0.6, DL_FAR_MAX);
-    let pth = s.p.z;
-    if (pth == 0.0) { return base; } // no angular motion: nothing to cap (and no division by zero)
-    // Sigma = r^2 + a^2 cos^2 th; the a^2 cos^2 th <= 1 term is < 3e-4 of r^2 >= 3600 here.
-    let thD = min(s.x.z, PI - s.x.z);
-    return min(base, max(DL_FAR_MIN, F_AXIS * thD * r * r / abs(pth)));
+    return angularCap(s, clamp(K_FAR * r, 0.6, DL_FAR_MAX), DL_FAR_MIN);
   }
-  return clamp(0.02 * (r - rh), 0.002, 0.5);
+  return angularCap(s, clamp(0.02 * (r - rh), 0.002, 0.5), 0.002);
 }
 
 // ---- Constraint-monitored stepping. Twin of stepGeodesic() in trace.ts. --------------------------
@@ -110,13 +127,12 @@ fn stepSize(s: State, rh: f32, rOut: f32) -> f32 {
 // at f32 noise); on failure dl is halved and the step redone, up to MAX_RETRY halvings.
 const H_TOL = 1e-3;
 const MAX_RETRY = 8u;
-// Far-field exemption: beyond rOut * 1.5 (the far branch of stepSize) the monitor is OFF. Still a
-// NaN guard: abs(NaN) <= x is false. Historical rationale: under finite-difference forces the f32
-// force was pure noise at r ~ 1e3 (ulp 6e-5 vs the FD half-step 1e-4; measured |dH|/scale 2.4e-3
-// here vs 2e-11 in f64), so halving on dH there cost steps for nothing. Re-checked under exact
-// forces (Task 5): |dH|/scale is now 2.7e-8 on the parity "far" step and 9.9e-9 on "far-axis", so
-// that premise no longer holds; lifting the exemption is a follow-up. Twin constant in trace.ts.
-const H_TOL_FAR = 1e30;
+// Far-field monitor tolerance: beyond rOut * 1.5 (the far branch of stepSize). Was 1e30 (monitor
+// OFF) while the forces were finite differences, whose f32 noise at r ~ 1e3 made dH meaningless
+// there; with exact forces |dH|/scale on a far step is ~1e-8 on the GPU, so the far field is now
+// monitored as a safety net at 1e-5 (it never fires on the tests/sweep-farmonitor.test.ts rays
+// once the angular caps bound both fields). Twin constant in trace.ts.
+const H_TOL_FAR = 1e-5;
 
 // vec2(g^{mu nu} p_mu p_nu, sum of |terms|). gUp indices: 0=tt, 1=tphi, 2=rr, 3=thth, 4=phph.
 // Being RELATIVE, this measure cannot reject a step whose garbage momenta inflate the scale along

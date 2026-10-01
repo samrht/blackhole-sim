@@ -110,7 +110,7 @@ import { stepGeodesic, traceRay, F_AXIS, DL_FAR_MIN, H_TOL, H_TOL_FAR, MAX_RETRY
  *   0.3    150     15        133        49        2.52e+1          1.10e-1           172.5
  * Under the same rule every other pair still fails; SELECTED K_FAR = 0.04, DL_FAR_MAX = 6.
  */
-const SWEEP = !!process.env.SWEEP;
+const SWEEP = !!process.env.SWEEP; void SWEEP; // historical: the describe below is skipped
 const ROBS = 1000, ROUT = 40, FOV = 14, MAXSTEPS = 4800, REF_MAXSTEPS = 400000;
 const GRID_N = 32;
 const HALF_PIXEL = 0.5 * (2 * FOV) / (720 * ROBS);
@@ -194,7 +194,10 @@ const angle = (u: number[], v: number[]) => 2 * Math.asin(Math.min(1, Math.hypot
 /** Error of r against the reference q (same fate required): |drHit| for disk, sky angle for escaped, 0 otherwise. */
 const err = (r: Res, q: Res) => (r.fate === "disk" ? Math.abs(r.rHit! - q.rHit!) : r.fate === "escaped" ? angle(r.dir!, q.dir!) : 0);
 
-describe.skipIf(!SWEEP)("far-field stride sweep (SWEEP=1)", () => {
+// HISTORICAL (2026-10-01): this sweep's local loop models the pre-2026-10-01 controller (far field
+// unmonitored, no F_PHI, no near-field caps), so its "local loop = traceRay" check no longer holds.
+// Kept for its recorded table; superseded by tests/sweep-farmonitor.test.ts.
+describe.skip("far-field stride sweep (SWEEP=1)", () => {
   it("prints the table and the selection", () => {
     const S = sets();
     const t0 = Date.now();
