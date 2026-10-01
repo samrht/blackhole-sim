@@ -31,6 +31,8 @@ export class Renderer {
   /** Validation only: force a tiny bookmark buffer to exercise the LIVE fallback. */
   bookmarkCapacityOverride: number | null = null;
   get cacheSets() { return this.plan.nSets; }
+  /** Bumped by every cache reallocation; part of the geometry key (see GeometryInputs.epoch). */
+  cacheEpoch = 0;
   brightHBind!: GPUBindGroup; blurVBind!: GPUBindGroup;
   displayW = 0; displayH = 0;          // framebuffer size (canvas pixels)
   scale = 1;                           // internal render scale in [0.5, 1]; see setScale
@@ -93,6 +95,7 @@ export class Renderer {
     for (const b of this.entryBufs) b.destroy();
     this.bookmarkBuf?.destroy();
     this.plan = planCache(this.displayW, this.displayH, this.device.limits.maxStorageBufferBindingSize);
+    this.cacheEpoch++;
     const cap = this.bookmarkCapacityOverride ?? this.plan.bookmarkCapacity;
     const usage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC;
     // With nSets 0 one 16-byte placeholder keeps every bind group valid.

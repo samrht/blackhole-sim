@@ -39,6 +39,8 @@ async function checkAny(path, accepts, timeout = 60000) {
   if (!ok) failed = true;
 }
 
+const ONLY_APP = process.env.ONLY_APP === "1";
+if (!ONLY_APP) {
 await check("/?parity", "PARITY PASS");
 await check("/?shadow", "SHADOW PASS");
 if (process.env.RECORD_GOLDEN === "1") {
@@ -49,6 +51,8 @@ if (process.env.RECORD_GOLDEN === "1") {
 }
 await checkAny("/?golden", ["GOLDEN PASS", "GOLDEN SKIP"]);
 await checkAny("/?cachecheck", ["CACHECHECK PASS"], 600000);
+
+}
 
 // Capture a reference render of the interactive view.
 await page.goto(BASE + "/", { waitUntil: "load", timeout: 20000 });
@@ -63,13 +67,38 @@ const skyOk = skyResp.ok();
 console.log(`${skyOk ? "✓ PASS" : "✗ FAIL"}  /sky/milkyway-4k.jpg  (${skyResp.status()})`);
 if (!skyOk) failed = true;
 
-// Geodesic cache in the live app: reaches `cached`, survives a resize, no page errors.
+// Geodesic cache in the live app. Every resize reallocates the cache, so after one the mode must
+// drop to `live` and come back to `cached` -- also when the size is unchanged (a same-size resize
+// once left the cache cleared but still "valid": a black cached view). The mode is polled every
+// 16 ms, and the cached view must not be black (mean brightness of a screenshot of the disk, right
+// of the control panel, decoded in-page).
 await page.goto(BASE + "/", { waitUntil: "load", timeout: 20000 });
-const cached = () => page.waitForFunction(() => (document.getElementById("cmode")?.textContent || "").startsWith("cached"), null, { timeout: 120000 }).then(() => true, () => false);
-let cacheOk = await cached();
+const waitMode = (prefix, timeout = 120000) => page.waitForFunction(
+  (p) => (document.getElementById("cmode")?.textContent || "").startsWith(p), prefix, { timeout, polling: 16 }).then(() => true, () => false);
+const meanBrightness = async () => {
+  const b64 = (await page.screenshot({ clip: { x: 440, y: 120, width: 360, height: 300 } })).toString("base64");
+  return page.evaluate(async (data) => {
+    const img = new Image(); img.src = "data:image/png;base64," + data; await img.decode();
+    const c = document.createElement("canvas"); c.width = img.width; c.height = img.height;
+    const g = c.getContext("2d"); g.drawImage(img, 0, 0);
+    const d = g.getImageData(0, 0, c.width, c.height).data;
+    let sum = 0; for (let k = 0; k < d.length; k += 4) sum += d[k] + d[k + 1] + d[k + 2];
+    return sum / (d.length / 4) / 3;
+  }, b64);
+};
+const steps = [];
+const step = (name, ok) => { steps.push(`${name} ${ok ? "ok" : "FAILED"}`); return ok; };
+let cacheOk = step("cached", await waitMode("cached"));
+const lit0 = await meanBrightness();
+cacheOk = step(`lit ${lit0.toFixed(1)}`, lit0 > 5) && cacheOk;
 await page.setViewportSize({ width: 820, height: 560 });
-cacheOk = cacheOk && await cached();
-console.log(`${cacheOk && !errors.length ? "✓ PASS" : "✗ FAIL"}  cache reaches 'cached' and survives a resize`);
+cacheOk = step("resize->live", await waitMode("live", 5000)) && step("->cached", await waitMode("cached")) && cacheOk;
+await page.evaluate(() => dispatchEvent(new Event("resize"))); // same size: buffers reallocated
+cacheOk = step("same-size resize->live", await waitMode("live", 5000)) && step("->cached", await waitMode("cached")) && cacheOk;
+await page.waitForTimeout(1500); // let the EMA settle onto the rebuilt cache
+const lit1 = await meanBrightness();
+cacheOk = step(`lit ${lit1.toFixed(1)}`, lit1 > 5) && cacheOk;
+console.log(`${cacheOk && !errors.length ? "✓ PASS" : "✗ FAIL"}  cache in the app: ${steps.join(", ")}`);
 if (!cacheOk || errors.length) failed = true;
 
 if (errors.length) console.log("console/page errors:", errors.join(" | "));

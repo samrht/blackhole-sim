@@ -1,10 +1,10 @@
 import { describe, it, expect } from "vitest";
 import {
-  JITTER, BUILD_SLICES, ENTRY_BYTES, BOOKMARK_BYTES, BOOKMARK_FRAC, CACHE_BUDGET_BYTES,
+  JITTER, BUILD_SLICES, SETTLE_FRAMES, ENTRY_BYTES, BOOKMARK_BYTES, BOOKMARK_FRAC, CACHE_BUDGET_BYTES,
   geometryKey, planCache, BuildScheduler, chooseMode, type GeometryInputs,
 } from "../src/render/cache-plan";
 
-const G: GeometryInputs = { a: 0.9, incl: 72, fovScale: 14, rObs: 1000, rIn: 2.32, rOut: 40, maxSteps: 4800, jetLength: 60, displayW: 1920, displayH: 1080 };
+const G: GeometryInputs = { a: 0.9, incl: 72, fovScale: 14, rObs: 1000, rIn: 2.32, rOut: 40, maxSteps: 4800, jetLength: 60, displayW: 1920, displayH: 1080, epoch: 0 };
 const MB = 2 ** 20;
 
 describe("jitter sets", () => {
@@ -75,7 +75,14 @@ describe("BuildScheduler", () => {
     expect(got.map((g) => [g.rowStart, g.rowEnd])).toEqual([[0, 1], [1, 2], [2, 3], [3, 4], [4, 5]]);
     s.reset(2, 10);
     expect(s.completedSets).toBe(0);
+    for (let k = 0; k < SETTLE_FRAMES; k++) expect(s.next()).toBeNull();
     expect(s.next()).toEqual({ set: 0, rowStart: 0, rowEnd: 1 });
+  });
+  it("builds nothing while the geometry keeps changing (dragging): every reset restarts the settle wait", () => {
+    const s = new BuildScheduler(4, 1080);
+    for (let frame = 0; frame < 50; frame++) { s.reset(4, 1080); expect(s.next()).toBeNull(); }
+    for (let k = 1; k < SETTLE_FRAMES; k++) expect(s.next()).toBeNull();
+    expect(s.next()).toEqual({ set: 0, rowStart: 0, rowEnd: 68 });
   });
   it("never builds anything with 0 sets", () => {
     expect(new BuildScheduler(0, 100).next()).toBeNull();

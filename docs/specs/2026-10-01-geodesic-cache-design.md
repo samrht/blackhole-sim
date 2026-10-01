@@ -146,9 +146,9 @@ code are already shared. `main` keeps its exact operation order (golden check, Â
 - Bookmarks: one buffer + an atomic counter, reset when a rebuild starts.
 - Live and Cached share the existing accum buffer (already sized for scale 1). Every mode switch starts
   with a `blend = 1` frame that rewrites every pixel before present, so no cleared buffer is ever shown.
-- Larger displays: if a set's entries exceed the adapter's `maxStorageBufferBindingSize` (requested at the
-  adapter maximum in `requestDevice`), or the cache would exceed 512 MB total, use `NSETS = 2`; if one set
-  still does not fit, stay Live. Logged, never fatal.
+- Larger displays: if one set's entries exceed the adapter's `maxStorageBufferBindingSize` (requested at
+  the adapter maximum in `requestDevice`), stay Live â€” fewer sets cannot help a per-set limit; if the cache
+  would exceed 512 MB total, use `NSETS = 2`, then 1, then Live. Logged, never fatal.
 - New uniforms: `jitterMode` (0 hash, 1 fixed set), `setIndex`, `rowStart`, `rowEnd`. `uniforms.ts` and its
   test are updated.
 

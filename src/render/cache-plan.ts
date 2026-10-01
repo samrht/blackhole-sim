@@ -4,6 +4,9 @@
 export const JITTER: ReadonlyArray<readonly [number, number]> = [[-0.125, -0.375], [0.375, -0.125], [0.125, 0.375], [-0.375, 0.125]];
 export const NSETS_MAX = 4;
 export const BUILD_SLICES = 16;
+/** Frames the geometry must stay unchanged before building starts: while dragging or scrubbing a
+ *  ray-path slider every frame changes the key, and a slice traced then would always be wasted. */
+export const SETTLE_FRAMES = 3;
 /** Share of (pixels x sets) given a jet bookmark slot. 1.5x the largest share measured by
  *  tests/sweep-jetenvelope.test.ts (plan 2026-10-01 Task 1). Overflow falls back to LIVE pixels. */
 export const BOOKMARK_FRAC = 0.21; // measured 2026-10-01: max 13.6 % (face-on) x 1.5
@@ -15,10 +18,13 @@ export const BM_NONE = 0x3fffffff;
 export interface GeometryInputs {
   a: number; incl: number; fovScale: number; rObs: number; rIn: number; rOut: number;
   maxSteps: number; jetLength: number; displayW: number; displayH: number;
+  /** Renderer.cacheEpoch: bumped whenever the cache buffers are reallocated (a resize can do that
+   *  without changing the display size, e.g. a debounced drag back to the same size). */
+  epoch: number;
 }
 /** Everything a ray's path depends on. Shading-only inputs are deliberately absent. */
 export function geometryKey(g: GeometryInputs): string {
-  return [g.a, g.incl, g.fovScale, g.rObs, g.rIn, g.rOut, g.maxSteps, g.jetLength, g.displayW, g.displayH].join("|");
+  return [g.a, g.incl, g.fovScale, g.rObs, g.rIn, g.rOut, g.maxSteps, g.jetLength, g.displayW, g.displayH, g.epoch].join("|");
 }
 
 export interface CachePlan { nSets: number; entryBytes: number; bookmarkCapacity: number; }
@@ -38,12 +44,15 @@ export function planCache(w: number, h: number, maxBinding: number, budget = CAC
  *  storage writes are visible to it, so the set can be shaded that same frame. */
 export class BuildScheduler {
   completedSets = 0;
-  private set = 0; private slice = 0;
+  private set = 0; private slice = 0; private settle = 0;
   constructor(private nSets: number, private height: number, private slices = BUILD_SLICES) {}
+  /** Restart after a geometry change; building waits SETTLE_FRAMES calls of next(). */
   reset(nSets: number, height: number) {
     this.nSets = nSets; this.height = height; this.set = 0; this.slice = 0; this.completedSets = 0;
+    this.settle = SETTLE_FRAMES;
   }
   next(): { set: number; rowStart: number; rowEnd: number } | null {
+    if (this.settle > 0) { this.settle--; return null; }
     if (this.set >= this.nSets || this.height <= 0) return null;
     const rows = Math.ceil(this.height / this.slices);
     const rowStart = this.slice * rows, rowEnd = Math.min(this.height, rowStart + rows);

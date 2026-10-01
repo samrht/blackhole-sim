@@ -205,7 +205,7 @@ ratio to analytic critical curve = ${res.calibration} (NOT a calibration — the
     if (dt > 0 && dt < 250) dtEma = dtEma ? dtEma + 0.1 * (dt - dtEma) : dt;
     if (now - lastFpsShow >= 500 && dtEma > 0) { fpsEl.textContent = (1000 / dtEma).toFixed(0); lastFpsShow = now; }
     const geo = geometryKey({ a: state.a, incl: state.incl, fovScale: 14, rObs: 1000, rIn, rOut,
-      maxSteps: state.maxSteps, jetLength: state.jetLength, displayW: r.displayW, displayH: r.displayH });
+      maxSteps: state.maxSteps, jetLength: state.jetLength, displayW: r.displayW, displayH: r.displayH, epoch: r.cacheEpoch });
     if (geo !== geoKey) { geoKey = geo; sched.reset(r.cacheSets, r.displayH); r.resetCache(); }
     // One background build slice per playing frame (the cache is only used while playing).
     const slice = state.playing && cacheOn ? sched.next() : null;
