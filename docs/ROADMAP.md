@@ -27,6 +27,9 @@ this file is the queue. Each item gets its own spec (and plan) before code, as e
 - [ ] **Shared-fragment parity for the jet and turbulence cases**: `?parity` still tests copies of
   that math (`jet-parity.wgsl`, `turb-parity.wgsl`); camera, shadow and integrator already verify
   the shipped bytes.
+- [ ] **Vertical seam above the shadow**: a faint vertical line in the disk at the azimuth wrap,
+  visible in every view. Found by the 2026-10-01 review: the turbulence value noise is evaluated on
+  a pattern phase psi that is not periodic over 2 pi. (Earlier attributed to the jet core line.)
 - [ ] **Jet core line**: with the jet on, the alpha = 0 column shows a thin bright line because the
   phenomenological wall profile has a small non-zero core emissivity (jet model, not integrator).
 
@@ -37,6 +40,12 @@ this file is the queue. Each item gets its own spec (and plan) before code, as e
 - [ ] **Evolving alpha-disk** (surface-density diffusion) in place of static Novikov-Thorne plus
   decorative turbulence.
 - [ ] **Light-travel delay** (the model has none: disk and jet are seen at one coordinate time).
+
+## Open questions from the presets work
+
+- [ ] **Jet brightness vs the disk**: the jet is phenomenological and not normalised like the disk.
+  M87\*'s beamed jet (17 deg) covers the top of its shadow; the default view's jet is ~2.6 EV dimmer
+  relative to the disk after the exposure retune. Decide a jet scale (or per-preset jet strength).
 
 ## Product / UX (later, by agreement)
 
