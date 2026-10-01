@@ -1,5 +1,5 @@
 import { temperatureShape } from "./disk";
-import { blackbodyLinearSRGB, blackbodyVisibleRGB, relLuminance } from "./color";
+import { blackbodyVisibleRGB, relLuminance } from "./color";
 
 /** Normalized T(r) sampled uniformly over [rIn, rOut]; returns Float32Array(N), peak=1. */
 export function buildTempLUT(a: number, prograde: boolean, rIn: number, rOut: number, N: number): Float32Array {
@@ -13,17 +13,6 @@ export function buildTempLUT(a: number, prograde: boolean, rIn: number, rOut: nu
   if (peak > 0) for (let i = 0; i < N; i++) out[i] /= peak;
   return out;
 }
-/** color(T) over [Tmin,Tmax] as RGBA Float32 (A=1). */
-export function buildColorLUT(Tmin: number, Tmax: number, N: number): Float32Array {
-  const out = new Float32Array(N * 4);
-  for (let i = 0; i < N; i++) {
-    const T = Tmin + (Tmax - Tmin) * (i / (N - 1));
-    const [r, g, b] = blackbodyLinearSRGB(T);
-    out[i * 4] = r; out[i * 4 + 1] = g; out[i * 4 + 2] = b; out[i * 4 + 3] = 1;
-  }
-  return out;
-}
-
 /** Visible-radiance LUT range and size (spec 2026-10-01 §2.3; 4096 entries: plan Task 2). */
 export const VIS_TMIN = 100, VIS_TMAX = 1e9, VIS_LUT_N = 4096, VIS_TREF = 1e4;
 const LREF = relLuminance(blackbodyVisibleRGB(VIS_TREF));

@@ -3,7 +3,7 @@ import type { UniformValues } from "./render/uniforms";
 import { ScaleController } from "./render/scale";
 import { geometryKey, BuildScheduler, chooseMode } from "./render/cache-plan";
 import { describeGpu, isIntegratedGpu } from "./render/gpuinfo";
-import { buildTempLUT, buildColorLUT } from "./physics/lookups";
+import { buildTempLUT, buildVisibleLUT, lumNormFor } from "./physics/lookups";
 import { iscoRadius, photonOrbit } from "./physics/orbits";
 import type { HotSpot } from "./physics/emission";
 
@@ -80,7 +80,7 @@ ratio to analytic critical curve = ${res.calibration} (NOT a calibration — the
   let geoKey = "", cachedFrame = 0, wasCached = false, liveScale = r.scale;
   let dtEma = 0, lastFpsShow = 0; // display rate (what the user sees): EMA of rAF deltas, shown <= 2x/s
 
-  const state = { a: 0.9, incl: 72, exposure: 1.6, timeScale: 1.0, turbAmp: 0.6, breatheAmp: 0.0, playing: true, flareScale: 1.0, jetStrength: 1.0, jetGamma: 5.0, jetLength: 60.0, jetKnots: 0.7, skyStrength: 1.0, maxSteps: 4800 };
+  const state = { a: 0.9, incl: 72, exposure: -1.0, timeScale: 1.0, turbAmp: 0.6, breatheAmp: 0.0, playing: true, flareScale: 1.0, jetStrength: 1.0, jetGamma: 5.0, jetLength: 60.0, jetKnots: 0.7, skyStrength: 1.0, maxSteps: 4800 };
   const SPEED = 20;        // coordinate-time M advanced per real second at timeScale = 1
   const EMA_BLEND = 0.15;  // trailing-window weight while animating
   let simTime = 0, lastNow = 0;
@@ -95,10 +95,9 @@ ratio to analytic critical curve = ${res.calibration} (NOT a calibration — the
     return f;
   };
   const rOut = 40;
-  // Effective color-temperature scale (K) for visualization. The true Novikov–Thorne peak for a
-  // stellar-mass disk (~1e7 K) radiates in X-ray, so we map the normalized profile into the visible
-  // blackbody range spanned by the color LUT ([1000, 40000] K).
+  // Peak disk temperature (K); replaced by the physical value from mass and accretion in Task 5.
   const T_PEAK = 3.0e4;
+  const COLOR_LUT = buildVisibleLUT();
 
   // --- DOM controls + live physics readouts -------------------------------------------------
   const spin = $("spin") as HTMLInputElement, incl = $("incl") as HTMLInputElement, exp = $("exp") as HTMLInputElement;
@@ -112,7 +111,7 @@ ratio to analytic critical curve = ${res.calibration} (NOT a calibration — the
 
   function rebuildLUTs() {
     rIn = iscoRadius(state.a, true);
-    r.uploadLUTs(buildTempLUT(state.a, true, rIn, rOut, 512), buildColorLUT(1000, 40000, 256));
+    r.uploadLUTs(buildTempLUT(state.a, true, rIn, rOut, 512), COLOR_LUT);
     r.rebind();
   }
   function refreshReadouts() {
@@ -235,7 +234,7 @@ ratio to analytic critical curve = ${res.calibration} (NOT a calibration — the
     const setIndex = mode === "cached" ? cachedFrame % sched.completedSets : 0;
     const u: UniformValues = {
       resW: r.width, resH: r.height, outW: r.displayW, outH: r.displayH, a: state.a, incl: state.incl * Math.PI / 180,
-      rObs: 1000, fovScale: 14, rIn, rOut, Tpeak: T_PEAK, exposure: state.exposure,
+      rObs: 1000, fovScale: 14, rIn, rOut, Tpeak: T_PEAK, lumNorm: lumNormFor(T_PEAK), exposure: state.exposure,
       time: simTime, frame: sample, reset: sample === 0 ? 1 : 0, maxSteps: state.maxSteps,
       blend, timeScale: state.timeScale, turbAmp: state.turbAmp,
       breatheAmp: state.breatheAmp, nSpots: baseSpots.length,

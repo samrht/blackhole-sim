@@ -25,7 +25,7 @@ const out = await page.evaluate(async () => {
   const ad = await navigator.gpu.requestAdapter();
   const info = (ad && ad.info) || {};
   const { Renderer } = await import("/src/render/gpu.ts");
-  const { buildTempLUT, buildColorLUT } = await import("/src/physics/lookups.ts");
+  const { buildTempLUT, buildVisibleLUT, lumNormFor } = await import("/src/physics/lookups.ts");
   const { iscoRadius } = await import("/src/physics/orbits.ts");
   async function bench(w, h, frames = 8) {
     document.body.innerHTML = "";
@@ -34,11 +34,11 @@ const out = await page.evaluate(async () => {
     document.body.appendChild(c);
     const r = new Renderer(); await r.init(c);
     const a = 0.9, rIn = iscoRadius(a, true);
-    r.uploadLUTs(buildTempLUT(a, true, rIn, 40, 512), buildColorLUT(1000, 40000, 256)); r.rebind();
+    r.uploadLUTs(buildTempLUT(a, true, rIn, 40, 512), buildVisibleLUT()); r.rebind();
     r.uploadHotSpots(new Float32Array([8, 0, 1.2, 1.8, 12, 2.1, 1.6, 1.2, 16, 4.3, 2.0, 0.9])); r.rebind();
     const u = (f) => ({
       resW: r.width, resH: r.height, outW: r.displayW ?? r.width, outH: r.displayH ?? r.height,
-      a, incl: (72 * Math.PI) / 180, rObs: 1000, fovScale: 14, rIn, rOut: 40, Tpeak: 3e4, exposure: 1.6,
+      a, incl: (72 * Math.PI) / 180, rObs: 1000, fovScale: 14, rIn, rOut: 40, Tpeak: 3e4, lumNorm: lumNormFor(3e4), exposure: 1.6,
       time: f, frame: f, reset: f === 0 ? 1 : 0, maxSteps: 4800, blend: f === 0 ? 1 : 0.15, timeScale: 1,
       turbAmp: 0.6, breatheAmp: 0, nSpots: 3, jetStrength: 1, jetGamma: 5, jetLength: 60, jetKnots: 0.7,
       skyStrength: 0,

@@ -5,11 +5,12 @@ struct Uniforms {
   jetStrength: f32, jetGamma: f32, jetLength: f32, jetKnots: f32,
   skyStrength: f32, outW: f32, outH: f32,
   jitterMode: u32, setIndex: u32, rowStart: u32, rowEnd: u32,
+  lumNorm: f32,
 };
 @group(0) @binding(0) var<uniform> U: Uniforms;
 @group(0) @binding(1) var<storage, read_write> accum: array<vec4<f32>>;
 @group(0) @binding(2) var<storage, read> tempLUT: array<f32>;       // normalized T(r) in [0,1]
-@group(0) @binding(3) var<storage, read> colorLUT: array<vec4<f32>>; // linear-sRGB blackbody color
+@group(0) @binding(3) var<storage, read> colorLUT: array<vec4<f32>>; // visible-band blackbody radiance (log T)
 @group(0) @binding(4) var<storage, read> hotspots: array<vec4<f32>>; // (r, psi, sigma, amp)
 @group(0) @binding(5) var skyTex: texture_2d<f32>;
 @group(0) @binding(6) var skySamp: sampler;
@@ -28,10 +29,13 @@ fn sampleTemp(r: f32) -> f32 {
   let i0 = u32(floor(u)); let i1 = min(i0 + 1u, n - 1u);
   return mix(tempLUT[i0], tempLUT[i1], fract(u));
 }
+// Visible-band radiance LUT, log-spaced in T over [VIS_TMIN, VIS_TMAX] (lookups.ts), relative to a
+// 1e4 K blackbody's luminance. Twin: sampleVisibleLUT in lookups.ts.
+const VIS_LN_TMIN = 4.605170186;   // ln(100)
+const VIS_LN_TMAX = 20.723265837;  // ln(1e9)
 fn sampleColor(T_kelvin: f32) -> vec3<f32> {
   let n = arrayLength(&colorLUT);
-  // color LUT spans [1000, 40000] K
-  let u = clamp((T_kelvin - 1000.0) / (40000.0 - 1000.0), 0.0, 1.0) * f32(n - 1u);
+  let u = clamp((log(max(T_kelvin, 1.0)) - VIS_LN_TMIN) / (VIS_LN_TMAX - VIS_LN_TMIN), 0.0, 1.0) * f32(n - 1u);
   let i0 = u32(floor(u)); let i1 = min(i0 + 1u, n - 1u);
   return mix(colorLUT[i0].rgb, colorLUT[i1].rgb, fract(u));
 }
@@ -249,7 +253,10 @@ fn shadeDisk(rHit: f32, phiHit: f32, g: f32, a: f32) -> vec3<f32> {
   let Tobs = U.Tpeak * g * Tn;                 // observed blackbody temperature
   let psi = phiHit - Om * U.time * U.timeScale;// co-rotating pattern phase
   let E = emissionFieldE(rHit, psi);           // time-varying brightness (==1 when features off)
-  return sampleColor(Tobs) * pow(g * Tn, 4.0) * E;
+  // Visible-band radiance of a blackbody at T_obs (I_nu / nu^3 is invariant, so a shifted blackbody
+  // is a blackbody at g T): colour AND brightness a camera records, normalised so the disk's
+  // rest-frame peak has luminance 1 (spec 2026-10-01 §2.3). Was the bolometric (g Tn)^4 law.
+  return sampleColor(Tobs) * U.lumNorm * E;
 }
 
 // Optically-thin jet radiance gathered over one step s -> sNew (zero outside the emitting region).

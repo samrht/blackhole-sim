@@ -4,6 +4,7 @@
 //         + jetStrength,jetGamma,jetLength,jetKnots (4)                -> 19
 //         + skyStrength (1)                                             -> 20 floats
 //         + outW,outH (2)                                               -> 22 floats
+//         + lumNorm (1, visible-band brightness; after the uints)        -> 23 floats
 // uint:   frame,reset,maxSteps (3) + nSpots (1)                        -> 4 uints
 //         + jitterMode,setIndex,rowStart,rowEnd (4, geodesic cache)    -> 8 uints
 export interface UniformValues {
@@ -14,12 +15,14 @@ export interface UniformValues {
   jetStrength: number; jetGamma: number; jetLength: number; jetKnots: number;
   skyStrength: number;
   outW: number; outH: number;
+  /** 1 / visible luminance of the disk's rest-frame peak temperature (lumNormFor). */
+  lumNorm: number;
   /** Geodesic cache (spec 2026-10-01): 0 = per-frame hash jitter, 1 = fixed jitter set `setIndex`. */
   jitterMode?: number; setIndex?: number;
   /** Build pass row slice [rowStart, rowEnd). */
   rowStart?: number; rowEnd?: number;
 }
-export const UNIFORM_FLOATS = 22, UNIFORM_UINTS = 8;
+export const UNIFORM_FLOATS = 23, UNIFORM_UINTS = 8;
 export const UNIFORM_SIZE = Math.ceil((UNIFORM_FLOATS + UNIFORM_UINTS) / 4) * 16; // -> 128 bytes
 
 export function packUniforms(u: UniformValues): ArrayBuffer {
@@ -35,5 +38,6 @@ export function packUniforms(u: UniformValues): ArrayBuffer {
   f[23] = u.skyStrength;
   f[24] = u.outW; f[25] = u.outH;
   i[26] = u.jitterMode ?? 0; i[27] = u.setIndex ?? 0; i[28] = u.rowStart ?? 0; i[29] = u.rowEnd ?? 0;
+  f[30] = u.lumNorm;
   return buf;
 }
