@@ -26,6 +26,12 @@ SHADOW ${res.ok ? "PASS" : "FAIL"} (structural) — centred dark shadow=${res.ha
 apparent radius ≈ ${res.shadowRadiusM} M; analytic critical curve = ${res.analyticRadiusM} M
 ratio to analytic critical curve = ${res.calibration} (NOT a calibration — the route measures the emitter's lensed inner edge, not the critical curve; see README)</pre>`;
   console.log("shadow", res);
+} else if (location.search.includes("cachecheck")) {
+  // Validation entry: cached frames equal live frames (spec 2026-10-01 3.6).
+  const { runCacheCheck } = await import("./test/cachecheck.browser");
+  const res = await runCacheCheck(canvas);
+  document.body.innerHTML = `<pre style="color:${res.ok ? "#6f6" : "#f66"};font-size:15px;padding:20px">CACHECHECK ${res.ok ? "PASS" : "FAIL"}\n${res.lines.join("\n")}</pre>`;
+  console.log("cachecheck", res);
 } else if (location.search.includes("golden")) {
   // Validation entry: bit-exact live-pass hashes (plan 2026-10-01 Task 2). `&record` prints JSON to commit.
   const { runGolden, judgeGolden, GOLDEN: want } = await import("./test/golden.browser");

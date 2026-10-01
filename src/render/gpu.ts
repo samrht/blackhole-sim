@@ -6,6 +6,11 @@ import shadowSharedWGSL from "./shadow-shared.wgsl?raw";
 import cameraSharedWGSL from "./camera-shared.wgsl?raw";
 import integratorSharedWGSL from "./integrator-shared.wgsl?raw";
 import bloomWGSL from "./bloom.wgsl?raw";
+import { planCache, BOOKMARK_BYTES, type CachePlan } from "./cache-plan";
+
+/** Per-frame geodesic-cache work. `build` traces one row slice of a jitter set (full resolution,
+ *  its own uniform buffer); `cachedSet` shades from that set instead of tracing (`main`). */
+export interface FrameOpts { cachedSet?: number; build?: UniformValues & { setIndex: number; rowStart: number; rowEnd: number } }
 
 export class Renderer {
   device!: GPUDevice; ctx!: GPUCanvasContext; format!: GPUTextureFormat;
@@ -16,7 +21,16 @@ export class Renderer {
   bloomA!: GPUBuffer; bloomB!: GPUBuffer;       // half-res ping/pong glow buffers
   computePipe!: GPUComputePipeline; presentPipe!: GPURenderPipeline;
   brightHPipe!: GPUComputePipeline; blurVPipe!: GPUComputePipeline;
-  computeBind!: GPUBindGroup; presentBind!: GPUBindGroup;
+  presentBind!: GPUBindGroup;
+  computeLayout!: GPUBindGroupLayout;
+  buildPipe!: GPUComputePipeline; shadePipe!: GPUComputePipeline;
+  buildUniformBuf!: GPUBuffer;
+  entryBufs: GPUBuffer[] = []; bookmarkBuf!: GPUBuffer; bmCountBuf!: GPUBuffer;
+  computeBinds: GPUBindGroup[] = []; buildBinds: GPUBindGroup[] = [];
+  plan: CachePlan = { nSets: 0, entryBytes: 0, bookmarkCapacity: 0 };
+  /** Validation only: force a tiny bookmark buffer to exercise the LIVE fallback. */
+  bookmarkCapacityOverride: number | null = null;
+  get cacheSets() { return this.plan.nSets; }
   brightHBind!: GPUBindGroup; blurVBind!: GPUBindGroup;
   displayW = 0; displayH = 0;          // framebuffer size (canvas pixels)
   scale = 1;                           // internal render scale in [0.5, 1]; see setScale
@@ -35,9 +49,16 @@ export class Renderer {
     if (!adapter) throw new Error("No GPU adapter.");
     const info = (adapter as GPUAdapter & { info?: Partial<GpuInfo> }).info ?? {};
     this.adapterInfo = { vendor: info.vendor ?? "", architecture: info.architecture ?? "", description: info.description ?? "" };
-    this.device = await adapter.requestDevice();
+    // The cache's per-set entry buffer is W*H*16 bytes; ask for the adapter's maximum binding so
+    // large canvases still cache (planCache falls back to fewer sets / live within it).
+    this.device = await adapter.requestDevice({ requiredLimits: {
+      maxStorageBufferBindingSize: adapter.limits.maxStorageBufferBindingSize,
+      maxBufferSize: adapter.limits.maxBufferSize,
+    } });
     this.ctx = canvas.getContext("webgpu")!;
     this.format = navigator.gpu.getPreferredCanvasFormat();
+    this.buildUniformBuf = this.device.createBuffer({ size: UNIFORM_SIZE, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    this.bmCountBuf = this.device.createBuffer({ size: 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC });
     this.resize(canvas);
     this.uniformBuf = this.device.createBuffer({ size: UNIFORM_SIZE, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     // Placeholder LUT buffers so the first bind group is valid; replaced by uploadLUTs().
@@ -64,7 +85,24 @@ export class Renderer {
     this.bloomA = this.device.createBuffer({ size: bloomBytes, usage: GPUBufferUsage.STORAGE });
     this.bloomB = this.device.createBuffer({ size: bloomBytes, usage: GPUBufferUsage.STORAGE });
     this.applyScale();
+    this.allocCache();
   }
+
+  /** (Re)allocate the geodesic cache for the display size. Caller must rebind() (resize callers do). */
+  private allocCache() {
+    for (const b of this.entryBufs) b.destroy();
+    this.bookmarkBuf?.destroy();
+    this.plan = planCache(this.displayW, this.displayH, this.device.limits.maxStorageBufferBindingSize);
+    const cap = this.bookmarkCapacityOverride ?? this.plan.bookmarkCapacity;
+    const usage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC;
+    // With nSets 0 one 16-byte placeholder keeps every bind group valid.
+    this.entryBufs = Array.from({ length: Math.max(1, this.plan.nSets) }, () =>
+      this.device.createBuffer({ size: this.plan.nSets ? this.plan.entryBytes : 16, usage }));
+    this.bookmarkBuf = this.device.createBuffer({ size: Math.max(1, cap) * BOOKMARK_BYTES, usage });
+    this.resetCache();
+  }
+  /** Start a rebuild: bookmark slots are handed out from 0 again. */
+  resetCache() { this.device.queue.writeBuffer(this.bmCountBuf, 0, new Uint32Array([0])); }
 
   /** Internal size from the display size and scale. Buffers are sized for scale 1 and indexed at the
    *  internal width, so a scale change never reallocates (and needs no rebind). */
@@ -132,7 +170,22 @@ export class Renderer {
     const cMod = this.device.createShaderModule({ code: shadowSharedWGSL + cameraSharedWGSL + integratorSharedWGSL + raytraceWGSL });
     const pMod = this.device.createShaderModule({ code: presentWGSL });
     const bMod = this.device.createShaderModule({ code: bloomWGSL });
-    this.computePipe = this.device.createComputePipeline({ layout: "auto", compute: { module: cMod, entryPoint: "main" } });
+    const st = (type: GPUBufferBindingType): GPUBindGroupLayoutEntry["buffer"] => ({ type });
+    this.computeLayout = this.device.createBindGroupLayout({ entries: [
+      { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: st("uniform") },
+      { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: st("storage") },
+      { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: st("read-only-storage") },
+      { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: st("read-only-storage") },
+      { binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: st("read-only-storage") },
+      { binding: 5, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: "float" } },
+      { binding: 6, visibility: GPUShaderStage.COMPUTE, sampler: { type: "filtering" } },
+      { binding: 7, visibility: GPUShaderStage.COMPUTE, buffer: st("storage") },
+      { binding: 8, visibility: GPUShaderStage.COMPUTE, buffer: st("storage") },
+      { binding: 9, visibility: GPUShaderStage.COMPUTE, buffer: st("storage") }] });
+    const layout = this.device.createPipelineLayout({ bindGroupLayouts: [this.computeLayout] });
+    this.computePipe = this.device.createComputePipeline({ layout, compute: { module: cMod, entryPoint: "main" } });
+    this.buildPipe = this.device.createComputePipeline({ layout, compute: { module: cMod, entryPoint: "build" } });
+    this.shadePipe = this.device.createComputePipeline({ layout, compute: { module: cMod, entryPoint: "shade" } });
     this.brightHPipe = this.device.createComputePipeline({ layout: "auto", compute: { module: bMod, entryPoint: "bright_h" } });
     this.blurVPipe = this.device.createComputePipeline({ layout: "auto", compute: { module: bMod, entryPoint: "blur_v" } });
     this.presentPipe = this.device.createRenderPipeline({
@@ -144,14 +197,19 @@ export class Renderer {
   }
 
   rebind() {
-    this.computeBind = this.device.createBindGroup({ layout: this.computePipe.getBindGroupLayout(0), entries: [
-      { binding: 0, resource: { buffer: this.uniformBuf } },
+    const common = (ub: GPUBuffer, entryBuf: GPUBuffer): GPUBindGroupEntry[] => [
+      { binding: 0, resource: { buffer: ub } },
       { binding: 1, resource: { buffer: this.accumBuf } },
       { binding: 2, resource: { buffer: this.tempBuf } },
       { binding: 3, resource: { buffer: this.colorBuf } },
       { binding: 4, resource: { buffer: this.spotBuf } },
       { binding: 5, resource: this.skyTex.createView() },
-      { binding: 6, resource: this.skySampler }] });
+      { binding: 6, resource: this.skySampler },
+      { binding: 7, resource: { buffer: entryBuf } },
+      { binding: 8, resource: { buffer: this.bookmarkBuf } },
+      { binding: 9, resource: { buffer: this.bmCountBuf } }];
+    this.computeBinds = this.entryBufs.map((b) => this.device.createBindGroup({ layout: this.computeLayout, entries: common(this.uniformBuf, b) }));
+    this.buildBinds = this.entryBufs.map((b) => this.device.createBindGroup({ layout: this.computeLayout, entries: common(this.buildUniformBuf, b) }));
     // bloom pass 1: accum -> bloomA ; pass 2: bloomA -> bloomB
     this.brightHBind = this.device.createBindGroup({ layout: this.brightHPipe.getBindGroupLayout(0), entries: [
       { binding: 0, resource: { buffer: this.uniformBuf } },
@@ -170,9 +228,19 @@ export class Renderer {
   /** Record raytrace + the two bloom dispatches into one compute pass. Dispatches in a single
    *  pass execute in order with their storage writes visible to the next, so bright_h sees the
    *  freshly-traced accum and blur_v sees bloomA. */
-  private recordCompute(enc: GPUCommandEncoder) {
+  private recordCompute(enc: GPUCommandEncoder, opts: FrameOpts = {}) {
     const cp = enc.beginComputePass();
-    cp.setPipeline(this.computePipe); cp.setBindGroup(0, this.computeBind);
+    if (opts.build) {
+      // Before shade in the same pass: its entries writes are visible to a shade of the same set.
+      const b = opts.build;
+      cp.setPipeline(this.buildPipe); cp.setBindGroup(0, this.buildBinds[b.setIndex]);
+      cp.dispatchWorkgroups(Math.ceil(this.displayW / 8), Math.ceil((b.rowEnd - b.rowStart) / 8));
+    }
+    if (opts.cachedSet !== undefined) {
+      cp.setPipeline(this.shadePipe); cp.setBindGroup(0, this.computeBinds[opts.cachedSet]);
+    } else {
+      cp.setPipeline(this.computePipe); cp.setBindGroup(0, this.computeBinds[0]);
+    }
     cp.dispatchWorkgroups(Math.ceil(this.width / 8), Math.ceil(this.height / 8));
     if (this.renderBloom) {
       cp.setPipeline(this.brightHPipe); cp.setBindGroup(0, this.brightHBind);
@@ -183,10 +251,11 @@ export class Renderer {
     cp.end();
   }
 
-  frame(u: UniformValues) {
+  frame(u: UniformValues, opts: FrameOpts = {}) {
     this.device.queue.writeBuffer(this.uniformBuf, 0, packUniforms(u));
+    if (opts.build) this.device.queue.writeBuffer(this.buildUniformBuf, 0, packUniforms({ ...opts.build, jitterMode: 1 }));
     const enc = this.device.createCommandEncoder();
-    this.recordCompute(enc);
+    this.recordCompute(enc, opts);
     const rp = enc.beginRenderPass({ colorAttachments: [{ view: this.ctx.getCurrentTexture().createView(), clearValue: { r: 0, g: 0, b: 0, a: 1 }, loadOp: "clear", storeOp: "store" }] });
     rp.setPipeline(this.presentPipe); rp.setBindGroup(0, this.presentBind); rp.draw(3); rp.end();
     const t0 = performance.now();
@@ -238,5 +307,17 @@ export class Renderer {
   /** Raw accum (internal width x height vec4<f32>) after the last submitted frame. */
   async readbackAccum(): Promise<Float32Array> {
     return new Float32Array(await this.readback(this.accumBuf, this.width * this.height * 16));
+  }
+  async readbackEntries(set: number): Promise<Uint32Array> {
+    return new Uint32Array(await this.readback(this.entryBufs[set], this.displayW * this.displayH * 16));
+  }
+  /** Bookmarks handed out since resetCache() and their mean replay length. */
+  async readbackBookmarks(): Promise<{ count: number; meanNJet: number }> {
+    const handed = new Uint32Array(await this.readback(this.bmCountBuf, 4))[0];
+    const count = Math.min(handed, this.bookmarkBuf.size / BOOKMARK_BYTES);
+    if (!count) return { count: handed, meanNJet: 0 };
+    const words = new Uint32Array(await this.readback(this.bookmarkBuf, count * BOOKMARK_BYTES));
+    let sum = 0; for (let k = 0; k < count; k++) sum += words[k * 12 + 8];
+    return { count: handed, meanNJet: sum / count };
   }
 }

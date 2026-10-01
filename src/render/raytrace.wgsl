@@ -13,6 +13,13 @@ struct Uniforms {
 @group(0) @binding(4) var<storage, read> hotspots: array<vec4<f32>>; // (r, psi, sigma, amp)
 @group(0) @binding(5) var skyTex: texture_2d<f32>;
 @group(0) @binding(6) var skySamp: sampler;
+// Geodesic cache (spec 2026-10-01). One Entry per pixel per jitter set; bookmarks are sparse.
+struct Entry { word: u32, p0: f32, p1: f32, p2: f32 };        // word = kind | bookmark index << 2
+struct Bookmark { x: vec4<f32>, p: vec4<f32>, nJet: u32 };      // 48 bytes (vec4 alignment)
+@group(0) @binding(7) var<storage, read_write> entries: array<Entry>;
+@group(0) @binding(8) var<storage, read_write> bookmarks: array<Bookmark>;
+@group(0) @binding(9) var<storage, read_write> bmCount: atomic<u32>;
+const BM_NONE = 0x3fffffffu; // twin: BM_NONE in cache-plan.ts
 
 // linearly-interpolated lookup into a 1-D storage-buffer LUT (portable; no float-filterable feature)
 fn sampleTemp(r: f32) -> f32 {
@@ -220,6 +227,10 @@ const KIND_SHADOW = 0u; const KIND_DISK = 1u; const KIND_SKY = 2u; const KIND_LI
 // the procedural starfield by skyStrength (0 => procedural only).
 fn skyColor(dir: vec3<f32>) -> vec3<f32> {
   let mixT = clamp(U.skyStrength, 0.0, 1.0);
+  // Fully panorama: skip the starfield. mix(a, b, 1) = a + (b - a) is not bitwise b, so a hidden
+  // star still leaked one rounding step of its brightness -- and the starfield's hash is not
+  // reproducible across separately compiled entry points (geodesic cache, spec 2026-10-01).
+  if (mixT >= 1.0) { return skySample(dir) * U.skyStrength; }
   return mix(starfield(dir), skySample(dir) * U.skyStrength, mixT);
 }
 
@@ -400,4 +411,61 @@ fn storeComposite(idx: u32, color: vec3<f32>, jetAccum: vec3<f32>) {
   let idx = gid.y * u32(U.res.x) + gid.x;
   let t = traceRay(gid.xy, pixelJitter(gid.xy), false);
   storeComposite(idx, t.color, t.jet);
+}
+
+// Re-integrate a bookmarked jet stretch: the same steps, in the same order, as traceRay took from
+// the bookmark through the last step whose start state was inside the jet envelope.
+fn replayJet(bm: State, nJet: u32) -> vec3<f32> {
+  let a = U.a;
+  let rh = 1.0 + sqrt(max(0.0, 1.0 - a*a));
+  var s = bm; var acc = vec3<f32>(0.0);
+  for (var k = 0u; k < nJet; k++) {
+    let far = s.x.y > U.rOut * 1.5;
+    let st = stepGeodesic(s, a, stepSize(s, rh, U.rOut), select(H_TOL, H_TOL_FAR, far));
+    acc += jetStep(s, st.s, st.dl);
+    s = st.s;
+  }
+  return acc;
+}
+
+// Trace rows [rowStart, rowEnd) of jitter set setIndex at full resolution and record them.
+@compute @workgroup_size(8,8) fn build(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let y = U.rowStart + gid.y;
+  if (gid.x >= u32(U.res.x) || y >= U.rowEnd || y >= u32(U.res.y)) { return; }
+  let idx = y * u32(U.res.x) + gid.x;
+  let t = traceRay(vec2<u32>(gid.x, y), fixedJitter(U.setIndex), true);
+  var word = t.kind | (BM_NONE << 2u);
+  if (t.hasBm) {
+    let b = atomicAdd(&bmCount, 1u);
+    if (b < arrayLength(&bookmarks)) {
+      bookmarks[b] = Bookmark(t.bm.x, t.bm.p, t.nJet);
+      word = t.kind | (b << 2u);
+    } else {
+      word = KIND_LIVE | (BM_NONE << 2u); // bookmark buffer full: shade traces this pixel in full
+    }
+  }
+  entries[idx] = Entry(word, t.payload.x, t.payload.y, t.payload.z);
+}
+
+// Cached frame: re-colour from the record of jitter set setIndex; replay the jet stretch.
+@compute @workgroup_size(8,8) fn shade(@builtin(global_invocation_id) gid: vec3<u32>) {
+  if (gid.x >= u32(U.res.x) || gid.y >= u32(U.res.y)) { return; }
+  let idx = gid.y * u32(U.res.x) + gid.x;
+  let e = entries[idx];
+  let kind = e.word & 3u;
+  if (kind == KIND_LIVE) {
+    let t = traceRay(gid.xy, fixedJitter(U.setIndex), false);
+    storeComposite(idx, t.color, t.jet);
+    return;
+  }
+  var color = vec3<f32>(0.0);
+  if (kind == KIND_DISK) { color = shadeDisk(e.p0, e.p1, e.p2, U.a); }
+  else if (kind == KIND_SKY) { color = skyColor(vec3<f32>(e.p0, e.p1, e.p2)); }
+  var jet = vec3<f32>(0.0);
+  let bi = e.word >> 2u;
+  if (U.jetStrength > 0.0 && bi != BM_NONE) {
+    let b = bookmarks[bi];
+    jet = replayJet(State(b.x, b.p), b.nJet);
+  }
+  storeComposite(idx, color, jet);
 }

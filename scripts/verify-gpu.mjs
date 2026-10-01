@@ -30,12 +30,12 @@ async function check(path, expect) {
   if (!ok) failed = true;
 }
 
-async function checkAny(path, accepts) {
+async function checkAny(path, accepts, timeout = 60000) {
   await page.goto(BASE + path, { waitUntil: "load", timeout: 20000 });
-  await page.waitForFunction((a) => a.some((e) => document.body.innerText.includes(e)), accepts, { timeout: 60000 }).catch(() => {});
+  await page.waitForFunction((a) => a.some((e) => document.body.innerText.includes(e)), accepts, { timeout }).catch(() => {});
   const txt = (await page.innerText("body")).replace(/\s+/g, " ").trim();
   const ok = accepts.some((e) => txt.includes(e));
-  console.log(`${ok ? "✓ PASS" : "✗ FAIL"}  ${path}\n        ${txt.slice(0, 400)}`);
+  console.log(`${ok ? "✓ PASS" : "✗ FAIL"}  ${path}\n        ${txt.slice(0, 2000)}`);
   if (!ok) failed = true;
 }
 
@@ -48,6 +48,7 @@ if (process.env.RECORD_GOLDEN === "1") {
   console.log("• recorded src/test/golden.json");
 }
 await checkAny("/?golden", ["GOLDEN PASS", "GOLDEN SKIP"]);
+await checkAny("/?cachecheck", ["CACHECHECK PASS"], 600000);
 
 // Capture a reference render of the interactive view.
 await page.goto(BASE + "/", { waitUntil: "load", timeout: 20000 });
