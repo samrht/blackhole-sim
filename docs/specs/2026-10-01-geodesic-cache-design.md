@@ -1,8 +1,31 @@
 # Geodesic cache — design
 
 **Date:** 2026-10-01
-**Status:** approved; plan in `docs/plans/2026-10-01-geodesic-cache.md`
+**Status:** implemented on perf/geodesic-cache (plan `docs/plans/2026-10-01-geodesic-cache.md`)
 **Branch:** `perf/geodesic-cache` (created from `main` at `d95e4a1`)
+
+## Outcome
+
+- **Speed** (RTX 3050 Laptop, `npm run bench`, warm laptop): cached frame 5.9–6.0 ms at 1280×720 and
+  7.3–8.0 ms at 1920×1080 with the jet on (3.9–4.6 ms jet off), against 84–88 / 257–275 ms for a live
+  full-resolution trace in the same runs. In the app (headless Chrome, discrete GPU) the FPS readout
+  sits at 144 — the browser's frame cap — at 1920×1080 and 1280×720, full resolution, against 16 /
+  ~34 fps for `?nocache` at its 50 % floor. The 60 fps target is met with margin.
+- **Build:** 1.7–2.1 s per set at 720p, 4.4–5.3 s at 1080p when timed alone; in the app the first set
+  is ready ≈ 1 s after the camera stops, all four in ≈ 3.5 s (720p) / 5.5 s (1080p).
+- **Jet:** bookmarks on 6.5 % of pixels at the default view (13.6 % face-on), mean nJet 38 (72 face-on);
+  replay 0.7–3.2 % of a full trace's steps (`tests/sweep-jetenvelope.test.ts`). `BOOKMARK_FRAC` 0.21.
+- **Exactness** (`?cachecheck`, six scenes, 4 sets × 2 times): ≤ 4.2e-7 relative everywhere, jet and
+  `LIVE`-fallback pixels included; the recorded geometry equals the live pass's bit-for-bit. Live pass
+  bit-identical to the pre-refactor shader (`?golden`).
+- **Rulings during implementation:** (1) the check renders each image twice — `blend = 1` computes
+  `a + (b − a)`, not bitwise `b`, so a single render carried a rounding trace of the previous frame;
+  (2) the procedural starfield is not reproducible across separately compiled entry points (hash
+  `fract()` of ~1e2 values × ~90 brightness gain → up to 2.7e-3 on dim stars), so `?cachecheck` runs
+  its scenes with the panorama (the default) and reports, not gates, starfield-terminated pixels in a
+  dedicated scene; (3) `skyColor` returns the panorama alone at `skyStrength ≥ 1` (it leaked one
+  rounding step of a hidden star), making sky pixels bit-identical; (4) a 4K canvas fits one set
+  (126.6 MiB < 128 MiB), so the plan's "4K stays live" test used a 5K canvas instead.
 
 ## 1. Problem, as measured
 
