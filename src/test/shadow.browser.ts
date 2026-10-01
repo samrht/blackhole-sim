@@ -36,7 +36,7 @@ export async function measureShadow(canvas: HTMLCanvasElement, maxStepsOverride 
   const flatTemp = new Float32Array(512).fill(1); // uniform emitter -> bright everywhere it's hit
   r.uploadLUTs(flatTemp, buildVisibleLUT()); r.rebind();
   const u: UniformValues = { resW: r.width, resH: r.height, outW: r.displayW, outH: r.displayH, a, incl: Math.PI / 18, rObs: 1000,
-    fovScale, rIn: rPh, rOut, Tpeak: 3.0e4, lumNorm: lumNormFor(3.0e4), exposure: 0, time: 0, frame: 0, reset: 1, maxSteps: maxStepsOverride,
+    fovScale, rIn: rPh, rOut, Tpeak: 3.0e4, lumNorm: lumNormFor(3.0e4), lightDelay: 0, exposure: 0, time: 0, frame: 0, reset: 1, maxSteps: maxStepsOverride,
     blend: 1, timeScale: 1, turbAmp: 0, breatheAmp: 0, nSpots: 0,
     jetStrength: 0, jetGamma: 5, jetLength: 60, jetKnots: 0.7, skyStrength: 0 };
   const { data, w, h } = await r.readbackPresented(u);

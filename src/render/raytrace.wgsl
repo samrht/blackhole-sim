@@ -6,6 +6,7 @@ struct Uniforms {
   skyStrength: f32, outW: f32, outH: f32,
   jitterMode: u32, setIndex: u32, rowStart: u32, rowEnd: u32,
   lumNorm: f32,
+  lightDelay: f32,
 };
 @group(0) @binding(0) var<uniform> U: Uniforms;
 @group(0) @binding(1) var<storage, read_write> accum: array<vec4<f32>>;
@@ -15,7 +16,7 @@ struct Uniforms {
 @group(0) @binding(5) var skyTex: texture_2d<f32>;
 @group(0) @binding(6) var skySamp: sampler;
 // Geodesic cache (spec 2026-10-01). One Entry per pixel per jitter set; bookmarks are sparse.
-struct Entry { word: u32, p0: f32, p1: f32, p2: f32 };        // word = kind | bookmark index << 2
+struct Entry { word: u32, p0: f32, p1: f32, p2: f32 };        // word = kind | bookmark index << 2; DISK p = (rHit, phiHit, delay)
 struct Bookmark { x: vec4<f32>, p: vec4<f32>, nJet: u32 };      // 48 bytes (vec4 alignment)
 @group(0) @binding(7) var<storage, read_write> entries: array<Entry>;
 @group(0) @binding(8) var<storage, read_write> bookmarks: array<Bookmark>;
@@ -164,9 +165,9 @@ fn hotspotFieldE(rHit: f32, psi: f32) -> f32 {
   }
   return s;
 }
-fn emissionFieldE(rHit: f32, psi: f32) -> f32 {
+fn emissionFieldE(rHit: f32, psi: f32, tEmit: f32) -> f32 {
   let turb = 1.0 + U.turbAmp * (turbulenceE(log(rHit), psi) - 0.5) * 2.0;
-  let breathe = 1.0 + U.breatheAmp * sin(2.0 * PI * U.time / 2000.0);
+  let breathe = 1.0 + U.breatheAmp * sin(2.0 * PI * tEmit / 2000.0);
   return max(0.0, turb * breathe + hotspotFieldE(rHit, psi));
 }
 
@@ -197,7 +198,7 @@ fn lengthFalloffJ(z: f32, zMax: f32) -> f32 {
   return fadeIn * fadeOut * decay;
 }
 fn knotsJ(z: f32, t: f32) -> f32 {
-  let phase = JET_KZ * abs(z) - JET_VKNOT * t * U.timeScale;
+  let phase = JET_KZ * abs(z) - JET_VKNOT * t;
   return 1.0 + U.jetKnots * (vnoiseE(phase, JET_SEED) - 0.5) * 2.0;
 }
 fn boostJ(mu: f32, gamma: f32) -> f32 {
@@ -264,12 +265,12 @@ fn diskG(rHit: f32, xi: f32, a: f32) -> f32 {
 }
 
 // Observed disk colour at a hit: the only time dependence is the co-rotating pattern phase psi.
-fn shadeDisk(rHit: f32, phiHit: f32, g: f32, a: f32) -> vec3<f32> {
+fn shadeDisk(rHit: f32, phiHit: f32, g: f32, a: f32, tEmit: f32) -> vec3<f32> {
   let Tn = sampleTemp(rHit);
   let Om = omegaKep(rHit, a);
   let Tobs = U.Tpeak * g * Tn;                 // observed blackbody temperature
-  let psi = phiHit - Om * U.time * U.timeScale;// co-rotating pattern phase
-  let E = emissionFieldE(rHit, psi);           // time-varying brightness (==1 when features off)
+  let psi = phiHit - Om * tEmit;               // co-rotating pattern phase at emission
+  let E = emissionFieldE(rHit, psi, tEmit);    // time-varying brightness (==1 when features off)
   // Visible-band radiance of a blackbody at T_obs (I_nu / nu^3 is invariant, so a shifted blackbody
   // is a blackbody at g T): colour AND brightness a camera records, normalised so the disk's
   // rest-frame peak has luminance 1 (spec 2026-10-01 §2.3). Was the bolometric (g Tn)^4 law.
@@ -277,6 +278,11 @@ fn shadeDisk(rHit: f32, phiHit: f32, g: f32, a: f32) -> vec3<f32> {
 }
 
 // Optically-thin jet radiance gathered over one step s -> sNew (zero outside the emitting region).
+// Light-travel delay (spec 2026-10-01): the backward ray starts at t = 0 and t decreases, so an
+// emitter at coordinate time t_e is seen delay = -t_e - rObs later than a reference at the camera's
+// distance (the constant rObs keeps values in tens of M). Emission time of what this pixel shows:
+fn emitTime(delay: f32) -> f32 { return U.time - U.lightDelay * delay; }
+
 // The jet quadrature is a left Riemann sum along the ray with samples at most JET_DL apart,
 // independent of the geodesic stride: a step longer than JET_DL is split into n = ceil(dl / JET_DL)
 // samples along its Cartesian chord, each weighted dl / n (n = 1 is the original single sample at
@@ -320,7 +326,8 @@ fn jetStep(s: State, sNew: State, dl: f32) -> vec3<f32> {
   var acc = vec3<f32>(0.0);
   for (var k = 0u; k < n; k++) {
     let q = jetSample(s, p0, dvec, k, n);
-    let e = jetEmissionJ(q.x, q.y, U.time);
+    let tS = select(s.x.x + (sNew.x.x - s.x.x) * (f32(k) / f32(n)), s.x.x, k == 0u);
+    let e = jetEmissionJ(q.x, q.y, emitTime(-tS - U.rObs));
     if (e > 0.0) {
       let jz = q.x * cos(q.y);
       let axisSign = select(-1.0, 1.0, jz >= 0.0);
@@ -355,9 +362,17 @@ fn inJetEnvelope(r: f32, th: f32) -> bool {
   return r * sin(th) / funnelEdgeJ(z) <= 1.2;
 }
 
+// Pixel -> screen impact parameters (alpha, beta) in M with sub-pixel jitter. Shared by traceRay and
+// the cache's shade pass (which recomputes g from them), so both see the same xi bit for bit.
+fn pixelImpact(pix: vec2<u32>, jit: vec2<f32>) -> vec2<f32> {
+  let aspect = U.res.x / U.res.y;
+  let ndc = (vec2<f32>(f32(pix.x), f32(pix.y)) + 0.5 + jit) / U.res * 2.0 - 1.0;
+  return vec2<f32>(ndc.x * U.fovScale * aspect, -ndc.y * U.fovScale);
+}
+
 struct TraceOut {
   color: vec3<f32>, jet: vec3<f32>,
-  kind: u32, payload: vec3<f32>,   // DISK: (rHit, phiHit, g); SKY: asymptotic direction; else 0
+  kind: u32, payload: vec3<f32>,   // DISK: (rHit, phiHit, delay); SKY: asymptotic direction; else 0
   hasBm: bool, bm: State, nJet: u32, // record only: first state inside the jet envelope, steps through the last
 };
 
@@ -367,10 +382,8 @@ fn traceRay(pix: vec2<u32>, jit: vec2<f32>, record: bool) -> TraceOut {
   let a = U.a; let i = U.incl;
 
   // pixel -> impact parameters (alpha,beta) in units of M, with sub-pixel jitter for AA
-  let aspect = U.res.x / U.res.y;
-  let ndc = (vec2<f32>(f32(pix.x), f32(pix.y)) + 0.5 + jit) / U.res * 2.0 - 1.0;
-  let alpha = ndc.x * U.fovScale * aspect;
-  let beta  = -ndc.y * U.fovScale;
+  let ab = pixelImpact(pix, jit);
+  let alpha = ab.x; let beta = ab.y;
   // Bardeen impact parameters -> conserved (xi, eta). Sole copy lives in camera-shared.wgsl,
   // which gpu.ts prepends here and parity.browser.ts prepends to camera-parity.wgsl.
   let xe = cameraXiEta(alpha, beta, a, i);
@@ -420,8 +433,9 @@ fn traceRay(pix: vec2<u32>, jit: vec2<f32>, record: bool) -> TraceOut {
       if (rHit >= U.rIn && rHit <= U.rOut) {
         let g = diskG(rHit, xi, a);
         let phiHit = mix(s.x.w, sNew.x.w, frac);     // azimuth of the emitting matter
-        color = shadeDisk(rHit, phiHit, g, a);
-        out.kind = KIND_DISK; out.payload = vec3<f32>(rHit, phiHit, g);
+        let delay = -mix(s.x.x, sNew.x.x, frac) - U.rObs;
+        color = shadeDisk(rHit, phiHit, g, a, emitTime(delay));
+        out.kind = KIND_DISK; out.payload = vec3<f32>(rHit, phiHit, delay);
         resolved = true;
         break;
       }
@@ -538,7 +552,13 @@ fn replayJet(bm: State, nJet: u32) -> vec3<f32> {
     return;
   }
   var color = vec3<f32>(0.0);
-  if (kind == KIND_DISK) { color = shadeDisk(e.p0, e.p1, e.p2, U.a); }
+  if (kind == KIND_DISK) {
+    // g is recomputed (the entry's third slot holds the delay): same helper and camera fragment as
+    // traceRay, so xi and g match the live trace.
+    let ab = pixelImpact(gid.xy, fixedJitter(U.setIndex));
+    let g = diskG(e.p0, cameraXiEta(ab.x, ab.y, U.a, U.incl).x, U.a);
+    color = shadeDisk(e.p0, e.p1, g, U.a, emitTime(e.p2));
+  }
   else if (kind == KIND_SKY) { color = skyColor(vec3<f32>(e.p0, e.p1, e.p2)); }
   var jet = vec3<f32>(0.0);
   let bi = e.word >> 2u;

@@ -9,7 +9,7 @@ describe("uniforms packing", () => {
       Tpeak: 3e4, exposure: 1.6, time: 7, frame: 3, reset: 0, maxSteps: 1200,
       blend: 0.15, timeScale: 2, turbAmp: 0.6, breatheAmp: 0.1, nSpots: 4,
       jetStrength: 1.0, jetGamma: 5.0, jetLength: 60.0, jetKnots: 0.7,
-      skyStrength: 0.6, outW: 200, outH: 100, lumNorm: 2.5,
+      skyStrength: 0.6, outW: 200, outH: 100, lumNorm: 2.5, lightDelay: 1,
     };
     const dv = new DataView(packUniforms(u));
     expect(dv.getFloat32(0, true)).toBeCloseTo(100);   // resW
@@ -25,12 +25,13 @@ describe("uniforms packing", () => {
     expect(dv.getFloat32(96, true)).toBeCloseTo(200);   // outW (index 24)
     expect(dv.getFloat32(100, true)).toBeCloseTo(100);  // outH (index 25)
     expect(dv.getFloat32(120, true)).toBeCloseTo(2.5);  // lumNorm (index 30)
+    expect(dv.getFloat32(124, true)).toBeCloseTo(1);    // lightDelay (index 31)
   });
   it("packs the geodesic-cache fields after outW/outH and defaults them to 0", () => {
     const base: UniformValues = {
       resW: 1, resH: 1, a: 0, incl: 0, rObs: 1000, fovScale: 14, rIn: 6, rOut: 40, Tpeak: 3e4, exposure: 1,
       time: 0, frame: 0, reset: 0, maxSteps: 1, blend: 1, timeScale: 1, turbAmp: 0, breatheAmp: 0, nSpots: 0,
-      jetStrength: 0, jetGamma: 5, jetLength: 60, jetKnots: 0, skyStrength: 0, outW: 1, outH: 1, lumNorm: 1,
+      jetStrength: 0, jetGamma: 5, jetLength: 60, jetKnots: 0, skyStrength: 0, outW: 1, outH: 1, lumNorm: 1, lightDelay: 0,
     };
     const d0 = new DataView(packUniforms(base));
     for (const off of [104, 108, 112, 116]) expect(d0.getUint32(off, true)).toBe(0);
