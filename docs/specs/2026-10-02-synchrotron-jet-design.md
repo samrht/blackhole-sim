@@ -91,7 +91,7 @@ directly comparable. `JET_TINT`, `JET_GAIN` and `JET_CEIL` are deleted.
 ## 3. Interfaces and data flow
 
 - `src/physics/synchrotron.ts` (new, CPU twin + validation): emissivity/absorption coefficients,
-  field and flow profiles, BZ power, K from loading.
+  field and flow profiles, BZ power, n and K from sigma.
 - `src/physics/jet.ts`: funnel/wall/falloff/knots stay; `jetEmission` and `dopplerBoost` are
   replaced by the synchrotron twin; `JET.vKnot`-era leftovers removed.
 - `src/render/emission-shared.wgsl`: the jet core becomes the synchrotron sample
