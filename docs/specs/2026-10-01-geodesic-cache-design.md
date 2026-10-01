@@ -1,7 +1,7 @@
 # Geodesic cache — design
 
 **Date:** 2026-10-01
-**Status:** approved design, not yet planned
+**Status:** approved; plan in `docs/plans/2026-10-01-geodesic-cache.md`
 **Branch:** `perf/geodesic-cache` (created from `main` at `d95e4a1`)
 
 ## 1. Problem, as measured
@@ -79,7 +79,7 @@ Per pixel per set it writes one **entry** (16 bytes: `u32` kind | index, 3 × `f
 | kind | payload |
 |---|---|
 | `DISK` | `rHit`, `phiHit`, `g` (Doppler + gravitational factor, already includes ξ) |
-| `SKY` | asymptotic `skyDir` (octahedral-encoded, 2 × f32) — from the in-loop escape **or** the budget-exhausted classifier |
+| `SKY` | asymptotic `skyDir` (3 × f32, stored exactly) — from the in-loop escape **or** the budget-exhausted classifier |
 | `SHADOW` | — (captured, horizon, or non-finite state) |
 | `LIVE` | — (bookmark buffer full: this pixel is fully traced in `shade`) |
 
@@ -121,8 +121,8 @@ code are already shared. `main` keeps its exact operation order (golden check, �
 - Entries: one buffer per set (`W·H·16` bytes; 33 MB at 1920×1080), each under the default 128 MB binding
   limit; `shade` binds the active set's buffer (4 bind groups).
 - Bookmarks: one buffer + an atomic counter, reset when a rebuild starts.
-- Live and Cached use separate accum buffers (Live at the scaled size, Cached at full size), so switching
-  mode never shows a cleared buffer; the first Cached frame uses `blend = 1`.
+- Live and Cached share the existing accum buffer (already sized for scale 1). Every mode switch starts
+  with a `blend = 1` frame that rewrites every pixel before present, so no cleared buffer is ever shown.
 - Larger displays: if a set's entries exceed the adapter's `maxStorageBufferBindingSize` (requested at the
   adapter maximum in `requestDevice`), or the cache would exceed 512 MB total, use `NSETS = 2`; if one set
   still does not fit, stay Live. Logged, never fatal.
@@ -139,7 +139,7 @@ code are already shared. `main` keeps its exact operation order (golden check, �
   inputs; compare raw accum floats (new `Renderer.readbackAccum()`) against §2's thresholds; report max
   and 99.99th-percentile differences split into non-jet / jet-replay / `LIVE`-fallback pixels.
 - **Unit tests:** geometry-key invalidation (which inputs do and do not invalidate), jitter offsets, build
-  slicing / scheduler, memory sizing and the `NSETS` fallback, octahedral encode/decode round-trip.
+  slicing / scheduler, memory sizing and the `NSETS` fallback, mode choice.
 - **Existing gates** unchanged and green.
 
 ### 3.7 Benchmark
