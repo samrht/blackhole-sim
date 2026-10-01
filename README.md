@@ -29,6 +29,12 @@ npm test          # run the physics unit test suite (Vitest)
 npm run build     # production build
 ```
 
+`npm run verify:gpu` (dev server running) drives headless Chrome through the routes below. Any console
+warning or error fails the route that logged it (the favicon 404 excepted): WebGPU never throws on a
+broken shader, Chrome logs the WGSL compile error as a warning and the invalid module cascades into
+zeroed buffers, so this is what turns a broken shader into a failure naming the offending WGSL line
+(in seconds: the first diagnostic ends the route's wait). `probe-axis` and `probe-scale` do the same.
+
 Validation routes (append to the dev URL):
 - `?parity` — CPU↔GPU parity check for the core physics math, including the shadow-edge classifier, the camera mapping and the constraint-monitored integrator step and its step controller, all compiled from the same shared WGSL fragments the renderer uses (53 cases; the metric cases run the shipped `integrator-shared.wgsl` bytes too)
 - `?shadow` — structural check that the Schwarzschild (a = 0) render has a centred dark region ringed by disk, with a plausible radius; the number it records is the lensed inner edge of its emitter, not the critical curve (see Status), and is a regression gate rather than a √27 M assertion
@@ -36,7 +42,7 @@ Validation routes (append to the dev URL):
 - `node scripts/probe-scale.mjs` — adaptive render scale: pinned `?scale=0.5` survives a resize and a tiny odd viewport lit and warning-free, and pausing an unpinned, scaled-down view restores 100 %
 - `?scale=0.5` … `1` pins the internal render scale and disables the adaptive controller (and the geodesic cache)
 - `?nocache` — live tracing only (the pre-cache behaviour), for comparison
-- `?golden` — bit-exact hashes of the live trace on four fixed scenes, recorded before the geodesic-cache refactor (`RECORD_GOLDEN=1 npm run verify:gpu` records them; per adapter, so another GPU reports SKIP)
+- `?golden` — bit-exact hashes of the live trace on four fixed scenes, last recorded for the 2026-10-01 step controller (`RECORD_GOLDEN=1 npm run verify:gpu` records them; per adapter, so another GPU reports SKIP)
 - `?cachecheck` — the geodesic cache's exactness gate: for every jitter set and two times, a frame shaded from the cache must equal a live-traced frame with the same sub-pixel offset (see Status)
 
 ## Architecture

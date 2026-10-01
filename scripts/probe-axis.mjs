@@ -20,7 +20,7 @@ const browser = await chromium.launch({
 });
 const page = await browser.newPage({ viewport: { width: 1000, height: 680 } });
 const diags = [];
-page.on("console", (m) => { if (m.type() === "warning" || m.type() === "error") diags.push(m.text()); });
+page.on("console", (m) => { if ((m.type() === "warning" || m.type() === "error") && !/\/favicon\.ico$/.test(m.location().url)) diags.push(m.text()); });
 page.on("pageerror", (e) => diags.push("PAGEERROR " + e.message));
 await page.goto(BASE + "/?scale=1", { waitUntil: "load", timeout: 20000 });
 // The slider handlers are attached after the async WebGPU init, just before the render loop
@@ -114,6 +114,7 @@ for (const incl of [72, 8]) {
   console.log(`${ok ? "✓ PASS" : "✗ FAIL"}  i=${incl}°  shadowTop=${top}px  darkFrac band[488-512 minus 499-500]=${band.toFixed(3)} side[548-572]=${side.toFixed(3)} axisCols[499-500]=${axisCols.toFixed(3)} band/side brightness=${lumRatio.toFixed(3)} (>= 0.95)  -> ${file}`);
   if (!ok) failed = true;
 }
-if (diags.length) console.log("console diagnostics:", diags.join(" | "));
+// A broken shader logs WGSL warnings and renders garbage that may still pass the band metrics.
+if (diags.length) { console.log(`✗ FAIL  console diagnostics: ${diags.join(" | ").slice(0, 900)}`); failed = true; }
 await browser.close();
 process.exit(failed ? 1 : 0);

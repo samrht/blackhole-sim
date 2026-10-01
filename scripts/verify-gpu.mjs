@@ -5,7 +5,10 @@
 //   npm run dev            # in one terminal (serves on :5173 by vite.config.ts, or pass BASE=)
 //   node scripts/verify-gpu.mjs
 //
-// Exits non-zero if either the CPU<->GPU parity route or the Schwarzschild shadow route fails.
+// Exits non-zero if any check fails. A check also fails when the page logs a console warning or
+// error (the favicon 404 excepted): WebGPU never throws on a broken shader -- Chrome reports a WGSL
+// compile failure as a console WARNING, returns an invalid module, and the invalidity cascades into
+// zeroed buffers, so without this a broken shader surfaced only as a strange downstream number.
 import { chromium } from "playwright-core";
 import { writeFileSync } from "node:fs";
 
@@ -17,27 +20,43 @@ const browser = await chromium.launch({
   args: ["--enable-unsafe-webgpu", "--enable-features=Vulkan", "--ignore-gpu-blocklist"],
 });
 const page = await browser.newPage({ viewport: { width: 1000, height: 680 } });
-const errors = [];
-page.on("pageerror", (e) => errors.push("PAGEERROR " + e.message));
+// Page errors and console warnings/errors (e.g. "Error while parsing WGSL" and its "is invalid due
+// to a previous error" cascade). The dev server has no favicon; its 404 is the one expected message.
+const diags = [];
+let onDiag = () => {};
+const addDiag = (msg) => { diags.push(msg); onDiag(); };
+page.on("pageerror", (e) => addDiag("PAGEERROR " + e.message));
+page.on("console", (m) => {
+  if (m.type() !== "warning" && m.type() !== "error") return;
+  if (/\/favicon\.ico$/.test(m.location().url)) return;
+  addDiag(m.text().split("\n").slice(0, 3).join(" / "));
+});
+/** Resolves on the next diagnostic, so a broken route fails fast instead of waiting out its
+ *  timeout (up to 10 min for ?cachecheck). */
+const nextDiag = () => new Promise((res) => { onDiag = res; });
+/** Diagnostics logged since index `from`, as a printable suffix; empty when clean. */
+function diagSince(from) {
+  const d = diags.slice(from);
+  if (!d.length) return "";
+  return `\n        console: ${d.slice(0, 4).join(" | ").slice(0, 900)}${d.length > 4 ? ` (+${d.length - 4} more)` : ""}`;
+}
 
 let failed = false;
-async function check(path, expect) {
+async function checkAny(path, accepts, timeout = 60000, show = 2000) {
+  const d0 = diags.length;
   await page.goto(BASE + path, { waitUntil: "load", timeout: 20000 });
-  await page.waitForFunction((e) => document.body.innerText.includes(e), expect, { timeout: 25000 }).catch(() => {});
+  await Promise.race([
+    page.waitForFunction((a) => a.some((e) => document.body.innerText.includes(e)), accepts, { timeout }).catch(() => {}),
+    diags.length > d0 ? Promise.resolve() : nextDiag(),
+  ]);
+  await page.waitForTimeout(250); // let a cascade of follow-on warnings land in the report
   const txt = (await page.innerText("body")).replace(/\s+/g, " ").trim();
-  const ok = txt.includes(expect);
-  console.log(`${ok ? "✓ PASS" : "✗ FAIL"}  ${path}\n        ${txt.slice(0, 300)}`);
+  const extra = diagSince(d0);
+  const ok = accepts.some((e) => txt.includes(e)) && !extra;
+  console.log(`${ok ? "✓ PASS" : "✗ FAIL"}  ${path}\n        ${txt.slice(0, show)}${extra}`);
   if (!ok) failed = true;
 }
-
-async function checkAny(path, accepts, timeout = 60000) {
-  await page.goto(BASE + path, { waitUntil: "load", timeout: 20000 });
-  await page.waitForFunction((a) => a.some((e) => document.body.innerText.includes(e)), accepts, { timeout }).catch(() => {});
-  const txt = (await page.innerText("body")).replace(/\s+/g, " ").trim();
-  const ok = accepts.some((e) => txt.includes(e));
-  console.log(`${ok ? "✓ PASS" : "✗ FAIL"}  ${path}\n        ${txt.slice(0, 2000)}`);
-  if (!ok) failed = true;
-}
+const check = (path, expect) => checkAny(path, [expect], 25000, 300);
 
 const ONLY_APP = process.env.ONLY_APP === "1";
 if (!ONLY_APP) {
@@ -55,6 +74,7 @@ await checkAny("/?cachecheck", ["CACHECHECK PASS"], 600000);
 }
 
 // Capture a reference render of the interactive view.
+const dApp = diags.length;
 await page.goto(BASE + "/", { waitUntil: "load", timeout: 20000 });
 await page.waitForTimeout(4500); // let progressive accumulation converge
 // 30 s: a converged headless frame takes ~15 s after the monitored-step branch (measured 14.8 s).
@@ -98,9 +118,8 @@ cacheOk = step("same-size resize->live", await waitMode("live", 5000)) && step("
 await page.waitForTimeout(1500); // let the EMA settle onto the rebuilt cache
 const lit1 = await meanBrightness();
 cacheOk = step(`lit ${lit1.toFixed(1)}`, lit1 > 5) && cacheOk;
-console.log(`${cacheOk && !errors.length ? "✓ PASS" : "✗ FAIL"}  cache in the app: ${steps.join(", ")}`);
-if (!cacheOk || errors.length) failed = true;
-
-if (errors.length) console.log("console/page errors:", errors.join(" | "));
+const appDiag = diagSince(dApp);
+console.log(`${cacheOk && !appDiag ? "✓ PASS" : "✗ FAIL"}  cache in the app: ${steps.join(", ")}${appDiag}`);
+if (!cacheOk || appDiag) failed = true;
 await browser.close();
 process.exit(failed ? 1 : 0);
