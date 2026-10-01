@@ -12,11 +12,14 @@
 - **Absolute brightness** tied to mass, spin and accretion rate, in the **same physical units as
   the disk**, so the jet-vs-disk ratio comes out of the physics. Per-preset jet calibration
   (M87\* 0.1/29.8) is removed.
-- The one genuinely uncertain input — how much plasma the magnetically dominated jet carries — is
-  exposed as the **Jet magnetization σ** slider (replacing "Jet" strength), log scale 0.1–1000,
-  default **σ = 1** (the GRMHD/EHT convention for the emitting jet sheath), and captioned as the main
-  uncertainty. (Decided 2026-10-02 after an estimate: equipartition overloads the funnel — ~200
-  optical depths per r_g in M87\*'s visible light.)
+- **Energy conservation sets the brightness.** The jet's visible-band synchrotron luminosity within
+  the rendered region equals **ε × P_BZ** (its Blandford–Znajek power), with the **Jet radiative
+  efficiency ε** slider (log 10⁻⁵–10⁻¹, default **2 × 10⁻³**) anchored to M87: optical nucleus
+  νL_ν ≈ 10⁴¹ erg/s (synchrotron; Chiaberge et al. 1999, Prieto et al. 2016) against a jet power of
+  10⁴³–10⁴⁴ erg/s (Stawarz et al. 2006; Rieger & Aharonian 2012). (Revised 2026-10-02: with uncooled
+  power-law electrons, an equipartition or σ-based density makes the jet radiate more than its total
+  power — the optical-emitting electrons cool in ~0.1 s against minutes of flow time — so the absolute
+  density is set by the energy budget instead.)
 - Not in scope: GRMHD (field and flow are prescribed, not simulated), polarisation, a time-dependent
   field, inverse-Compton, radio wavelengths (the renderer stays visible-band).
 
@@ -52,18 +55,18 @@ All in Gaussian cgs units; r_g = GM/c² (cm), lengths in the shader in units of 
 
 - Power law N(γ) = K γ^−p for γ ≥ γ_min, **p = 2.4** (optical spectral index α = (p−1)/2 = 0.7,
   within M87's measured 0.6–0.9, Perlman et al. 2001), **γ_min = 10** (stated assumption).
-- **Density from magnetization:** σ = B² / (4π ρ c²) with ρ = n m_p, so **n = B² / (4π σ m_p c²)**
-  (σ = the slider, default 1), all electrons in the power law: **K = n (p−1) γ_min^(p−1)**.
+- **Density:** shape n ∝ B² (constant magnetization along the funnel) × wall profile × length
+  falloff × knots × turbulence; absolute scale **K = k_scale · B² · (shape)**, with k_scale chosen on the
+  CPU so that the optically thin, comoving visible-band luminosity of the rendered jet (both lobes,
+  z_base ≤ |z| ≤ jetLength, ρ ≤ 1.2 ρ_f; 4π∫∫ j_ν dν dV, ν over 400–750 nm) equals ε · P_BZ. Recomputed
+  whenever mass, spin, accretion, ε or the jet length change.
 - **Below the power law's range:** the closed-form coefficients assume ν′ ≫ ν_min = 3 γ_min² q B /
   (4π m_e c). For ν′ < ν_min (X-ray binaries: B ~ 10⁸ G puts visible light below it) the
   low-frequency forms are used, matched at ν_min: j ∝ (ν′/ν_min)^(1/3), α ∝ (ν′/ν_min)^(−5/3).
-- **Expected outcome (estimate, 2026-10-02, 550 nm, path of 1 r_g at z = 5 r_g):** M87\* jet ≈ 100×
-  its thin disk's peak radiance (optically thick; ≈ 9× at σ = 100) — consistent with M87's real
-  optical nucleus being jet synchrotron, while the EHT's 1.3 mm ring is a hot flow this renderer
-  does not model (captioned); default view jet ≈ 3 % of the disk; Cygnus X-1 jet ≈ 10⁻⁶ of its disk.
-- The spatial distribution keeps today's limb-brightened wall profile (M87's jet is limb-brightened
-  down to ~7 r_s, Kim et al. 2018) and length falloff as a multiplier on K, and the knots as a
-  density modulation.
+- **Expected outcome:** reported, not targeted. (An earlier estimate in this spec's history used an
+  absorption coefficient off by (m_e c²)^(p−1) — Rybicki & Lightman's 6.53 is per unit energy — and is
+  void; the corrected closed forms agree with direct numerical integration of the single-electron
+  spectrum to 0.05 % (j) and 0.07 % (α).)
 
 ### 2.4 Radiation and transfer
 
@@ -91,7 +94,7 @@ directly comparable. `JET_TINT`, `JET_GAIN` and `JET_CEIL` are deleted.
 ## 3. Interfaces and data flow
 
 - `src/physics/synchrotron.ts` (new, CPU twin + validation): emissivity/absorption coefficients,
-  field and flow profiles, BZ power, n and K from sigma.
+  field and flow profiles, BZ power, the energy-budget k_scale.
 - `src/physics/jet.ts`: funnel/wall/falloff/knots stay; `jetEmission` and `dopplerBoost` are
   replaced by the synchrotron twin; `JET.vKnot`-era leftovers removed.
 - `src/render/emission-shared.wgsl`: the jet core becomes the synchrotron sample
@@ -100,13 +103,12 @@ directly comparable. `JET_TINT`, `JET_GAIN` and `JET_CEIL` are deleted.
   e^(−τ); the cache's jet replay returns τ too, and `shade` attenuates the cached disk/sky colour.
 - **Uniforms:** the 128-byte buffer is full (32/32 slots), so it grows to 144 bytes (one more vec4)
   for the jet's physical constants computed on the CPU each time mass, spin, accretion or the
-  sliders change: Φ-derived field scale, density scale (σ), Γ₂₈₀, r_g in cm, and the absolute
-  normaliser. `bloom.wgsl`/`present.wgsl` keep their shorter struct prefixes.
-- **Panel:** a **Jet** checkbox (on/off) plus **Jet magnetization σ** replacing the "Jet" strength
-  slider (log, 0.1–1000, default 1); "Jet speed Γ" → **Jet speed (Γ at 280 r_g)** (1.5–8, default 2); presets set
-  jet on with σ = 1 (M87\*, Cyg X-1, GRS 1915+105) or jet off (Sgr A\*, Gargantua). Captions drop
-  the M87\* calibration sentence; M87\*'s says its visible-light jet base outshines a thin disk this
-  faint, and that the EHT ring is radio emission from a hot flow not modelled here.
+  sliders change: Φ-derived field scale, the energy-budget density scale k_scale, Γ₂₈₀ and r_g in cm. `bloom.wgsl`/`present.wgsl` keep their shorter struct prefixes.
+- **Panel:** a **Jet** checkbox (on/off) plus **Jet radiative efficiency ε** replacing the "Jet"
+  strength slider (log, 10⁻⁵–10⁻¹, default 2 × 10⁻³); "Jet speed Γ" → **Jet speed (Γ at 280 r_g)** (1.5–8, default 2); presets set
+  jet on (M87\*, Cyg X-1, GRS 1915+105) or jet off (Sgr A\*, Gargantua). Captions drop
+  the M87\* calibration sentence; M87\*'s notes that the EHT ring is radio emission from a hot flow not
+  modelled here, and that the jet's brightness follows from ε × its jet power.
 
 ## 4. Error handling
 
@@ -119,7 +121,7 @@ directly comparable. `JET_TINT`, `JET_GAIN` and `JET_CEIL` are deleted.
 - **Unit (CPU twin):** the closed-form power-law coefficients (j and α) against a direct numerical
   integration of the single-electron synchrotron spectrum F(x) = x∫K_{5/3} over the power law and the
   pitch-angle distribution, within 1 %; the BZ power for the M87\* preset in 10⁴³–10⁴⁴ erg/s; Γ(z) profile values;
-  n and K from σ (σ = B²/4πnm_pc² recovered); an optically thick slab saturating at the source
+  the energy budget (the CPU volume integral of the visible luminosity at the chosen k_scale equals ε · P_BZ to 1e-6); an optically thick slab saturating at the source
   function S_ν = j/α; invariance check (g = 1 → transfer equals the flat-space result).
 - **Parity:** the synchrotron sample (`emission-shared.wgsl`) against the CPU twin, several cases.
 - **GPU:** `?golden` re-recorded on purpose (jet scenes change). The jet-off scene must stay
