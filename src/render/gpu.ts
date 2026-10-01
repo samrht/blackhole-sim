@@ -5,6 +5,7 @@ import raytraceWGSL from "./raytrace.wgsl?raw";
 import shadowSharedWGSL from "./shadow-shared.wgsl?raw";
 import cameraSharedWGSL from "./camera-shared.wgsl?raw";
 import integratorSharedWGSL from "./integrator-shared.wgsl?raw";
+import emissionSharedWGSL from "./emission-shared.wgsl?raw";
 import bloomWGSL from "./bloom.wgsl?raw";
 import { planCache, BOOKMARK_BYTES, type CachePlan } from "./cache-plan";
 
@@ -179,7 +180,9 @@ export class Renderer {
     // gUp() -- so the concatenation order between them does not matter.
     // integrator-shared.wgsl (metric + RK4 + step controller) is likewise the sole copy; it
     // defines PI, so raytrace.wgsl no longer does.
-    const cMod = this.device.createShaderModule({ code: shadowSharedWGSL + cameraSharedWGSL + integratorSharedWGSL + raytraceWGSL });
+    // emission-shared.wgsl (disk turbulence + jet emissivity) is the sole copy of that math too;
+    // ?parity's turb and jet cases prepend the same bytes.
+    const cMod = this.device.createShaderModule({ code: shadowSharedWGSL + cameraSharedWGSL + integratorSharedWGSL + emissionSharedWGSL + raytraceWGSL });
     const pMod = this.device.createShaderModule({ code: presentWGSL });
     const bMod = this.device.createShaderModule({ code: bloomWGSL });
     const st = (type: GPUBufferBindingType): GPUBindGroupLayoutEntry["buffer"] => ({ type });

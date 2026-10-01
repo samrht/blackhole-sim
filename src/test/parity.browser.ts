@@ -5,6 +5,7 @@ import parityWGSL from "../render/parity.wgsl?raw";
 import integratorSharedWGSL from "../render/integrator-shared.wgsl?raw";
 import { turbulence } from "../physics/emission";
 import turbParityWGSL from "../render/turb-parity.wgsl?raw";
+import emissionSharedWGSL from "../render/emission-shared.wgsl?raw";
 import { jetEmission, dopplerBoost } from "../physics/jet";
 import jetParityWGSL from "../render/jet-parity.wgsl?raw";
 import { classify, criticalXiEta, photonShellRange } from "../physics/shadow";
@@ -58,7 +59,7 @@ export async function runParity(): Promise<{ maxErr: number; rows: number }> {
   device.queue.writeBuffer(tin, 0, tarr);
   const tout = device.createBuffer({ size: tcases.length * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
   const tread = device.createBuffer({ size: tcases.length * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
-  const tmod = device.createShaderModule({ code: turbParityWGSL });
+  const tmod = device.createShaderModule({ code: emissionSharedWGSL + turbParityWGSL });
   const tpipe = device.createComputePipeline({ layout: "auto", compute: { module: tmod, entryPoint: "main" } });
   const tbind = device.createBindGroup({ layout: tpipe.getBindGroupLayout(0), entries: [
     { binding: 0, resource: { buffer: tin } }, { binding: 1, resource: { buffer: tout } }] });
@@ -85,7 +86,7 @@ export async function runParity(): Promise<{ maxErr: number; rows: number }> {
   device.queue.writeBuffer(jin, 0, jarr);
   const jout = device.createBuffer({ size: jcases.length * 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
   const jread = device.createBuffer({ size: jcases.length * 16, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
-  const jmod = device.createShaderModule({ code: jetParityWGSL });
+  const jmod = device.createShaderModule({ code: emissionSharedWGSL + jetParityWGSL });
   const jpipe = device.createComputePipeline({ layout: "auto", compute: { module: jmod, entryPoint: "main" } });
   const jbind = device.createBindGroup({ layout: jpipe.getBindGroupLayout(0), entries: [
     { binding: 0, resource: { buffer: jin } }, { binding: 1, resource: { buffer: jout } }] });

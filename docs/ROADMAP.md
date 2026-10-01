@@ -24,9 +24,9 @@ this file is the queue. Each item gets its own spec (and plan) before code, as e
 - [ ] **A true critical-curve gate for `?shadow`**: the route measures the emitter's lensed inner
   edge, not the critical curve (an emitter that stops outside the capture region, or a (xi, eta)
   classification image).
-- [ ] **Shared-fragment parity for the jet and turbulence cases**: `?parity` still tests copies of
-  that math (`jet-parity.wgsl`, `turb-parity.wgsl`); camera, shadow and integrator already verify
-  the shipped bytes.
+- [x] **Shared-fragment parity for the jet and turbulence cases** (2026-10-02): `emission-shared.wgsl`
+  is the sole copy, prepended by the renderer and ?parity; golden bit-identical; a changed jet
+  constant now fails ?parity (2.0e-3); `tests/shader-twins.test.ts` guards against new copies.
 - [x] **Vertical seam above the shadow** (2026-10-01): turbulence noise made 2π-periodic in ψ
   (hit azimuths of rays passing either side of the hole differ by 2π); the brightness step across
   the centre column above the shadow went 10.1 % -> 1.9 % (typical column step 3.5 %).
