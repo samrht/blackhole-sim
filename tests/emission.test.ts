@@ -27,6 +27,14 @@ describe("emission", () => {
     }
   });
 
+  it("turbulence is 2 pi-periodic in psi: rays reaching one disk point around opposite sides agree", () => {
+    // The seam above the shadow: across the alpha = 0 column the hit azimuth jumps by exactly 2 pi
+    // (traced: -3.2085 vs +3.0732 at the default view), and non-periodic noise jumped 0.411 -> 0.872.
+    for (const [lr, p] of [[Math.log(10.46), -3.2085], [Math.log(6.45), 0.3], [Math.log(25), 2.9], [Math.log(4), -1.2]]) {
+      const v = turbulence(lr, p, 3);
+      for (const k of [-2, -1, 1, 3]) expect(turbulence(lr, p + 2 * Math.PI * k, 3)).toBeCloseTo(v, 6);
+    }
+  });
   it("turbulence is centred near 0.5 so the emission multiplier is unbiased", () => {
     let s = 0; const N = 200000;
     for (let i = 0; i < N; i++) s += turbulence((i * 0.7331) % 50, (i * 1.4177) % 50, 3);

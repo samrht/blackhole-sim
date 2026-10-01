@@ -27,11 +27,11 @@ this file is the queue. Each item gets its own spec (and plan) before code, as e
 - [ ] **Shared-fragment parity for the jet and turbulence cases**: `?parity` still tests copies of
   that math (`jet-parity.wgsl`, `turb-parity.wgsl`); camera, shadow and integrator already verify
   the shipped bytes.
-- [ ] **Vertical seam above the shadow**: a faint vertical line in the disk at the azimuth wrap,
-  visible in every view. Found by the 2026-10-01 review: the turbulence value noise is evaluated on
-  a pattern phase psi that is not periodic over 2 pi. (Earlier attributed to the jet core line.)
-- [ ] **Jet core line**: with the jet on, the alpha = 0 column shows a thin bright line because the
-  phenomenological wall profile has a small non-zero core emissivity (jet model, not integrator).
+- [x] **Vertical seam above the shadow** (2026-10-01): turbulence noise made 2π-periodic in ψ
+  (hit azimuths of rays passing either side of the hole differ by 2π); the brightness step across
+  the centre column above the shadow went 10.1 % -> 1.9 % (typical column step 3.5 %).
+- [x] **Jet core line** (2026-10-01): already gone since the angular step caps bound the near field;
+  the jet's own light is smooth to < 0.2 % across the α = 0 column at 72° and 8°. No jet change.
 
 ## Physics features (original Tier 2, not started)
 

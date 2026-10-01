@@ -2,6 +2,7 @@
 // Mirrored in WGSL: raytrace.wgsl (render) and turb-parity.wgsl (parity test).
 import { omegaKepler } from "./orbits";
 
+const TWO_PI = 2 * Math.PI;
 export const T_BREATHE = 2000; // coordinate-time period (in M) of the optional slow "breathing"
 
 export interface HotSpot { r: number; psi: number; sigma: number; amp: number; }
@@ -28,16 +29,33 @@ export function vnoise(x: number, y: number): number {
   const a01 = ihash(ix, iy + 1), a11 = ihash(ix + 1, iy + 1);
   return (a00 * (1 - fx) + a10 * fx) * (1 - fy) + (a01 * (1 - fx) + a11 * fx) * fy;
 }
-/** Multi-octave value noise in [0,~1); domain (logR, psi) so features shear with radius and phase. */
+/** Value noise in (x, y), periodic in y with period n cells (n integer): the cell index wraps, so
+ *  y and y + n give the same value. Same hash and interpolation as vnoise. */
+function vnoiseRing(x: number, y: number, n: number): number {
+  const ix = Math.floor(x), iy = Math.floor(y);
+  const fx = smooth(x - ix), fy = smooth(y - iy);
+  const j0 = ((iy % n) + n) % n, j1 = (j0 + 1) % n;
+  const a00 = ihash(ix, j0), a10 = ihash(ix + 1, j0);
+  const a01 = ihash(ix, j1), a11 = ihash(ix + 1, j1);
+  return (a00 * (1 - fx) + a10 * fx) * (1 - fy) + (a01 * (1 - fx) + a11 * fx) * fy;
+}
+/** Multi-octave value noise in [0,~1); domain (logR, psi) so features shear with radius and phase.
+ *  2 pi-periodic in psi: each octave has an integer number of cells around the ring
+ *  (round(2 pi freq): 6, 13, 25), and psi is reduced to turns first. A ray's hit azimuth is a
+ *  continuous geodesic coordinate, not an angle mod 2 pi: rays passing either side of the hole
+ *  reach the far side of the disk with phi ~2 pi apart, and non-periodic noise drew a seam there. */
 export function turbulence(logR: number, psi: number, octaves: number): number {
+  const turns = psi / TWO_PI - Math.floor(psi / TWO_PI);
   let sum = 0, amp = 0.5, freq = 1, norm = 0;
-  for (let o = 0; o < octaves; o++) { sum += amp * vnoise(logR * freq, psi * freq); norm += amp; amp *= 0.5; freq *= 2; }
+  for (let o = 0; o < octaves; o++) {
+    const n = Math.round(TWO_PI * freq);
+    sum += amp * vnoiseRing(logR * freq, turns * n, n); norm += amp; amp *= 0.5; freq *= 2;
+  }
   // Divide by the octave-amplitude sum: without it the mean is 0.434, not the 0.5 that callers
   // recentre against, so raising turbAmp systematically dims the disk (0.921x at the 0.6 default).
   return norm > 0 ? sum / norm : 0;
 }
 
-const TWO_PI = 2 * Math.PI;
 /** Sum of orbiting Gaussian hot-spots, each fixed in the co-rotating (r, psi) frame. */
 export function hotspotField(rHit: number, psi: number, spots: HotSpot[]): number {
   let s = 0;
