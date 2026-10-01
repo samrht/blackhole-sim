@@ -12,7 +12,7 @@ this file is the queue. Each item gets its own spec (and plan) before code, as e
 
 ## Next: physics on what the code already has
 
-- [ ] **Real-object presets with physical units.** M87\* (M = 6.5e9 M_sun, a* ~ 0.9) and a stellar
+- [x] **Real-object presets with physical units** (2026-10-01). M87\* (M = 6.5e9 M_sun, a* ~ 0.9) and a stellar
   black hole such as Cygnus X-1 (~15 M_sun), from the master parameter table in
   `docs/specs/2026-05-30-relativistic-blackhole-accretion-design.md`: spin, inclination, disk
   temperature from mass and accretion rate, and readouts in physical units (horizon size, ISCO in

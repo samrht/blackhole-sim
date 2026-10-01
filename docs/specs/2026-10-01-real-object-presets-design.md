@@ -1,7 +1,7 @@
 # Real-object presets with physical units — design
 
 **Date:** 2026-10-01
-**Status:** approved in conversation; awaiting written-spec review
+**Status:** implemented on `feat/real-object-presets` (plan `docs/plans/2026-10-01-real-object-presets.md`)
 **Roadmap item:** `docs/ROADMAP.md`, "Next: physics on what the code already has"
 
 ## 1. Intent (agreed)
