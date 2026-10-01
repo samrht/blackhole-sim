@@ -39,7 +39,7 @@ this file is the queue. Each item gets its own spec (and plan) before code, as e
   phenomenological today; see the README's Tier 2B caveats).
 - [ ] **Evolving alpha-disk** (surface-density diffusion) in place of static Novikov-Thorne plus
   decorative turbulence.
-- [ ] **Light-travel delay** (the model has none: disk and jet are seen at one coordinate time).
+- [x] **Light-travel delay** (2026-10-01) (the model has none: disk and jet are seen at one coordinate time).
 
 ## Open questions from the presets work
 

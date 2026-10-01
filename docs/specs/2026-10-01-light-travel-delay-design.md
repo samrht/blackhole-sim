@@ -1,7 +1,7 @@
 # Light-travel delay — design
 
 **Date:** 2026-10-01
-**Status:** approved in conversation; awaiting written-spec review
+**Status:** implemented on `feat/light-travel-delay` (plan `docs/plans/2026-10-01-light-travel-delay.md`)
 **Roadmap item:** `docs/ROADMAP.md`, "Physics features: Light-travel delay"
 
 ## 1. Intent (agreed)
