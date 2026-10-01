@@ -26,6 +26,17 @@ SHADOW ${res.ok ? "PASS" : "FAIL"} (structural) — centred dark shadow=${res.ha
 apparent radius ≈ ${res.shadowRadiusM} M; analytic critical curve = ${res.analyticRadiusM} M
 ratio to analytic critical curve = ${res.calibration} (NOT a calibration — the route measures the emitter's lensed inner edge, not the critical curve; see README)</pre>`;
   console.log("shadow", res);
+} else if (location.search.includes("golden")) {
+  // Validation entry: bit-exact live-pass hashes (plan 2026-10-01 Task 2). `&record` prints JSON to commit.
+  const { runGolden, judgeGolden, GOLDEN: want } = await import("./test/golden.browser");
+  const got = await runGolden(canvas);
+  if (location.search.includes("record")) {
+    document.body.innerHTML = `<pre>GOLDEN RECORD</pre><pre id="json">${JSON.stringify(got)}</pre>`;
+  } else {
+    const lines = Object.keys(want.hashes).map((k) => `${k}: want ${want.hashes[k]} got ${got.hashes[k]}`);
+    const verdict = judgeGolden(want, got);
+    document.body.innerHTML = `<pre style="color:${verdict === "FAIL" ? "#f66" : "#6f6"};font-size:16px;padding:20px">GOLDEN ${verdict} (${got.adapter}; recorded on ${want.adapter})\n${lines.join("\n")}</pre>`;
+  }
 } else if (location.search.includes("bench")) {
   // Idle route for scripts/bench.mjs: no render loop, no validation pass. The benchmark imports the
   // Renderer through the dev server and drives it itself, so nothing else may compete for the GPU.

@@ -59,7 +59,7 @@ export class Renderer {
     canvas.width = this.displayW; canvas.height = this.displayH;
     this.ctx.configure({ device: this.device, format: this.format, alphaMode: "opaque" });
     // Sized for scale 1 (the largest the internal size can reach), so setScale never reallocates.
-    this.accumBuf = this.device.createBuffer({ size: this.displayW * this.displayH * 16, usage: GPUBufferUsage.STORAGE });
+    this.accumBuf = this.device.createBuffer({ size: this.displayW * this.displayH * 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
     const bloomBytes = Math.ceil(this.displayW / 4) * Math.ceil(this.displayH / 4) * 16; // quarter-res bloom
     this.bloomA = this.device.createBuffer({ size: bloomBytes, usage: GPUBufferUsage.STORAGE });
     this.bloomB = this.device.createBuffer({ size: bloomBytes, usage: GPUBufferUsage.STORAGE });
@@ -223,5 +223,20 @@ export class Renderer {
     for (let y = 0; y < this.displayH; y++) data.set(padded.subarray(y * bpr, y * bpr + this.displayW * 4), y * this.displayW * 4);
     buf.unmap();
     return { data, w: this.displayW, h: this.displayH };
+  }
+  /** Copy `bytes` from the start of a COPY_SRC buffer to the CPU. Validation harnesses only. */
+  private async readback(src: GPUBuffer, bytes: number): Promise<ArrayBuffer> {
+    const buf = this.device.createBuffer({ size: bytes, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+    const enc = this.device.createCommandEncoder();
+    enc.copyBufferToBuffer(src, 0, buf, 0, bytes);
+    this.device.queue.submit([enc.finish()]);
+    await buf.mapAsync(GPUMapMode.READ);
+    const out = buf.getMappedRange().slice(0);
+    buf.unmap(); buf.destroy();
+    return out;
+  }
+  /** Raw accum (internal width x height vec4<f32>) after the last submitted frame. */
+  async readbackAccum(): Promise<Float32Array> {
+    return new Float32Array(await this.readback(this.accumBuf, this.width * this.height * 16));
   }
 }

@@ -7,6 +7,7 @@
 //
 // Exits non-zero if either the CPU<->GPU parity route or the Schwarzschild shadow route fails.
 import { chromium } from "playwright-core";
+import { writeFileSync } from "node:fs";
 
 const BASE = process.env.BASE || "http://localhost:5173";
 const SHOT = process.env.SHOT || "render.png";
@@ -29,8 +30,24 @@ async function check(path, expect) {
   if (!ok) failed = true;
 }
 
+async function checkAny(path, accepts) {
+  await page.goto(BASE + path, { waitUntil: "load", timeout: 20000 });
+  await page.waitForFunction((a) => a.some((e) => document.body.innerText.includes(e)), accepts, { timeout: 60000 }).catch(() => {});
+  const txt = (await page.innerText("body")).replace(/\s+/g, " ").trim();
+  const ok = accepts.some((e) => txt.includes(e));
+  console.log(`${ok ? "✓ PASS" : "✗ FAIL"}  ${path}\n        ${txt.slice(0, 400)}`);
+  if (!ok) failed = true;
+}
+
 await check("/?parity", "PARITY PASS");
 await check("/?shadow", "SHADOW PASS");
+if (process.env.RECORD_GOLDEN === "1") {
+  await page.goto(BASE + "/?golden&record", { waitUntil: "load", timeout: 20000 });
+  await page.waitForFunction(() => document.body.innerText.includes("GOLDEN RECORD"), null, { timeout: 60000 });
+  writeFileSync("src/test/golden.json", (await page.innerText("#json")) + "\n");
+  console.log("• recorded src/test/golden.json");
+}
+await checkAny("/?golden", ["GOLDEN PASS", "GOLDEN SKIP"]);
 
 // Capture a reference render of the interactive view.
 await page.goto(BASE + "/", { waitUntil: "load", timeout: 20000 });
