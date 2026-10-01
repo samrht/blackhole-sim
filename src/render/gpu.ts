@@ -130,11 +130,20 @@ export class Renderer {
   uploadLUTs(tempLUT: Float32Array, colorLUT: Float32Array) {
     // The LUTs come from `new Float32Array(n)`, so they are ArrayBuffer-backed; the cast
     // narrows the TS 5.7+ default `Float32Array<ArrayBufferLike>` to satisfy writeBuffer.
+    // Replaced buffers are destroyed (callers rebind() straight after, and work already submitted
+    // keeps them alive until it completes). The colour LUT (64 KB) is the same array on every spin
+    // tick, so it is only re-created when a different table arrives.
+    this.tempBuf?.destroy();
     this.tempBuf = this.device.createBuffer({ size: tempLUT.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
     this.device.queue.writeBuffer(this.tempBuf, 0, tempLUT as Float32Array<ArrayBuffer>);
-    this.colorBuf = this.device.createBuffer({ size: colorLUT.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
-    this.device.queue.writeBuffer(this.colorBuf, 0, colorLUT as Float32Array<ArrayBuffer>);
+    if (colorLUT !== this.colorSrc) {
+      this.colorBuf?.destroy();
+      this.colorBuf = this.device.createBuffer({ size: colorLUT.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+      this.device.queue.writeBuffer(this.colorBuf, 0, colorLUT as Float32Array<ArrayBuffer>);
+      this.colorSrc = colorLUT;
+    }
   }
+  private colorSrc: Float32Array | null = null;
 
   /** Upload packed hot-spot params (Float32Array of (r,psi,sigma,amp) per spot). Capped at the
    *  8-vec4 buffer capacity created in init(); extra spots would overflow the storage buffer. */

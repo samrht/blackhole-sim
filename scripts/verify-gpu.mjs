@@ -124,7 +124,7 @@ if (!cacheOk || appDiag) failed = true;
 // Presets (spec 2026-10-01): each one must leave the app lit, back in `cached` mode, warning-free.
 // Spin/inclination changes rebuild the cache; mass/accretion are shading-only (Review Focus 1).
 const dPre = diags.length;
-const presetIds = await page.evaluate(() => [...document.getElementById("preset").options].map((o) => o.value).filter((v) => v !== "custom"));
+const presetIds = await page.evaluate(() => [...document.getElementById("preset").options].map((o) => o.value).filter((v) => v !== "custom" && v !== "default"));
 const preSteps = [];
 for (const id of presetIds) {
   await page.selectOption("#preset", id);
@@ -140,6 +140,22 @@ await page.mouse.move(700, 300); await page.mouse.down(); await page.mouse.move(
 const afterDrag = await page.evaluate(() => document.getElementById("preset").value);
 preSteps.push(`drag -> ${afterDrag}`);
 if (afterDrag !== "custom") failed = true;
+// "Default view" restores the opening view (spin 0.9, 72 deg, 1e8 M_sun, the 30,000 K disk).
+await page.selectOption("#preset", "default");
+await page.waitForTimeout(300);
+const defOk = await page.evaluate(() => ["spinv", "inclv", "massv", "tpk"].map((k) => document.getElementById(k).textContent).join("|"));
+const defPass = defOk === "0.900|72|1.00e+8|30,000 K" && await waitMode("cached");
+preSteps.push(`default ${defPass ? "ok" : "FAILED"} (${defOk})`);
+if (!defPass) failed = true;
+// Mass is shading-only: nudging it while cached must re-shade with NO rebuild (mode never leaves
+// `cached`) and leave the preset for Custom (Review Focus 1).
+let leftCached = false;
+await page.evaluate(() => { const m = document.getElementById("mass"); m.value = "8.5"; m.dispatchEvent(new Event("input", { bubbles: true })); });
+for (let k = 0; k < 20; k++) { await page.waitForTimeout(75); if (!(await page.evaluate(() => document.getElementById("cmode").textContent)).startsWith("cached")) leftCached = true; }
+const afterMass = await page.evaluate(() => document.getElementById("preset").value);
+const massPass = !leftCached && afterMass === "custom";
+preSteps.push(`mass nudge ${massPass ? "ok" : "FAILED"} (stayed cached ${!leftCached}, selector ${afterMass})`);
+if (!massPass) failed = true;
 const preDiag = diagSince(dPre);
 if (preDiag) failed = true;
 console.log(`${preSteps.every((s) => !s.includes("FAILED")) && afterDrag === "custom" && !preDiag ? "✓ PASS" : "✗ FAIL"}  presets: ${preSteps.join(", ")}${preDiag}`);

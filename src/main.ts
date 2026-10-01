@@ -170,7 +170,8 @@ ratio to analytic critical curve = ${res.calibration} (NOT a calibration — the
   const mass = $("mass") as HTMLInputElement, acc = $("acc") as HTMLInputElement, massv = $("massv"), accv = $("accv");
   const showMass = () => { massv.textContent = state.massSun.toExponential(2); };
   const showAcc = () => { accv.textContent = state.lambda.toExponential(1); };
-  /** Any change to spin, inclination, mass or accretion (drag-tilt included) leaves the preset. */
+  /** Any change to spin, inclination, mass or accretion (drag-tilt included) leaves the preset (or
+   *  the Default view) for "Custom", a disabled option that only ever shows the state. */
   function markCustom() { if (presetSel.value !== "custom") { presetSel.value = "custom"; pcap.hidden = true; } }
   function physicsChanged() { refreshPhysics(); refreshReadouts(); reset(); }
 
@@ -185,12 +186,15 @@ ratio to analytic critical curve = ${res.calibration} (NOT a calibration — the
     mass.value = String(Math.log10(p.massSun)); showMass();
     acc.value = String(Math.log10(p.lambda)); showAcc();
     jet.value = String(state.jetStrength); jetv.textContent = state.jetStrength.toFixed(1);
-    pcap.textContent = p.caption; pcap.hidden = false;
+    pcap.textContent = p.caption; pcap.hidden = !p.caption;
     rebuildLUTs(); physicsChanged();
   }
+  /** The opening view: what "Default view" restores after a preset or custom changes. */
+  const DEFAULT_VIEW: Preset = { id: "default", name: "Default view", massSun: CUSTOM_DEFAULT.massSun, a: 0.9, inclDeg: 72,
+    lambda: CUSTOM_DEFAULT.lambda, jet: true, caption: "" };
   presetSel.addEventListener("change", () => {
-    const p = PRESETS.find((q) => q.id === presetSel.value);
-    if (p) applyPreset(p); else pcap.hidden = true;
+    const p = presetSel.value === "default" ? DEFAULT_VIEW : PRESETS.find((q) => q.id === presetSel.value);
+    if (p) applyPreset(p);
   });
 
   const sky = $("sky") as HTMLInputElement, skyv = $("skyv");
