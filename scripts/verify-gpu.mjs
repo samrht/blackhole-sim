@@ -121,5 +121,28 @@ cacheOk = step(`lit ${lit1.toFixed(1)}`, lit1 > 5) && cacheOk;
 const appDiag = diagSince(dApp);
 console.log(`${cacheOk && !appDiag ? "✓ PASS" : "✗ FAIL"}  cache in the app: ${steps.join(", ")}${appDiag}`);
 if (!cacheOk || appDiag) failed = true;
+// Presets (spec 2026-10-01): each one must leave the app lit, back in `cached` mode, warning-free.
+// Spin/inclination changes rebuild the cache; mass/accretion are shading-only (Review Focus 1).
+const dPre = diags.length;
+const presetIds = await page.evaluate(() => [...document.getElementById("preset").options].map((o) => o.value).filter((v) => v !== "custom"));
+const preSteps = [];
+for (const id of presetIds) {
+  await page.selectOption("#preset", id);
+  await page.waitForTimeout(300); // let the new geometry key reach the scheduler (else "cached" is the old preset's)
+  const cached = await waitMode("cached");
+  await page.waitForTimeout(1500);
+  const lit = await meanBrightness();
+  preSteps.push(`${id} ${cached && lit > 2 ? "ok" : "FAILED"} (lit ${lit.toFixed(1)})`);
+  if (!cached || !(lit > 2)) failed = true;
+}
+// Dragging the canvas tilts the camera: that must leave the preset for Custom (Review Focus 4).
+await page.mouse.move(700, 300); await page.mouse.down(); await page.mouse.move(700, 360, { steps: 6 }); await page.mouse.up();
+const afterDrag = await page.evaluate(() => document.getElementById("preset").value);
+preSteps.push(`drag -> ${afterDrag}`);
+if (afterDrag !== "custom") failed = true;
+const preDiag = diagSince(dPre);
+if (preDiag) failed = true;
+console.log(`${preSteps.every((s) => !s.includes("FAILED")) && afterDrag === "custom" && !preDiag ? "✓ PASS" : "✗ FAIL"}  presets: ${preSteps.join(", ")}${preDiag}`);
+
 await browser.close();
 process.exit(failed ? 1 : 0);

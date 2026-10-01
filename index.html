@@ -54,6 +54,10 @@
   .ro b{font-size:14px;font-weight:500;color:var(--ink);font-variant-numeric:tabular-nums}
   .ro b i{font-style:normal;color:var(--muted);font-size:10px;margin-left:2px}
   .ro.wide{grid-column:1/-1}
+  #preset{width:100%;margin-top:6px;padding:7px 8px;background:transparent;color:var(--ink);
+    border:1px solid var(--hair);border-radius:8px;font:inherit;font-size:12px}
+  #preset option{background:#0b0d12;color:var(--ink)}
+  #pcap{margin:9px 0 0;font-size:10.5px;line-height:1.55;color:var(--muted)}
   #gpuwarn{margin:12px 0 0;font-size:11px;line-height:1.5;color:#ffb070}
 
   #hint{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);
@@ -74,12 +78,25 @@
     <div class="rule"></div>
 
     <div class="ctrl">
+      <div class="row"><label>Object</label></div>
+      <select id="preset"><option value="custom">Custom</option></select>
+      <p id="pcap" hidden></p>
+    </div>
+    <div class="ctrl">
       <div class="row"><label>Spin&nbsp; a★</label><span class="val"><b id="spinv">0.900</b></span></div>
       <input id="spin" type="range" min="0" max="0.998" step="0.001" value="0.9">
     </div>
     <div class="ctrl">
       <div class="row"><label>Inclination</label><span class="val"><b id="inclv">72</b>°</span></div>
       <input id="incl" type="range" min="1" max="89" step="1" value="72">
+    </div>
+    <div class="ctrl">
+      <div class="row"><label>Mass</label><span class="val"><b id="massv">1.00e8</b> M☉</span></div>
+      <input id="mass" type="range" min="0" max="10" step="0.01" value="8">
+    </div>
+    <div class="ctrl">
+      <div class="row"><label>Accretion</label><span class="val"><b id="accv">3.7e-4</b> L<sub>Edd</sub></span></div>
+      <input id="acc" type="range" min="-10" max="0" step="0.01" value="-3.44">
     </div>
     <div class="ctrl">
       <div class="row"><label>Exposure</label><span class="val"><b id="expv">-1.0</b> EV</span></div>
@@ -126,6 +143,9 @@
       <div class="ro"><span>Horizon r₊</span><b id="rh">—</b></div>
       <div class="ro"><span>ISCO</span><b id="risco">—</b></div>
       <div class="ro"><span>Photon orbit</span><b id="rph">—</b></div>
+      <div class="ro"><span>Disk peak</span><b id="tpk">—</b></div>
+      <div class="ro"><span>ISCO orbit</span><b id="pisco">—</b></div>
+      <div class="ro wide"><span>1 s on screen</span><b id="tscale">—</b></div>
       <div class="ro"><span>Samples</span><b id="spp">—</b></div>
       <div class="ro wide"><span>GPU</span><b id="gpu">—</b></div>
       <div class="ro"><span>Render scale</span><b id="rscale">100%</b></div>

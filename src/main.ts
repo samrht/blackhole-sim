@@ -3,8 +3,11 @@ import type { UniformValues } from "./render/uniforms";
 import { ScaleController } from "./render/scale";
 import { geometryKey, BuildScheduler, chooseMode } from "./render/cache-plan";
 import { describeGpu, isIntegratedGpu } from "./render/gpuinfo";
-import { buildTempLUT, buildVisibleLUT, lumNormFor } from "./physics/lookups";
+import { buildTempLUT, buildVisibleLUT } from "./physics/lookups";
 import { iscoRadius, photonOrbit } from "./physics/orbits";
+import { PRESETS, CUSTOM_DEFAULT, type Preset } from "./physics/presets";
+import { computeReadouts, type Readouts } from "./physics/readouts";
+import { formatLength, formatDuration } from "./physics/units";
 import type { HotSpot } from "./physics/emission";
 
 const canvas = document.getElementById("c") as HTMLCanvasElement;
@@ -80,7 +83,7 @@ ratio to analytic critical curve = ${res.calibration} (NOT a calibration — the
   let geoKey = "", cachedFrame = 0, wasCached = false, liveScale = r.scale;
   let dtEma = 0, lastFpsShow = 0; // display rate (what the user sees): EMA of rAF deltas, shown <= 2x/s
 
-  const state = { a: 0.9, incl: 72, exposure: -1.0, timeScale: 1.0, turbAmp: 0.6, breatheAmp: 0.0, playing: true, flareScale: 1.0, jetStrength: 1.0, jetGamma: 5.0, jetLength: 60.0, jetKnots: 0.7, skyStrength: 1.0, maxSteps: 4800 };
+  const state = { a: 0.9, incl: 72, exposure: -1.0, timeScale: 1.0, turbAmp: 0.6, breatheAmp: 0.0, playing: true, flareScale: 1.0, jetStrength: 1.0, jetGamma: 5.0, jetLength: 60.0, jetKnots: 0.7, skyStrength: 1.0, maxSteps: 4800, massSun: CUSTOM_DEFAULT.massSun, lambda: CUSTOM_DEFAULT.lambda };
   const SPEED = 20;        // coordinate-time M advanced per real second at timeScale = 1
   const EMA_BLEND = 0.15;  // trailing-window weight while animating
   let simTime = 0, lastNow = 0;
@@ -95,14 +98,17 @@ ratio to analytic critical curve = ${res.calibration} (NOT a calibration — the
     return f;
   };
   const rOut = 40;
-  // Peak disk temperature (K); replaced by the physical value from mass and accretion in Task 5.
-  const T_PEAK = 3.0e4;
   const COLOR_LUT = buildVisibleLUT();
+  // Physical state -> peak disk temperature, lumNorm and the panel's physical readouts (spec
+  // 2026-10-01). Mass and accretion are shading-only: they never enter the geometry key.
+  let phys: Readouts = computeReadouts(state, SPEED);
+  const refreshPhysics = () => { phys = computeReadouts(state, SPEED); };
 
   // --- DOM controls + live physics readouts -------------------------------------------------
   const spin = $("spin") as HTMLInputElement, incl = $("incl") as HTMLInputElement, exp = $("exp") as HTMLInputElement;
   const spinv = $("spinv"), inclv = $("inclv"), expv = $("expv");
   const rhEl = $("rh"), riscoEl = $("risco"), rphEl = $("rph"), sppEl = $("spp");
+  const tpkEl = $("tpk"), piscoEl = $("pisco"), tscaleEl = $("tscale");
   const inM = (x: number) => `${x.toFixed(2)}<i>M</i>`;
 
   let rIn = iscoRadius(state.a, true);
@@ -115,17 +121,21 @@ ratio to analytic critical curve = ${res.calibration} (NOT a calibration — the
     r.rebind();
   }
   function refreshReadouts() {
-    rhEl.innerHTML = inM(1 + Math.sqrt(Math.max(0, 1 - state.a * state.a)));
-    riscoEl.innerHTML = inM(iscoRadius(state.a, true));
-    rphEl.innerHTML = inM(photonOrbit(state.a, true));
+    const rh = 1 + Math.sqrt(Math.max(0, 1 - state.a * state.a));
+    rhEl.innerHTML = `${inM(rh)} <i>${formatLength(phys.horizonM)}</i>`;
+    riscoEl.innerHTML = `${inM(iscoRadius(state.a, true))} <i>${formatLength(phys.iscoM)}</i>`;
+    rphEl.innerHTML = `${inM(photonOrbit(state.a, true))} <i>${formatLength(phys.photonM)}</i>`;
+    tpkEl.textContent = `${Math.round(phys.tPeakK).toLocaleString("en-US", { maximumSignificantDigits: 3 })} K`;
+    piscoEl.textContent = formatDuration(phys.iscoPeriodS);
+    tscaleEl.textContent = state.timeScale > 0 ? `≈ ${formatDuration(phys.realSecondsPerScreenSecond)}` : "—";
   }
 
   spin.addEventListener("input", () => {
     state.a = +spin.value; spinv.textContent = state.a.toFixed(3);
-    rebuildLUTs(); refreshReadouts(); reset();
+    rebuildLUTs(); markCustom(); physicsChanged(); // spin changes T_peak too (eta(a), flux profile)
   });
   incl.addEventListener("input", () => {
-    state.incl = +incl.value; inclv.textContent = String(state.incl); reset();
+    state.incl = +incl.value; inclv.textContent = String(state.incl); markCustom(); reset();
   });
   exp.addEventListener("input", () => {
     // exposure is applied at present time, so it updates live without re-accumulating
@@ -135,7 +145,7 @@ ratio to analytic critical curve = ${res.calibration} (NOT a calibration — the
   const ts = $("ts") as HTMLInputElement, turb = $("turb") as HTMLInputElement, flare = $("flare") as HTMLInputElement;
   const tsv = $("tsv"), turbv = $("turbv"), flarev = $("flarev"), playBtn = $("playpause") as HTMLButtonElement;
 
-  ts.addEventListener("input", () => { state.timeScale = +ts.value; tsv.textContent = state.timeScale.toFixed(1); });
+  ts.addEventListener("input", () => { state.timeScale = +ts.value; tsv.textContent = state.timeScale.toFixed(1); refreshPhysics(); refreshReadouts(); });
   turb.addEventListener("input", () => { state.turbAmp = +turb.value; turbv.textContent = state.turbAmp.toFixed(2); reset(); });
   flare.addEventListener("input", () => {
     state.flareScale = +flare.value; flarev.textContent = state.flareScale.toFixed(1);
@@ -154,6 +164,35 @@ ratio to analytic critical curve = ${res.calibration} (NOT a calibration — the
   jg.addEventListener("input", () => { state.jetGamma = +jg.value; jgv.textContent = state.jetGamma.toFixed(1); reset(); });
   jk.addEventListener("input", () => { state.jetKnots = +jk.value; jkv.textContent = state.jetKnots.toFixed(2); reset(); });
 
+  // --- Object presets, Mass and Accretion (spec 2026-10-01) ---------------------------------
+  const presetSel = $("preset") as HTMLSelectElement, pcap = $("pcap");
+  for (const p of PRESETS) presetSel.add(new Option(p.name, p.id));
+  const mass = $("mass") as HTMLInputElement, acc = $("acc") as HTMLInputElement, massv = $("massv"), accv = $("accv");
+  const showMass = () => { massv.textContent = state.massSun.toExponential(2); };
+  const showAcc = () => { accv.textContent = state.lambda.toExponential(1); };
+  /** Any change to spin, inclination, mass or accretion (drag-tilt included) leaves the preset. */
+  function markCustom() { if (presetSel.value !== "custom") { presetSel.value = "custom"; pcap.hidden = true; } }
+  function physicsChanged() { refreshPhysics(); refreshReadouts(); reset(); }
+
+  mass.addEventListener("input", () => { state.massSun = 10 ** +mass.value; showMass(); markCustom(); physicsChanged(); });
+  acc.addEventListener("input", () => { state.lambda = 10 ** +acc.value; showAcc(); markCustom(); physicsChanged(); });
+
+  function applyPreset(p: Preset) {
+    state.a = p.a; state.incl = p.inclDeg; state.massSun = p.massSun; state.lambda = p.lambda;
+    state.jetStrength = p.jet ? 1 : 0;
+    spin.value = String(p.a); spinv.textContent = p.a.toFixed(3);
+    incl.value = String(p.inclDeg); inclv.textContent = String(p.inclDeg);
+    mass.value = String(Math.log10(p.massSun)); showMass();
+    acc.value = String(Math.log10(p.lambda)); showAcc();
+    jet.value = String(state.jetStrength); jetv.textContent = state.jetStrength.toFixed(1);
+    pcap.textContent = p.caption; pcap.hidden = false;
+    rebuildLUTs(); physicsChanged();
+  }
+  presetSel.addEventListener("change", () => {
+    const p = PRESETS.find((q) => q.id === presetSel.value);
+    if (p) applyPreset(p); else pcap.hidden = true;
+  });
+
   const sky = $("sky") as HTMLInputElement, skyv = $("skyv");
   sky.addEventListener("input", () => { state.skyStrength = +sky.value; skyv.textContent = state.skyStrength.toFixed(2); reset(); });
 
@@ -169,7 +208,7 @@ ratio to analytic critical curve = ${res.calibration} (NOT a calibration — the
     const next = Math.min(89, Math.max(1, state.incl + (e.clientY - lastY) * 0.25));
     lastY = e.clientY;
     if (Math.round(next) !== state.incl) {
-      state.incl = Math.round(next); incl.value = String(state.incl); inclv.textContent = String(state.incl); reset();
+      state.incl = Math.round(next); incl.value = String(state.incl); inclv.textContent = String(state.incl); markCustom(); reset();
     }
   });
 
@@ -181,6 +220,7 @@ ratio to analytic critical curve = ${res.calibration} (NOT a calibration — the
   });
 
   rebuildLUTs();
+  showMass(); showAcc();
   refreshReadouts();
   r.uploadHotSpots(packSpots(state.flareScale));
 
@@ -234,7 +274,7 @@ ratio to analytic critical curve = ${res.calibration} (NOT a calibration — the
     const setIndex = mode === "cached" ? cachedFrame % sched.completedSets : 0;
     const u: UniformValues = {
       resW: r.width, resH: r.height, outW: r.displayW, outH: r.displayH, a: state.a, incl: state.incl * Math.PI / 180,
-      rObs: 1000, fovScale: 14, rIn, rOut, Tpeak: T_PEAK, lumNorm: lumNormFor(T_PEAK), exposure: state.exposure,
+      rObs: 1000, fovScale: 14, rIn, rOut, Tpeak: phys.tPeakK, lumNorm: phys.lumNorm, exposure: state.exposure,
       time: simTime, frame: sample, reset: sample === 0 ? 1 : 0, maxSteps: state.maxSteps,
       blend, timeScale: state.timeScale, turbAmp: state.turbAmp,
       breatheAmp: state.breatheAmp, nSpots: baseSpots.length,
