@@ -1,7 +1,7 @@
 # Synchrotron jet (Tier 2) — design
 
 **Date:** 2026-10-02
-**Status:** approved in conversation; awaiting written-spec review
+**Status:** approved (2026-10-02); plan `docs/plans/2026-10-02-synchrotron-jet.md`
 **Roadmap item:** `docs/ROADMAP.md`, "Physics features: Synchrotron jet emission"
 
 ## 1. Intent (agreed)
@@ -79,16 +79,18 @@ All in Gaussian cgs units; r_g = GM/c² (cm), lengths in the shader in units of 
   `d𝓘 = (j′/ν′³) ds′ · e^(−τ)` and `τ += α′ ds′`, ds′ = r_g · |p·u| · dλ (the plasma-frame path
   length of an affine step), accumulated per jet quadrature sample (`JET_DL` chord samples, as now).
   The disk (and sky) behind the jet are attenuated by e^(−τ).
-- **Colour:** I_ν at three visible frequencies (λ = 450, 550, 650 nm); a power law fitted through them
-  is converted to linear sRGB with the same CIE colour-matching integral as the disk (a 1-D LUT over
-  spectral slope, built on the CPU).
+- **Colour:** I_ν at three visible frequencies (λ = 450, 550, 650 nm), each taken as constant over its
+  band (360–500 / 500–600 / 600–830 nm), converted to linear sRGB with the same CIE colour-matching sum as
+  the disk: a constant 3×3 matrix built on the CPU. (Revised in planning from a LUT over spectral slope:
+  the matrix needs no power-law assumption, so it also holds where self-absorption bends the spectrum;
+  a blackbody fed through it reproduces the disk path's luminance to 0.6 %.)
 
 ### 2.5 Common absolute scale with the disk
 
 The disk is already shaded as visible-band radiance at T_obs divided by the visible luminance at
-T_peak (`lumNorm`). That ratio is unchanged; what changes is that the **normaliser is stated in
-absolute units** (the Planck function in cgs at T_peak), and the jet's absolute visible radiance is
-divided by the **same** normaliser. Exposure keeps its meaning; jet and disk brightness are
+T_peak (`lumNorm`). That ratio is unchanged; the jet's absolute I_ν (cgs) is mapped into the **same
+units** as the disk's blackbody radiance (the band matrix includes the cgs Planck prefactor 2hc² and
+the disk's reference luminance), then multiplied by the **same** `lumNorm`. Exposure keeps its meaning; jet and disk brightness are
 directly comparable. `JET_TINT`, `JET_GAIN` and `JET_CEIL` are deleted.
 
 ## 3. Interfaces and data flow
