@@ -3,7 +3,8 @@ struct Uniforms {
   Tpeak: f32, exposure: f32, time: f32, frame: u32, reset: u32, maxSteps: u32,
   blend: f32, timeScale: f32, turbAmp: f32, breatheAmp: f32, nSpots: u32,
   jetStrength: f32, jetGamma: f32, jetLength: f32, jetKnots: f32,
-  skyStrength: f32,
+  skyStrength: f32, outW: f32, outH: f32,
+  jitterMode: u32, setIndex: u32, rowStart: u32, rowEnd: u32,
 };
 @group(0) @binding(0) var<uniform> U: Uniforms;
 @group(0) @binding(1) var<storage, read_write> accum: array<vec4<f32>>;
@@ -33,6 +34,21 @@ fn hash2(p: vec2<u32>, frame: u32) -> vec2<f32> {
   let h = (n ^ (n >> 15u)) * 2246822519u;
   let h2 = (h ^ (h >> 13u)) * 3266489917u;
   return vec2<f32>(f32(h & 0xffffu)/65535.0, f32(h2 & 0xffffu)/65535.0);
+}
+
+// Fixed rotated-grid jitter sets of the geodesic cache (spec 2026-10-01 3.2).
+// Twin: JITTER in src/render/cache-plan.ts.
+fn fixedJitter(k: u32) -> vec2<f32> {
+  switch (k & 3u) {
+    case 0u: { return vec2<f32>(-0.125, -0.375); }
+    case 1u: { return vec2<f32>(0.375, -0.125); }
+    case 2u: { return vec2<f32>(0.125, 0.375); }
+    default: { return vec2<f32>(-0.375, 0.125); }
+  }
+}
+fn pixelJitter(p: vec2<u32>) -> vec2<f32> {
+  if (U.jitterMode == 1u) { return fixedJitter(U.setIndex); }
+  return hash2(p, U.frame) - 0.5;
 }
 
 // Dave Hoskins hash33 -> vec3 in [0,1)
@@ -202,7 +218,7 @@ fn skyDir(s: State, a: f32) -> vec3<f32> {
 
   // pixel -> impact parameters (alpha,beta) in units of M, with sub-pixel jitter for AA
   let aspect = U.res.x / U.res.y;
-  let jit = hash2(gid.xy, U.frame) - 0.5;
+  let jit = pixelJitter(gid.xy);
   let ndc = (vec2<f32>(f32(gid.x), f32(gid.y)) + 0.5 + jit) / U.res * 2.0 - 1.0;
   let alpha = ndc.x * U.fovScale * aspect;
   let beta  = -ndc.y * U.fovScale;

@@ -5,6 +5,7 @@
 //         + skyStrength (1)                                             -> 20 floats
 //         + outW,outH (2)                                               -> 22 floats
 // uint:   frame,reset,maxSteps (3) + nSpots (1)                        -> 4 uints
+//         + jitterMode,setIndex,rowStart,rowEnd (4, geodesic cache)    -> 8 uints
 export interface UniformValues {
   resW: number; resH: number; a: number; incl: number; rObs: number; fovScale: number;
   rIn: number; rOut: number; Tpeak: number; exposure: number; time: number;
@@ -13,9 +14,13 @@ export interface UniformValues {
   jetStrength: number; jetGamma: number; jetLength: number; jetKnots: number;
   skyStrength: number;
   outW: number; outH: number;
+  /** Geodesic cache (spec 2026-10-01): 0 = per-frame hash jitter, 1 = fixed jitter set `setIndex`. */
+  jitterMode?: number; setIndex?: number;
+  /** Build pass row slice [rowStart, rowEnd). */
+  rowStart?: number; rowEnd?: number;
 }
-export const UNIFORM_FLOATS = 22, UNIFORM_UINTS = 4;
-export const UNIFORM_SIZE = Math.ceil((UNIFORM_FLOATS + UNIFORM_UINTS) / 4) * 16; // -> 112 bytes
+export const UNIFORM_FLOATS = 22, UNIFORM_UINTS = 8;
+export const UNIFORM_SIZE = Math.ceil((UNIFORM_FLOATS + UNIFORM_UINTS) / 4) * 16; // -> 128 bytes
 
 export function packUniforms(u: UniformValues): ArrayBuffer {
   const buf = new ArrayBuffer(UNIFORM_SIZE);
@@ -29,5 +34,6 @@ export function packUniforms(u: UniformValues): ArrayBuffer {
   f[19] = u.jetStrength; f[20] = u.jetGamma; f[21] = u.jetLength; f[22] = u.jetKnots;
   f[23] = u.skyStrength;
   f[24] = u.outW; f[25] = u.outH;
+  i[26] = u.jitterMode ?? 0; i[27] = u.setIndex ?? 0; i[28] = u.rowStart ?? 0; i[29] = u.rowEnd ?? 0;
   return buf;
 }
