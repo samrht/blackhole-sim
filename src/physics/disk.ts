@@ -21,7 +21,8 @@ export function pageThorneFluxShape(r: number, a: number, prograde = true): numb
 
 /** Normalized temperature shape T(r)/T_peak in [0,1] (∝ F^{1/4}). */
 let _cache: { a: number; prograde: boolean; peak: number } | null = null;
-function peakFlux(a: number, prograde: boolean): number {
+/** Maximum of pageThorneFluxShape over r (the disk's peak flux for Mdot = M = 1). Cached per (a, prograde). */
+export function peakFluxShape(a: number, prograde = true): number {
   if (_cache && _cache.a === a && _cache.prograde === prograde) return _cache.peak;
   const ri = iscoRadius(a, prograde);
   let peak = 0;
@@ -32,5 +33,5 @@ function peakFlux(a: number, prograde: boolean): number {
 export function temperatureShape(r: number, a: number, prograde = true): number {
   const f = pageThorneFluxShape(r, a, prograde);
   if (f <= 0) return 0;
-  return Math.pow(f / peakFlux(a, prograde), 0.25);
+  return Math.pow(f / peakFluxShape(a, prograde), 0.25);
 }
