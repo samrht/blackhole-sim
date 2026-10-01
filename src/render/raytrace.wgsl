@@ -211,15 +211,75 @@ fn skyDir(s: State, a: f32) -> vec3<f32> {
     dr * ct - r * st * dth));
 }
 
-@compute @workgroup_size(8,8) fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
-  if (gid.x >= u32(U.res.x) || gid.y >= u32(U.res.y)) { return; }
-  let idx = gid.y * u32(U.res.x) + gid.x;
+// --- Shared pieces of the trace. `main` (live), and the geodesic cache's `build` and `shade` passes
+// (spec 2026-10-01) call these, so a cached frame runs the same maths as a live one. -------------
+
+const KIND_SHADOW = 0u; const KIND_DISK = 1u; const KIND_SKY = 2u; const KIND_LIVE = 3u;
+
+// Background along an escaped ray's bent asymptotic direction: the baked panorama crossfaded over
+// the procedural starfield by skyStrength (0 => procedural only).
+fn skyColor(dir: vec3<f32>) -> vec3<f32> {
+  let mixT = clamp(U.skyStrength, 0.0, 1.0);
+  return mix(starfield(dir), skySample(dir) * U.skyStrength, mixT);
+}
+
+// Doppler + gravitational redshift factor of the disk matter at rHit seen along a ray with xi.
+fn diskG(rHit: f32, xi: f32, a: f32) -> f32 {
+  let Om = omegaKep(rHit, a);
+  let gl = gLow(rHit, PI*0.5, a);
+  let rad = -(gl[0] + 2.0*Om*gl[1] + Om*Om*gl[4]);
+  return sqrt(max(0.0, rad)) / (1.0 - Om*xi);
+}
+
+// Observed disk colour at a hit: the only time dependence is the co-rotating pattern phase psi.
+fn shadeDisk(rHit: f32, phiHit: f32, g: f32, a: f32) -> vec3<f32> {
+  let Tn = sampleTemp(rHit);
+  let Om = omegaKep(rHit, a);
+  let Tobs = U.Tpeak * g * Tn;                 // observed blackbody temperature
+  let psi = phiHit - Om * U.time * U.timeScale;// co-rotating pattern phase
+  let E = emissionFieldE(rHit, psi);           // time-varying brightness (==1 when features off)
+  return sampleColor(Tobs) * pow(g * Tn, 4.0) * E;
+}
+
+// Optically-thin jet radiance gathered over one step s -> sNew (zero outside the emitting region).
+fn jetStep(s: State, sNew: State, dl: f32) -> vec3<f32> {
+  let jz = s.x.y * cos(s.x.z);
+  let e = jetEmissionJ(s.x.y, s.x.z, U.time);
+  let dvec = cartOf(sNew.x) - cartOf(s.x);                  // inward step (camera -> hole)
+  // guard normalize() against a zero-length step: a NaN mu here would poison the EMA accum
+  // buffer permanently (mix(accum, NaN, blend) stays NaN). Effectively unreachable, cheap insurance.
+  if (e > 0.0 && dot(dvec, dvec) > 1e-12) {
+    let marchDir = normalize(dvec);
+    let axisSign = select(-1.0, 1.0, jz >= 0.0);
+    let mu = -axisSign * marchDir.z;                        // emitter outflow toward observer
+    return JET_TINT * (e * JET_GAIN) * boostJ(mu, U.jetGamma) * dl;
+  }
+  return vec3<f32>(0.0);
+}
+
+// Where jetEmissionJ can be non-zero for SOME jetStrength/time (twin: inJetEnvelope in jet.ts).
+// Geometric only, so the cache's bookmark never depends on jetStrength.
+fn inJetEnvelope(r: f32, th: f32) -> bool {
+  let z = r * cos(th);
+  let az = abs(z);
+  if (az < JET_ZBASE || az > U.jetLength) { return false; }
+  return r * sin(th) / funnelEdgeJ(z) <= 1.2;
+}
+
+struct TraceOut {
+  color: vec3<f32>, jet: vec3<f32>,
+  kind: u32, payload: vec3<f32>,   // DISK: (rHit, phiHit, g); SKY: asymptotic direction; else 0
+  hasBm: bool, bm: State, nJet: u32, // record only: first state inside the jet envelope, steps through the last
+};
+
+fn traceRay(pix: vec2<u32>, jit: vec2<f32>, record: bool) -> TraceOut {
+  var out: TraceOut;
+  out.kind = KIND_SHADOW; out.payload = vec3<f32>(0.0); out.hasBm = false; out.nJet = 0u;
   let a = U.a; let i = U.incl;
 
   // pixel -> impact parameters (alpha,beta) in units of M, with sub-pixel jitter for AA
   let aspect = U.res.x / U.res.y;
-  let jit = pixelJitter(gid.xy);
-  let ndc = (vec2<f32>(f32(gid.x), f32(gid.y)) + 0.5 + jit) / U.res * 2.0 - 1.0;
+  let ndc = (vec2<f32>(f32(pix.x), f32(pix.y)) + 0.5 + jit) / U.res * 2.0 - 1.0;
   let alpha = ndc.x * U.fovScale * aspect;
   let beta  = -ndc.y * U.fovScale;
   // Bardeen impact parameters -> conserved (xi, eta). Sole copy lives in camera-shared.wgsl,
@@ -237,8 +297,13 @@ fn skyDir(s: State, a: f32) -> vec3<f32> {
   var color = vec3<f32>(0.0);
   var resolved = false; // set by each real termination; false => the step budget ran out
   var jetAccum = vec3<f32>(0.0); // optically-thin jet emission integrated along the ray
+  var firstJ = 0u; var lastJ = 0u;
 
   for (var step = 0u; step < U.maxSteps; step++) {
+    if (record && inJetEnvelope(s.x.y, s.x.z)) {
+      if (!out.hasBm) { out.hasBm = true; out.bm = s; firstJ = step; }
+      lastJ = step;
+    }
     // dl > 0 with p_r < 0 integrates INWARD along the reversed worldline.
     let r = s.x.y;
     let far = r > U.rOut * 1.5; // same threshold as the far branch of stepSize: monitor OFF out there
@@ -252,19 +317,7 @@ fn skyDir(s: State, a: f32) -> vec3<f32> {
 
     // Optically-thin jet: integrate emissivity * relativistic beaming along the ray. The disk
     // hit below still `break`s (opaque), so jet segments behind the disk/horizon are occluded.
-    if (U.jetStrength > 0.0) {
-      let jz = s.x.y * cos(s.x.z);
-      let e = jetEmissionJ(s.x.y, s.x.z, U.time);
-      let dvec = cartOf(sNew.x) - cartOf(s.x);                  // inward step (camera -> hole)
-      // guard normalize() against a zero-length step: a NaN mu here would poison the EMA accum
-      // buffer permanently (mix(accum, NaN, blend) stays NaN). Effectively unreachable, cheap insurance.
-      if (e > 0.0 && dot(dvec, dvec) > 1e-12) {
-        let marchDir = normalize(dvec);
-        let axisSign = select(-1.0, 1.0, jz >= 0.0);
-        let mu = -axisSign * marchDir.z;                        // emitter outflow toward observer
-        jetAccum += JET_TINT * (e * JET_GAIN) * boostJ(mu, U.jetGamma) * dl;
-      }
-    }
+    if (U.jetStrength > 0.0) { jetAccum += jetStep(s, sNew, dl); }
 
     // disk crossing: equatorial plane th = PI/2 (take the first hit -> optically-thick top surface).
     // A step that moved theta by more than 0.5 rad is not a plane crossing (a legitimate near-field
@@ -275,16 +328,10 @@ fn skyDir(s: State, a: f32) -> vec3<f32> {
       let frac = f0 / (f0 - f1);
       let rHit = mix(s.x.y, sNew.x.y, frac);
       if (rHit >= U.rIn && rHit <= U.rOut) {
-        let Tn = sampleTemp(rHit);
-        let Om = omegaKep(rHit, a);
-        let gl = gLow(rHit, PI*0.5, a);
-        let rad = -(gl[0] + 2.0*Om*gl[1] + Om*Om*gl[4]);
-        let g = sqrt(max(0.0, rad)) / (1.0 - Om*xi); // Doppler + gravitational redshift factor
-        let Tobs = U.Tpeak * g * Tn;                 // observed blackbody temperature
+        let g = diskG(rHit, xi, a);
         let phiHit = mix(s.x.w, sNew.x.w, frac);     // azimuth of the emitting matter
-        let psi = phiHit - Om * U.time * U.timeScale;// co-rotating pattern phase
-        let E = emissionFieldE(rHit, psi);           // time-varying brightness (==1 when features off)
-        color = sampleColor(Tobs) * pow(g * Tn, 4.0) * E;
+        color = shadeDisk(rHit, phiHit, g, a);
+        out.kind = KIND_DISK; out.payload = vec3<f32>(rHit, phiHit, g);
         resolved = true;
         break;
       }
@@ -300,9 +347,8 @@ fn skyDir(s: State, a: f32) -> vec3<f32> {
       // The deflected direction makes the starfield appear gravitationally lensed —
       // warped and magnified into a ring around the shadow.
       let dir = skyDir(s, a);
-      // Baked panorama crossfaded over the procedural starfield by skyStrength (0 => unchanged).
-      let mixT = clamp(U.skyStrength, 0.0, 1.0);
-      color = mix(starfield(dir), skySample(dir) * U.skyStrength, mixT);
+      color = skyColor(dir);
+      out.kind = KIND_SKY; out.payload = dir;
       resolved = true;
       break;
     }
@@ -324,14 +370,19 @@ fn skyDir(s: State, a: f32) -> vec3<f32> {
       color = vec3<f32>(0.0);
     } else {
       let dir = skyDir(s, a);
-      let mixT = clamp(U.skyStrength, 0.0, 1.0);
-      color = mix(starfield(dir), skySample(dir) * U.skyStrength, mixT);
+      color = skyColor(dir);
+      out.kind = KIND_SKY; out.payload = dir;
     }
   }
+  out.color = color; out.jet = jetAccum;
+  if (out.hasBm) { out.nJet = lastJ - firstJ + 1u; }
+  return out;
+}
 
-  // Temporal EMA: blend = 1/(frame+1) reproduces the Tier-1 running mean when static; a fixed
-  // blend (~0.15) tracks an animating scene. blend==1 (first frame after a reset) clears cleanly.
-  // Additive optically-thin jet on top of whatever the ray terminated on (disk/starfield/shadow).
+// Temporal EMA: blend = 1/(frame+1) reproduces the Tier-1 running mean when static; a fixed
+// blend (~0.15) tracks an animating scene. blend==1 (first frame after a reset) clears cleanly.
+// Additive optically-thin jet on top of whatever the ray terminated on (disk/starfield/shadow).
+fn storeComposite(idx: u32, color: vec3<f32>, jetAccum: vec3<f32>) {
   let raw = color + U.jetStrength * min(jetAccum, vec3<f32>(JET_CEIL));
   // Single choke point: nothing non-finite may enter accum. The in-loop escape branch above reads
   // s.x without the `usable` guard, so a diverged RK4 ray (r = +inf compares true, th/ph NaN) can
@@ -342,4 +393,11 @@ fn skyDir(s: State, a: f32) -> vec3<f32> {
   let finite = all(raw > vec3<f32>(-1e30)) && all(raw < vec3<f32>(1e30));
   let composited = select(vec3<f32>(0.0), raw, finite);
   accum[idx] = vec4<f32>(mix(accum[idx].rgb, composited, U.blend), 1.0);
+}
+
+@compute @workgroup_size(8,8) fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+  if (gid.x >= u32(U.res.x) || gid.y >= u32(U.res.y)) { return; }
+  let idx = gid.y * u32(U.res.x) + gid.x;
+  let t = traceRay(gid.xy, pixelJitter(gid.xy), false);
+  storeComposite(idx, t.color, t.jet);
 }
