@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  JET, funnelEdge, wallProfile, knots, dopplerBoost, jetEmission,
+  JET, funnelEdge, wallProfile, knots, dopplerBoost, jetEmission, inJetEnvelope,
 } from "../src/physics/jet";
 
 describe("jet geometry", () => {
@@ -49,5 +49,28 @@ describe("jet living emission field", () => {
     expect(jetEmission(1.5, thAxis, 0, 1, 1, 60, 0.7)).toBe(0); // below zBase launch
     expect(jetEmission(400, thAxis, 0, 1, 1, 60, 0.7)).toBe(0); // beyond jetLength
     expect(jetEmission(8, Math.PI / 2, 0, 1, 1, 60, 0.7)).toBe(0); // equatorial: outside funnel
+  });
+});
+
+describe("jet envelope (geodesic-cache bookmark region)", () => {
+  it("contains every point where the jet can emit", () => {
+    // jetEmission > 0 anywhere => inJetEnvelope true, over a grid and several times
+    for (let r = 1.2; r < 80; r *= 1.07) {
+      for (let th = 0.001; th < Math.PI; th += 0.013) {
+        for (const t of [0, 3.3, 77]) {
+          if (jetEmission(r, th, t, 1, 1, 60, 0.7) > 0) expect(inJetEnvelope(r, th, 60)).toBe(true);
+        }
+      }
+    }
+  });
+  it("excludes below the launch height, beyond the length, and outside the wall", () => {
+    expect(inJetEnvelope(1.5, 0.01, 60)).toBe(false);             // |z| < zBase
+    expect(inJetEnvelope(70, 0.01, 60)).toBe(false);              // |z| > jetLength
+    expect(inJetEnvelope(20, Math.PI / 2 - 0.2, 60)).toBe(false); // far outside the funnel
+    expect(inJetEnvelope(20, 0.03, 60)).toBe(true);               // on the axis, inside
+    expect(inJetEnvelope(20, Math.PI - 0.03, 60)).toBe(true);     // counter-jet
+  });
+  it("does not depend on jet strength (it takes none)", () => {
+    expect(inJetEnvelope.length).toBe(3);
   });
 });

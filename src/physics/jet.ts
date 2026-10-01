@@ -81,3 +81,13 @@ export function jetEmission(
   const turb = 1 + JET.turbAmpJet * (vnoise(Math.log(1 + rho), JET.kz * z) - 0.5) * 2;
   return Math.max(0, w * lengthFalloff(z, jetLength) * knots(z, t, timeScale, jetKnots) * turb);
 }
+
+/** True where jetEmission can be non-zero for SOME jetStrength and time: zBase <= |z| <= jetLength
+ *  and inside the funnel wall (q <= 1.2, wallProfile's cut). Purely geometric, so the geodesic
+ *  cache's jet bookmark never depends on jetStrength (spec 2026-10-01 3.3).
+ *  WGSL twin: inJetEnvelope in raytrace.wgsl. */
+export function inJetEnvelope(r: number, th: number, jetLength: number): boolean {
+  const z = r * Math.cos(th), az = Math.abs(z);
+  if (az < JET.zBase || az > jetLength) return false;
+  return (r * Math.sin(th)) / funnelEdge(z) <= 1.2;
+}
