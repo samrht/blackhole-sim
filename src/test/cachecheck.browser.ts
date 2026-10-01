@@ -20,6 +20,7 @@ const CHECKS: Check[] = [
   withSky(SCENES[3]),
   { ...withSky(SCENES[0], "jet-toggle"), buildJet: 0 },   // built with the jet off, shaded with it on
   { ...withSky(SCENES[0], "overflow"), capacity: 64 },    // bookmark buffer forced tiny -> LIVE fallback
+  { ...withSky(SCENES[0], "delay"), lightDelay: 1 },       // light-travel delay on (jet, spots, turbulence)
   { ...SCENES[2], name: "starfield", skyStrength: 0, starfield: true },
 ];
 const TIMES = [0, 137.5];

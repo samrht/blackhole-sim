@@ -156,6 +156,24 @@ const afterMass = await page.evaluate(() => document.getElementById("preset").va
 const massPass = !leftCached && afterMass === "custom";
 preSteps.push(`mass nudge ${massPass ? "ok" : "FAILED"} (stayed cached ${!leftCached}, selector ${afterMass})`);
 if (!massPass) failed = true;
+// Light delay is shading-only: toggling it while cached must re-shade without a rebuild (Review Focus 1).
+await page.selectOption("#preset", "default");
+await waitMode("cached");
+await page.waitForTimeout(800);
+let delayLeft = false;
+await page.evaluate(() => { const c = document.getElementById("ldelay"); c.checked = !c.checked; c.dispatchEvent(new Event("change", { bubbles: true })); });
+for (let k = 0; k < 20; k++) { await page.waitForTimeout(75); if (!(await page.evaluate(() => document.getElementById("cmode").textContent)).startsWith("cached")) delayLeft = true; }
+await page.evaluate(() => { const c = document.getElementById("ldelay"); c.checked = !c.checked; c.dispatchEvent(new Event("change", { bubbles: true })); });
+preSteps.push(`delay toggle ${!delayLeft ? "ok" : "FAILED"} (stayed cached ${!delayLeft})`);
+if (delayLeft) failed = true;
+// Motion is playback speed: at 0 the scene freezes (Review Focus 2).
+await page.evaluate(() => { const m = document.getElementById("ts"); m.value = "0"; m.dispatchEvent(new Event("input", { bubbles: true })); });
+await page.waitForTimeout(1500);
+const f0 = await meanBrightness(); await page.waitForTimeout(1500); const f1 = await meanBrightness();
+const frozen = Math.abs(f1 - f0) < 1;
+preSteps.push(`motion 0 ${frozen ? "ok" : "FAILED"} (${f0.toFixed(2)} -> ${f1.toFixed(2)})`);
+if (!frozen) failed = true;
+await page.evaluate(() => { const m = document.getElementById("ts"); m.value = "1"; m.dispatchEvent(new Event("input", { bubbles: true })); });
 const preDiag = diagSince(dPre);
 if (preDiag) failed = true;
 console.log(`${preSteps.every((s) => !s.includes("FAILED")) && afterDrag === "custom" && !preDiag ? "✓ PASS" : "✗ FAIL"}  presets: ${preSteps.join(", ")}${preDiag}`);

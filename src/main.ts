@@ -83,8 +83,8 @@ ratio to analytic critical curve = ${res.calibration} (NOT a calibration — the
   let geoKey = "", cachedFrame = 0, wasCached = false, liveScale = r.scale;
   let dtEma = 0, lastFpsShow = 0; // display rate (what the user sees): EMA of rAF deltas, shown <= 2x/s
 
-  const state = { a: 0.9, incl: 72, exposure: -1.0, timeScale: 1.0, turbAmp: 0.6, breatheAmp: 0.0, playing: true, flareScale: 1.0, jetStrength: 1.0, jetGamma: 5.0, jetLength: 60.0, jetKnots: 0.7, skyStrength: 1.0, maxSteps: 4800, massSun: CUSTOM_DEFAULT.massSun, lambda: CUSTOM_DEFAULT.lambda };
-  const SPEED = 20;        // coordinate-time M advanced per real second at timeScale = 1
+  const state = { a: 0.9, incl: 72, exposure: -1.0, timeScale: 1.0, turbAmp: 0.6, breatheAmp: 0.0, playing: true, flareScale: 1.0, jetStrength: 1.0, jetGamma: 5.0, jetLength: 60.0, jetKnots: 0.7, skyStrength: 1.0, maxSteps: 4800, massSun: CUSTOM_DEFAULT.massSun, lambda: CUSTOM_DEFAULT.lambda, lightDelay: true };
+  const SPEED = 20;        // coordinate-time M per real second at Motion 1 (Motion = playback speed)
   const EMA_BLEND = 0.15;  // trailing-window weight while animating
   let simTime = 0, lastNow = 0;
   const baseSpots: HotSpot[] = [
@@ -146,6 +146,9 @@ ratio to analytic critical curve = ${res.calibration} (NOT a calibration — the
   const tsv = $("tsv"), turbv = $("turbv"), flarev = $("flarev"), playBtn = $("playpause") as HTMLButtonElement;
 
   ts.addEventListener("input", () => { state.timeScale = +ts.value; tsv.textContent = state.timeScale.toFixed(1); refreshPhysics(); refreshReadouts(); });
+  // Light-travel delay (spec 2026-10-01): shading-only, delays are always in the cache.
+  const ldelay = $("ldelay") as HTMLInputElement;
+  ldelay.addEventListener("change", () => { state.lightDelay = ldelay.checked; reset(); });
   turb.addEventListener("input", () => { state.turbAmp = +turb.value; turbv.textContent = state.turbAmp.toFixed(2); reset(); });
   flare.addEventListener("input", () => {
     state.flareScale = +flare.value; flarev.textContent = state.flareScale.toFixed(1);
@@ -246,7 +249,7 @@ ratio to analytic critical curve = ${res.calibration} (NOT a calibration — the
   // 1 and the progressive running mean converges to a sharp still.
   function loop(now: number) {
     const dt = lastNow ? now - lastNow : 0; lastNow = now;
-    if (state.playing) simTime += (dt / 1000) * SPEED;
+    if (state.playing) simTime += (dt / 1000) * SPEED * state.timeScale;
     if (dt > 0 && dt < 250) dtEma = dtEma ? dtEma + 0.1 * (dt - dtEma) : dt;
     if (now - lastFpsShow >= 500 && dtEma > 0) { fpsEl.textContent = (1000 / dtEma).toFixed(0); lastFpsShow = now; }
     const geo = geometryKey({ a: state.a, incl: state.incl, fovScale: 14, rObs: 1000, rIn, rOut,
@@ -280,7 +283,7 @@ ratio to analytic critical curve = ${res.calibration} (NOT a calibration — the
     const setIndex = mode === "cached" ? cachedFrame % sched.completedSets : 0;
     const u: UniformValues = {
       resW: r.width, resH: r.height, outW: r.displayW, outH: r.displayH, a: state.a, incl: state.incl * Math.PI / 180,
-      rObs: 1000, fovScale: 14, rIn, rOut, Tpeak: phys.tPeakK, lumNorm: phys.lumNorm, lightDelay: 0, exposure: state.exposure,
+      rObs: 1000, fovScale: 14, rIn, rOut, Tpeak: phys.tPeakK, lumNorm: phys.lumNorm, lightDelay: state.lightDelay ? 1 : 0, exposure: state.exposure,
       time: simTime, frame: sample, reset: sample === 0 ? 1 : 0, maxSteps: state.maxSteps,
       blend, timeScale: state.timeScale, turbAmp: state.turbAmp,
       breatheAmp: state.breatheAmp, nSpots: baseSpots.length,
