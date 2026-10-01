@@ -174,7 +174,7 @@ fn emissionFieldE(rHit: f32, psi: f32, tEmit: f32) -> f32 {
 // --- Tier 2B jet (WGSL twin of src/physics/jet.ts) --------------------------------------------
 const JET_QPEAK = 0.8;   const JET_WWALL = 0.22;
 const JET_RHO0  = 0.6;   const JET_SLOPE = 0.7;
-const JET_ZBASE = 2.0;   const JET_KZ    = 0.35;  const JET_VKNOT = 6.0;
+const JET_ZBASE = 2.0;   const JET_KZ    = 0.35;
 const JET_PBEAM = 3.5;   const JET_TURB  = 0.35;  const JET_SEED  = 17.0;
 const JET_GAIN  = 0.03;  const JET_CEIL  = 4.0;
 const JET_TINT  = vec3<f32>(0.55, 0.78, 1.0);
@@ -198,7 +198,9 @@ fn lengthFalloffJ(z: f32, zMax: f32) -> f32 {
   return fadeIn * fadeOut * decay;
 }
 fn knotsJ(z: f32, t: f32) -> f32 {
-  let phase = JET_KZ * abs(z) - JET_VKNOT * t;
+  // Knots move with the flow at beta(Gamma) < c (twin: knots in jet.ts); t is the emission time.
+  let beta = sqrt(max(0.0, 1.0 - 1.0 / (U.jetGamma * U.jetGamma)));
+  let phase = JET_KZ * (abs(z) - beta * t);
   return 1.0 + U.jetKnots * (vnoiseE(phase, JET_SEED) - 0.5) * 2.0;
 }
 fn boostJ(mu: f32, gamma: f32) -> f32 {

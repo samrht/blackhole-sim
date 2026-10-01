@@ -32,6 +32,11 @@ momentum), so at an emission point t_e < 0 is minus the light-travel time.
   the breathing term `sin(2π T_emit / T_BREATHE)`, and the jet's knot phase. For the jet, each
   quadrature sample takes its own t by linear interpolation between the step's end states (the
   same chord interpolation as its position).
+- **Jet knots move with the flow (final-review fix):** the knot pattern used to move at 6/0.35 ≈ 17c
+  (`vKnot`), which under the delay averaged the knots out along each line of sight (about 4× weaker in
+  the default view). Knots are blobs carried by the plasma, so the phase is now `kz·(|z| − β t)` with
+  β = √(1 − 1/Γ²) from the Jet speed Γ slider: below c, and an approaching jet shows apparent
+  superluminal motion. This also changes the delay-off look (knots drift ~17× slower).
 - **Motion as playback speed:** `main.ts` advances `simTime += dt · SPEED · timeScale`; the shader no
   longer multiplies time by `U.timeScale` (the field stays in the uniform layout, unused). At
   timeScale = 1 this is arithmetically identical to today.

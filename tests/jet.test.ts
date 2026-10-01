@@ -32,23 +32,30 @@ describe("jet beaming", () => {
 });
 
 describe("jet living emission field", () => {
+  it("knots ride the jet flow at beta(Gamma) < c (a pattern faster than light washed out under light-travel delay)", () => {
+    const gamma = 5, beta = Math.sqrt(1 - 1 / (gamma * gamma)); // 0.9798
+    for (const [z, t, dt] of [[10, 0, 3], [25, 12, 7.5], [-14, 4, 2]]) {
+      const zs = Math.sign(z) * (Math.abs(z) + beta * dt); // outward along its own lobe
+      expect(knots(zs, t + dt, gamma, 0.7)).toBeCloseTo(knots(z, t, gamma, 0.7), 5);
+    }
+  });
   it("knots form a traveling wave (advancing t shifts the pattern)", () => {
-    const a = knots(10, 0.0, 1, 0.7);
-    const b = knots(10, 0.5, 1, 0.7);
+    const a = knots(10, 0.0, 5, 0.7);
+    const b = knots(10, 0.5, 5, 0.7);
     expect(a).not.toBeCloseTo(b, 6); // time changes the local knot brightness
   });
 
   it("emission is exactly 0 when jetStrength = 0 (features-off invariant)", () => {
-    expect(jetEmission(6, 0.15, 3.2, 1, 0, 60, 0.7)).toBe(0);
+    expect(jetEmission(6, 0.15, 3.2, 5, 0, 60, 0.7)).toBe(0);
   });
 
   it("emission is 0 outside the axial band and inside the funnel band it is positive", () => {
     const thAxis = 0.12;                 // near the pole -> inside a funnel
     const rIn = 8;
-    expect(jetEmission(rIn, thAxis, 0, 1, 1, 60, 0.7)).toBeGreaterThan(0);
-    expect(jetEmission(1.5, thAxis, 0, 1, 1, 60, 0.7)).toBe(0); // below zBase launch
-    expect(jetEmission(400, thAxis, 0, 1, 1, 60, 0.7)).toBe(0); // beyond jetLength
-    expect(jetEmission(8, Math.PI / 2, 0, 1, 1, 60, 0.7)).toBe(0); // equatorial: outside funnel
+    expect(jetEmission(rIn, thAxis, 0, 5, 1, 60, 0.7)).toBeGreaterThan(0);
+    expect(jetEmission(1.5, thAxis, 0, 5, 1, 60, 0.7)).toBe(0); // below zBase launch
+    expect(jetEmission(400, thAxis, 0, 5, 1, 60, 0.7)).toBe(0); // beyond jetLength
+    expect(jetEmission(8, Math.PI / 2, 0, 5, 1, 60, 0.7)).toBe(0); // equatorial: outside funnel
   });
 });
 
@@ -58,7 +65,7 @@ describe("jet envelope (geodesic-cache bookmark region)", () => {
     for (let r = 1.2; r < 80; r *= 1.07) {
       for (let th = 0.001; th < Math.PI; th += 0.013) {
         for (const t of [0, 3.3, 77]) {
-          if (jetEmission(r, th, t, 1, 1, 60, 0.7) > 0) expect(inJetEnvelope(r, th, 60)).toBe(true);
+          if (jetEmission(r, th, t, 5, 1, 60, 0.7) > 0) expect(inJetEnvelope(r, th, 60)).toBe(true);
         }
       }
     }

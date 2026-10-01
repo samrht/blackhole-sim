@@ -96,7 +96,7 @@ export async function runParity(): Promise<{ maxErr: number; rows: number }> {
   await jread.mapAsync(GPUMapMode.READ);
   const jgpu = new Float32Array(jread.getMappedRange().slice(0));
   jcases.forEach((c, i) => {
-    const cpuE = jetEmission(c.r, c.th, c.t, 1, 1, 60, 0.7);
+    const cpuE = jetEmission(c.r, c.th, c.t, 5, 1, 60, 0.7); // Gamma = P_GAMMA in jet-parity.wgsl
     const cpuB = dopplerBoost(c.mu, 5);
     maxErr = Math.max(maxErr, Math.abs(jgpu[i * 4 + 0] - cpuE) / (1 + Math.abs(cpuE)));
     maxErr = Math.max(maxErr, Math.abs(jgpu[i * 4 + 1] - cpuB) / (1 + Math.abs(cpuB)));

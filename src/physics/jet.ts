@@ -17,7 +17,7 @@ export const JET = {
   rho0: 0.6, slope: 0.7,      // funnel throat radius (M) and parabolic flare (M^1/2)
   qPeak: 0.8, wWall: 0.22,    // limb-brightening: wall peak position and width (in q units)
   zBase: 2.0,                 // launch height above the pole (M); below this = no jet
-  kz: 0.35, vKnot: 6.0,       // knot spatial frequency and outward pattern speed (M / sim-s)
+  kz: 0.35,                   // knot spatial frequency (1/M); knots move with the flow at beta(Gamma)
   pBeam: 3.5,                 // beaming exponent (3 + spectral index)
   turbAmpJet: 0.35,           // small cross-funnel churn
   knotSeed: 17.0,             // fixed 2nd-axis coordinate for the 1-D knot noise
@@ -53,8 +53,13 @@ export function lengthFalloff(z: number, zMax: number): number {
 }
 
 /** Traveling-wave knots: blobs of brightness marching outward as t advances. */
-export function knots(z: number, t: number, timeScale: number, jetKnots: number): number {
-  const phase = JET.kz * Math.abs(z) - JET.vKnot * t * timeScale;
+/** Knots are blobs carried by the jet plasma, so the pattern moves outward at the flow speed
+ *  beta = sqrt(1 - 1/Gamma^2) < c (t is coordinate time, M; c = 1). It used to move at 6/0.35 ~ 17c,
+ *  which under light-travel delay averaged the knots out along each line of sight (2026-10-01 review);
+ *  at beta < c an approaching jet now shows apparent superluminal motion, as observed in M87. */
+export function knots(z: number, t: number, gamma: number, jetKnots: number): number {
+  const beta = Math.sqrt(Math.max(0, 1 - 1 / (gamma * gamma)));
+  const phase = JET.kz * (Math.abs(z) - beta * t);
   return 1 + jetKnots * (vnoise(phase, JET.knotSeed) - 0.5) * 2;
 }
 
@@ -68,7 +73,7 @@ export function dopplerBoost(mu: number, gamma: number): number {
 /** Scalar jet emissivity (no beaming). Exactly 0 when jetStrength=0, below zBase, beyond zMax,
  *  or outside the funnel wall. Beaming (dopplerBoost) is applied separately at the ray step. */
 export function jetEmission(
-  r: number, th: number, t: number, timeScale: number,
+  r: number, th: number, t: number, gamma: number,
   jetStrength: number, jetLength: number, jetKnots: number,
 ): number {
   if (jetStrength === 0) return 0;
@@ -79,7 +84,7 @@ export function jetEmission(
   const w = wallProfile(rho, z);
   if (w <= 0) return 0;
   const turb = 1 + JET.turbAmpJet * (vnoise(Math.log(1 + rho), JET.kz * z) - 0.5) * 2;
-  return Math.max(0, w * lengthFalloff(z, jetLength) * knots(z, t, timeScale, jetKnots) * turb);
+  return Math.max(0, w * lengthFalloff(z, jetLength) * knots(z, t, gamma, jetKnots) * turb);
 }
 
 /** True where jetEmission can be non-zero for SOME jetStrength and time: zBase <= |z| <= jetLength

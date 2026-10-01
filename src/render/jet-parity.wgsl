@@ -4,9 +4,9 @@
 @group(0) @binding(1) var<storage, read_write> outp: array<vec4<f32>>;
 
 const JET_QPEAK = 0.8; const JET_WWALL = 0.22; const JET_RHO0 = 0.6; const JET_SLOPE = 0.7;
-const JET_ZBASE = 2.0; const JET_KZ = 0.35; const JET_VKNOT = 6.0; const JET_PBEAM = 3.5;
+const JET_ZBASE = 2.0; const JET_KZ = 0.35; const JET_PBEAM = 3.5;
 const JET_TURB = 0.35; const JET_SEED = 17.0;
-const P_JETLEN = 60.0; const P_KNOTS = 0.7; const P_TS = 1.0; const P_GAMMA = 5.0;
+const P_JETLEN = 60.0; const P_KNOTS = 0.7; const P_GAMMA = 5.0;
 
 fn ihashJ(ix: i32, iy: i32) -> f32 {
   var n = u32(ix) * 1973u + u32(iy) * 9277u;
@@ -32,7 +32,7 @@ fn falloff(z: f32) -> f32 {
   let az = abs(z);
   return ss(JET_ZBASE, JET_ZBASE + 2.0, az) * (1.0 - ss(P_JETLEN * 0.7, P_JETLEN, az)) * (JET_ZBASE / max(az, JET_ZBASE));
 }
-fn kn(z: f32, t: f32) -> f32 { let ph = JET_KZ * abs(z) - JET_VKNOT * t * P_TS; return 1.0 + P_KNOTS * (vnoiseJ(ph, JET_SEED) - 0.5) * 2.0; }
+fn kn(z: f32, t: f32) -> f32 { let bk = sqrt(max(0.0, 1.0 - 1.0 / (P_GAMMA * P_GAMMA))); let ph = JET_KZ * (abs(z) - bk * t); return 1.0 + P_KNOTS * (vnoiseJ(ph, JET_SEED) - 0.5) * 2.0; }
 fn emission(r: f32, th: f32, t: f32) -> f32 {
   let z = r * cos(th); let az = abs(z);
   if (az < JET_ZBASE || az > P_JETLEN) { return 0.0; }
