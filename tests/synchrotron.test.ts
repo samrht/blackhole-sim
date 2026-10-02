@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { synchConsts, synchCoeffs, lnGamma, Q_E, M_E, C_CGS, SYN_P, GAMMA_MIN } from "../src/physics/synchrotron";
+import { jetEnergetics, gammaProfile, plasmaShift, streamlineDir, jetUniforms, visLuminanceUnit, slabStep } from "../src/physics/synchrotron";
+import { screenToState } from "../src/physics/camera";
+import { lambdaFromMdot } from "../src/physics/units";
 
 // Direct numerical integration of the single-electron spectrum F(x) = x Int_x^inf K_5/3 over the power
 // law and an isotropic pitch-angle distribution (Rybicki & Lightman 6.18, 6.50).
@@ -46,5 +49,54 @@ describe("synchrotron coefficients (Rybicki & Lightman 6.36 / 6.53, pitch-averag
     const [ja] = synchCoeffs(1e20, B, numin / 8), [jb] = synchCoeffs(1e20, B, numin / 64);
     expect(ja / jb).toBeCloseTo(2, 6); // nu^(1/3)
     for (const v of synchCoeffs(1e20, B, 5e14)) expect(Number.isFinite(v)).toBe(true);
+  });
+});
+
+describe("jet model and energy budget", () => {
+  it("M87*: Blandford-Znajek power ~0.98 Mdot c^2 and inside 1e43-1e44 erg/s (spec 2.1)", () => {
+    const E = jetEnergetics(6.5e9, 0.9, lambdaFromMdot(6.5e9, 0.9, 7.7e-4));
+    expect(E.pBZ).toBeGreaterThan(1e43); expect(E.pBZ).toBeLessThan(1e44);       // measured 4.26e43
+    expect(E.pBZ / (E.mdot * C_CGS ** 2)).toBeCloseTo(0.977, 2);
+  });
+  it("Gamma(z) = max(1, G280 (|z|/280)^0.58)", () => {
+    expect(gammaProfile(280, 2)).toBe(2); expect(gammaProfile(-280, 2)).toBe(2);
+    expect(gammaProfile(60, 2)).toBe(1);                                          // 0.82 -> clamped
+    expect(gammaProfile(1000, 2)).toBeCloseTo(2 * Math.pow(1000 / 280, 0.58), 12);
+  });
+  it("plasma frequency shift: static at r = 1000 ~1 (gravitational), toward/away Doppler (Review Focus 5)", () => {
+    const s = screenToState(0, 0, 0, Math.PI / 2, 1000), b = Math.sqrt(1 - 1 / 9);
+    expect(plasmaShift(s, 0, 1, 1, 0)).toBeCloseTo(1 / Math.sqrt(1 - 2 / 1000), 4);
+    expect(plasmaShift(s, 0, 3, 1, 0) / (3 * (1 - b))).toBeCloseTo(1, 2);       // toward camera: blueshift
+    expect(plasmaShift(s, 0, 3, -1, 0) / (3 * (1 + b))).toBeCloseTo(1, 2);      // counter-jet: redshift, finite
+  });
+  it("streamlines are unit vectors, mirror-symmetric between lobes, more collimated than radial", () => {
+    const [ur, ut] = streamlineDir(20, 0.2), [lr, lt] = streamlineDir(20, Math.PI - 0.2);
+    expect(Math.hypot(ur, ut)).toBeCloseTo(1, 12);
+    expect(lr).toBeCloseTo(ur, 12); expect(lt).toBeCloseTo(-ut, 12);
+    expect(ut).toBeLessThan(0); // upper lobe bends toward the axis relative to radial
+  });
+  it("energy budget: visible luminance at the chosen k_scale equals eps * P_BZ", () => {
+    for (const [m, a, l] of [[6.5e9, 0.9, lambdaFromMdot(6.5e9, 0.9, 7.7e-4)], [1e8, 0.9, 3.66e-4], [21.2, 0.998, 0.02]]) {
+      const U = jetUniforms(m, a, l, 2e-3, 60);
+      expect((visLuminanceUnit(a, U.jetB0, U.rgCm, 60) * U.jetKScale) / (2e-3 * U.pBZ)).toBeCloseTo(1, 9);
+      expect(jetUniforms(m, a, l, 4e-3, 60).jetKScale / U.jetKScale).toBeCloseTo(2, 9);
+    }
+  });
+  it("slab transfer: thin -> j ds, thick -> source function j/alpha, earlier light attenuated (spec 5)", () => {
+    const [It] = slabStep(0, 0, 2, 1e-9, 3);
+    expect(It).toBeCloseTo(6, 6);                                                 // optically thin
+    const [Ik, tk] = slabStep(0, 0, 2, 1e3, 3);
+    expect(Ik).toBeCloseTo(2 / 1e3, 12); expect(tk).toBe(3e3);                    // saturates at S = j/alpha
+    let I = 0, tau = 0;
+    for (let k = 0; k < 400; k++) [I, tau] = slabStep(I, tau, 2, 0.5, 0.05);      // 400 thin pieces = one slab
+    expect(I).toBeCloseTo((2 / 0.5) * (1 - Math.exp(-10)), 6);                    // exact uniform-slab result
+    const [Ib] = slabStep(5, 1, 2, 1, 1);                                         // gas behind tau = 1 dims by e^-1
+    expect(Ib).toBeCloseTo(5 + 2 * (1 - Math.exp(-1)) * Math.exp(-1), 12);
+  });
+  it("extremes stay finite and positive (Review Focus 3)", () => {
+    for (const [m, l, e] of [[1, 1e-10, 1e-5], [1e10, 1e-10, 1e-1], [1, 1, 1e-1], [1e10, 1, 1e-5]]) {
+      const U = jetUniforms(m, 0.9, l, e, 60);
+      for (const v of [U.jetB0, U.jetKScale, U.rgCm]) { expect(Number.isFinite(v)).toBe(true); expect(v).toBeGreaterThan(0); }
+    }
   });
 });

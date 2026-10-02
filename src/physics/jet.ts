@@ -52,6 +52,11 @@ export function lengthFalloff(z: number, zMax: number): number {
   return fadeIn * fadeOut * decay;
 }
 
+/** Gamma(z) = max(1, G280 (|z| / 280 r_g)^0.58): M87's measured acceleration (Mertens et al. 2016,
+ *  Park et al. 2019). WGSL twin: jetGammaAt in emission-shared.wgsl. */
+export const GAMMA_REF_Z = 280, GAMMA_SLOPE = 0.58;
+export const gammaProfile = (z: number, g280: number) => Math.max(1, g280 * Math.pow(Math.abs(z) / GAMMA_REF_Z, GAMMA_SLOPE));
+
 /** Traveling-wave knots: blobs of brightness marching outward as t advances. */
 /** Knots are blobs carried by the jet plasma, so the pattern moves outward at the flow speed
  *  beta = sqrt(1 - 1/Gamma^2) < c (t is coordinate time, M; c = 1). It used to move at 6/0.35 ~ 17c,
