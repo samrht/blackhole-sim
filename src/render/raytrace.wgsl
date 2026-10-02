@@ -130,8 +130,13 @@ fn hotspotFieldE(rHit: f32, psi: f32) -> f32 {
   }
   return s;
 }
-fn emissionFieldE(rHit: f32, psi: f32, tEmit: f32) -> f32 {
-  let turb = 1.0; // Task 4 wires turbulenceFieldE
+// Emission multiplier (twin: emissionField in src/physics/emission.ts): lognormal MRI turbulence with
+// sigma = U.turbAmp (mean exactly 1, so the Novikov-Thorne light is redistributed, not changed), times the
+// optional breathing, plus the optional hot spots at the co-rotating phase psi. Exactly 1 with all off.
+fn emissionFieldE(rHit: f32, phiHit: f32, psi: f32, tEmit: f32, a: f32) -> f32 {
+  let s = U.turbAmp;
+  var turb = 1.0;
+  if (s > 0.0) { turb = exp(s * turbulenceFieldE(rHit, phiHit, tEmit, a) - 0.5 * s * s); }
   let breathe = 1.0 + U.breatheAmp * sin(2.0 * PI * tEmit / 2000.0);
   return max(0.0, turb * breathe + hotspotFieldE(rHit, psi));
 }
@@ -192,7 +197,7 @@ fn shadeDisk(rHit: f32, phiHit: f32, g: f32, a: f32, tEmit: f32) -> vec3<f32> {
   let Om = omegaKep(rHit, a);
   let Tobs = U.Tpeak * g * Tn;                 // observed blackbody temperature
   let psi = phiHit - Om * tEmit;               // co-rotating pattern phase at emission
-  let E = emissionFieldE(rHit, psi, tEmit);    // time-varying brightness (==1 when features off)
+  let E = emissionFieldE(rHit, phiHit, psi, tEmit, a); // time-varying brightness (==1 when features off)
   // Visible-band radiance of a blackbody at T_obs (I_nu / nu^3 is invariant, so a shifted blackbody
   // is a blackbody at g T): colour AND brightness a camera records, normalised so the disk's
   // rest-frame peak has luminance 1 (spec 2026-10-01 §2.3). Was the bolometric (g Tn)^4 law.

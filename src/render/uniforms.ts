@@ -1,6 +1,6 @@
 // Layout MUST match the `Uniforms` struct in raytrace.wgsl (4-byte scalars, vec2 first).
 // floats: resW,resH,a,incl,rObs,fovScale,rIn,rOut,Tpeak,exposure,time (11)
-//         + blend,timeScale,turbAmp,breatheAmp (4)                     -> 15
+//         + blend,timeScale,turbAmp (lognormal sigma of the MRI turbulence),breatheAmp (4) -> 15
 //         + jetStrength,jetGamma,jetLength,jetKnots (4)                -> 19
 //         + skyStrength (1)                                             -> 20 floats
 //         + outW,outH (2)                                               -> 22 floats
