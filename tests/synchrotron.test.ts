@@ -6,6 +6,8 @@ import { lambdaFromMdot } from "../src/physics/units";
 import { jetBandMatrix, JET_BANDS_NM } from "../src/physics/synchrotron";
 import { blackbodyVisibleRGB, relLuminance } from "../src/physics/color";
 import { VIS_LREF } from "../src/physics/lookups";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 // Direct numerical integration of the single-electron spectrum F(x) = x Int_x^inf K_5/3 over the power
 // law and an isotropic pitch-angle distribution (Rybicki & Lightman 6.18, 6.50).
@@ -114,5 +116,26 @@ describe("jet colour in the disk's units (spec 2.4/2.5)", () => {
       const ref = blackbodyVisibleRGB(T).map((v) => v / VIS_LREF) as [number, number, number];
       expect(Math.abs(relLuminance(rgb) / relLuminance(ref) - 1)).toBeLessThan(0.01); // measured 0.5-0.6 %
     }
+  });
+});
+
+const WGSL = readFileSync(join(__dirname, "../src/render/emission-shared.wgsl"), "utf8");
+const constOf = (name: string) => { const m = WGSL.match(new RegExp(`const ${name}\\s*=\\s*([^;]+);`)); if (!m) throw new Error(`no ${name}`); return m[1]; };
+// constructor arguments only: the text after the first "(" (skips the digits in vec3<f32> / mat3x3<f32>)
+const args = (s: string) => s.slice(s.indexOf("(") + 1).split(",").map((v) => +v.replace(")", ""));
+describe("emission-shared.wgsl synchrotron constants match the CPU twin", () => {
+  it("coefficients, band frequencies, band matrix", () => {
+    const sc = synchConsts();
+    expect(+constOf("SYN_P")).toBe(SYN_P);
+    expect(+constOf("SYN_LNCJ")).toBeCloseTo(sc.lnCj, 6);
+    expect(+constOf("SYN_LNCA")).toBeCloseTo(sc.lnCa, 6);
+    expect(+constOf("SYN_LNNUMIN0")).toBeCloseTo(sc.lnNuMin0, 6);
+    const nu = args(constOf("JET_LNNU"));
+    expect(nu.length).toBe(3);
+    nu.forEach((v, b) => expect(v).toBeCloseTo(Math.log(C_CGS / (JET_BANDS_NM[b] * 1e-7)), 6));
+    const M = jetBandMatrix(), m = args(constOf("JET_BAND_M"));
+    expect(m.length).toBe(9);
+    // WGSL mat3x3 is column-major: column b = band b.
+    for (let b = 0; b < 3; b++) for (let r = 0; r < 3; r++) expect(Math.abs(m[b * 3 + r] / M[r][b] - 1)).toBeLessThan(1e-7);
   });
 });

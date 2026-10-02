@@ -88,3 +88,76 @@ fn jetEmissionCoreJ(r: f32, th: f32, t: f32, jetLength: f32, knotAmp: f32, gamma
   let turb = 1.0 + JET_TURB * (vnoiseE(log(1.0 + rho), JET_KZ * z) - 0.5) * 2.0;
   return max(0.0, w * lengthFalloffJ(z, jetLength) * knotsJ(z, t, gamma, knotAmp) * turb);
 }
+
+// --- Tier 2B synchrotron (spec 2026-10-02; twin: src/physics/synchrotron.ts). Constants for p = 2.4,
+// gamma_min = 10; tests/synchrotron.test.ts checks every literal against the CPU twin. -------------
+const SYN_P = 2.4;
+const SYN_LNCJ = -42.13253082;
+const SYN_LNCA = 28.35789673;
+const SYN_LNNUMIN0 = 19.85549701;
+const JET_LNNU = vec3<f32>(34.13261924, 33.93194855, 33.76489446);   // ln nu at 450, 550, 650 nm
+// I_nu (cgs) per band -> linear sRGB in the disk's units (before lumNorm); column b = band b.
+const JET_BAND_M = mat3x3<f32>(-57.85676090, -199.6091852, 8197.725079, 563.0803652, 5602.051454, -395.0105294, 4364.033919, -151.6783697, -69.56073163);
+const GAMMA_REF_Z = 280.0; const GAMMA_SLOPE = 0.58;
+
+fn jetGammaAt(z: f32, g280: f32) -> f32 { return max(1.0, g280 * pow(abs(z) / GAMMA_REF_Z, GAMMA_SLOPE)); }
+// Unit flow direction (n_r, n_theta): outward along the funnel family rho = q rho_f(z).
+fn streamlineDirJ(r: f32, th: f32) -> vec2<f32> {
+  let z = r * cos(th); let rho = r * sin(th); let az = max(abs(z), 1e-6);
+  let vr = (rho / funnelEdgeJ(z)) * (JET_SLOPE / (2.0 * sqrt(az)));
+  let vz = select(-1.0, 1.0, z >= 0.0);
+  let n = sqrt(vr * vr + vz * vz); let ur = vr / n; let uz = vz / n;
+  return vec2<f32>(ur * sin(th) + uz * cos(th), ur * cos(th) - uz * sin(th));
+}
+// nu_plasma / nu_observed = p.u for the camera-normalised past-directed photon momentum p at (r, th);
+// the plasma moves at Lorentz factor gamma along the streamline in the ZAMO frame (spec 2.2/2.4).
+fn plasmaShiftJ(r: f32, th: f32, p: vec4<f32>, a: f32, gamma: f32) -> f32 {
+  let g = gUp(r, th, a);
+  let lapse = sqrt(-1.0 / g[0]); let omega = g[1] / g[0];
+  let beta = sqrt(max(0.0, 1.0 - 1.0 / (gamma * gamma)));
+  let n = streamlineDirJ(r, th);
+  return gamma * ((p.x + omega * p.w) / lapse + beta * (n.x * sqrt(g[2]) * p.y + n.y * sqrt(g[3]) * p.z));
+}
+// Density modulation (wall x length falloff x knots x turbulence); 0 outside the emitting jet.
+fn jetShapeJ(r: f32, th: f32, t: f32, jetLength: f32, knotAmp: f32, g280: f32) -> f32 {
+  let z = r * cos(th); let az = abs(z);
+  if (az < JET_ZBASE || az > jetLength) { return 0.0; }
+  let rho = r * sin(th);
+  let w = wallJ(rho, z);
+  if (w <= 0.0) { return 0.0; }
+  let turb = 1.0 + JET_TURB * (vnoiseE(log(1.0 + rho), JET_KZ * z) - 0.5) * 2.0;
+  return max(0.0, w * lengthFalloffJ(z, jetLength) * knotsJ(z, t, jetGammaAt(z, g280), knotAmp) * turb);
+}
+struct SynchOut { j: vec3<f32>, a: vec3<f32> };
+// Per band: j = (nu/nu')^3 j'(nu') (observed-frame weighted, cgs per sr) and alpha' (1/cm) at nu' = D nu.
+fn synchSampleJ(r: f32, th: f32, D: f32, a: f32, b0: f32, kScale: f32, shape: f32) -> SynchOut {
+  let z = r * cos(th); let rho = r * sin(th);
+  let rf = funnelEdgeJ(z); let rH = 1.0 + sqrt(max(0.0, 1.0 - a * a)); let w = rho * a / (4.0 * rH);
+  let lnB = log(b0 / (rf * rf)) + 0.5 * log(1.0 + w * w);
+  let lnK = log(kScale) + 2.0 * lnB + log(shape);
+  let lnNuMin = SYN_LNNUMIN0 + lnB;
+  let lnD = log(D);
+  var o: SynchOut;
+  for (var b = 0; b < 3; b++) {
+    let lnNu = JET_LNNU[b] + lnD;
+    let le = max(lnNu, lnNuMin);
+    var lj = SYN_LNCJ + lnK + 0.5 * (SYN_P + 1.0) * lnB - 0.5 * (SYN_P - 1.0) * le;
+    var la = SYN_LNCA + lnK + 0.5 * (SYN_P + 2.0) * lnB - 0.5 * (SYN_P + 4.0) * le;
+    if (lnNu < lnNuMin) { lj += (lnNu - lnNuMin) / 3.0; la -= (5.0 / 3.0) * (lnNu - lnNuMin); }
+    o.j[b] = exp(lj - 3.0 * lnD);
+    o.a[b] = exp(la);
+  }
+  return o;
+}
+// Light from the jet along one ray: I = observed I_nu per band (cgs), tau = optical depth from the camera.
+struct JetOut { I: vec3<f32>, tau: vec3<f32> };
+// One sample = a uniform slab of plasma-frame path ds (cm): exact solution, thin -> j ds, thick ->
+// source function j / alpha, attenuated by what lies in front (twin: slabStep in synchrotron.ts).
+fn jetSlabJ(acc: JetOut, j: vec3<f32>, alpha: vec3<f32>, ds: f32) -> JetOut {
+  let dt = alpha * ds;
+  let fac = select((vec3<f32>(1.0) - exp(-dt)) / max(dt, vec3<f32>(1e-30)), vec3<f32>(1.0) - 0.5 * dt, dt < vec3<f32>(1e-4));
+  var o: JetOut;
+  o.I = acc.I + j * ds * fac * exp(-acc.tau);
+  o.tau = min(acc.tau + dt, vec3<f32>(1e30));
+  return o;
+}

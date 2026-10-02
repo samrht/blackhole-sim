@@ -1,28 +1,21 @@
-// Phenomenological relativistic jet (Tier 2B). Pure functions, no DOM/GPU.
-// Mirrored in WGSL: raytrace.wgsl (render) and jet-parity.wgsl (parity test).
+// Jet geometry and density modulation (Tier 2B); the synchrotron physics is in synchrotron.ts.
+// Pure functions, no DOM/GPU. WGSL twins: emission-shared.wgsl (sole copy, prepended by the renderer
+// and the ?parity route).
 // Reuses the Tier 2A value-noise basis (emission.vnoise) so there is one shared noise impl.
 import { vnoise } from "./emission";
 
 /** Shared design constants.
  *
- * The shape and beaming constants below (rho0 .. knotSeed) are hardcoded identically in both WGSL
- * twins and are covered by the ?parity route, so a desync there fails a gate.
- *
- * `gain` and `ceil` are NOT: they scale accumulated radiance at the integration site in
- * raytrace.wgsl, downstream of the emission function jet-parity.wgsl exercises. Nothing in TS reads
- * them — they are documentation of what the shader does, and they had drifted (0.06/8.0 recorded
- * against the shader's actual 0.03/4.0). Keep them in step with raytrace.wgsl:179 by hand.
+ * The shape constants below are hardcoded identically in emission-shared.wgsl and are covered by the
+ * ?parity route, so a desync there fails a gate.
  */
 export const JET = {
   rho0: 0.6, slope: 0.7,      // funnel throat radius (M) and parabolic flare (M^1/2)
   qPeak: 0.8, wWall: 0.22,    // limb-brightening: wall peak position and width (in q units)
   zBase: 2.0,                 // launch height above the pole (M); below this = no jet
   kz: 0.35,                   // knot spatial frequency (1/M); knots move with the flow at beta(Gamma)
-  pBeam: 3.5,                 // beaming exponent (3 + spectral index)
   turbAmpJet: 0.35,           // small cross-funnel churn
   knotSeed: 17.0,             // fixed 2nd-axis coordinate for the 1-D knot noise
-  gain: 0.03,                 // per-dl emissivity -> radiance scale   (raytrace.wgsl JET_GAIN)
-  ceil: 4.0,                  // clamp on accumulated jet radiance     (raytrace.wgsl JET_CEIL)
 } as const;
 
 function smoothstep(a: number, b: number, x: number): number {
@@ -68,33 +61,20 @@ export function knots(z: number, t: number, gamma: number, jetKnots: number): nu
   return 1 + jetKnots * (vnoise(phase, JET.knotSeed) - 0.5) * 2;
 }
 
-/** Relativistic Doppler boost of emissivity. mu = cos(angle) of emitter outflow toward observer. */
-export function dopplerBoost(mu: number, gamma: number): number {
-  const beta = Math.sqrt(Math.max(0, 1 - 1 / (gamma * gamma)));
-  const delta = 1 / (gamma * (1 - beta * mu));
-  return Math.pow(delta, JET.pBeam);
-}
-
-/** Scalar jet emissivity (no beaming). Exactly 0 when jetStrength=0, below zBase, beyond zMax,
- *  or outside the funnel wall. Beaming (dopplerBoost) is applied separately at the ray step. */
-export function jetEmission(
-  r: number, th: number, t: number, gamma: number,
-  jetStrength: number, jetLength: number, jetKnots: number,
-): number {
-  if (jetStrength === 0) return 0;
-  const z = r * Math.cos(th);
-  const az = Math.abs(z);
+/** Density modulation of the synchrotron jet (wall x length falloff x knots x turbulence); 0 outside the
+ *  emitting region. Twin of jetShapeJ in emission-shared.wgsl. Knots ride the local flow, Gamma(z). */
+export function jetShape(r: number, th: number, t: number, jetLength: number, knotAmp: number, g280: number): number {
+  const z = r * Math.cos(th), az = Math.abs(z);
   if (az < JET.zBase || az > jetLength) return 0;
-  const rho = r * Math.sin(th);
-  const w = wallProfile(rho, z);
+  const rho = r * Math.sin(th), w = wallProfile(rho, z);
   if (w <= 0) return 0;
   const turb = 1 + JET.turbAmpJet * (vnoise(Math.log(1 + rho), JET.kz * z) - 0.5) * 2;
-  return Math.max(0, w * lengthFalloff(z, jetLength) * knots(z, t, gamma, jetKnots) * turb);
+  return Math.max(0, w * lengthFalloff(z, jetLength) * knots(z, t, gammaProfile(z, g280), knotAmp) * turb);
 }
 
-/** True where jetEmission can be non-zero for SOME jetStrength and time: zBase <= |z| <= jetLength
+/** True where jetShape can be non-zero for SOME time: zBase <= |z| <= jetLength
  *  and inside the funnel wall (q <= 1.2, wallProfile's cut). Purely geometric, so the geodesic
- *  cache's jet bookmark never depends on jetStrength (spec 2026-10-01 3.3).
+ *  cache's jet bookmark never depends on the jet switch or brightness (spec 2026-10-01 3.3).
  *  WGSL twin: inJetEnvelope in raytrace.wgsl. */
 export function inJetEnvelope(r: number, th: number, jetLength: number): boolean {
   const z = r * Math.cos(th), az = Math.abs(z);

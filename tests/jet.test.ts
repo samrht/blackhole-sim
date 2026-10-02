@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
 import {
-  JET, funnelEdge, wallProfile, knots, dopplerBoost, jetEmission, inJetEnvelope,
+  JET, funnelEdge, wallProfile, lengthFalloff, knots, jetShape, inJetEnvelope,
 } from "../src/physics/jet";
+import { vnoise } from "../src/physics/emission";
 
 describe("jet geometry", () => {
   it("funnel widens with height (parabolic)", () => {
@@ -21,16 +22,6 @@ describe("jet geometry", () => {
   });
 });
 
-describe("jet beaming", () => {
-  it("Doppler boost is >1 approaching, collapses receding, monotonic in mu", () => {
-    const g = 5;
-    expect(dopplerBoost(0.9, g)).toBeGreaterThan(1);       // toward observer -> boosted
-    expect(dopplerBoost(-0.9, g)).toBeLessThan(0.05);      // away -> counter-jet vanishes
-    expect(dopplerBoost(0.9, g)).toBeGreaterThan(dopplerBoost(0.3, g));
-    expect(dopplerBoost(0.3, g)).toBeGreaterThan(dopplerBoost(-0.3, g));
-  });
-});
-
 describe("jet living emission field", () => {
   it("knots ride the jet flow at beta(Gamma) < c (a pattern faster than light washed out under light-travel delay)", () => {
     const gamma = 5, beta = Math.sqrt(1 - 1 / (gamma * gamma)); // 0.9798
@@ -45,27 +36,33 @@ describe("jet living emission field", () => {
     expect(a).not.toBeCloseTo(b, 6); // time changes the local knot brightness
   });
 
-  it("emission is exactly 0 when jetStrength = 0 (features-off invariant)", () => {
-    expect(jetEmission(6, 0.15, 3.2, 5, 0, 60, 0.7)).toBe(0);
-  });
-
   it("emission is 0 outside the axial band and inside the funnel band it is positive", () => {
     const thAxis = 0.12;                 // near the pole -> inside a funnel
     const rIn = 8;
-    expect(jetEmission(rIn, thAxis, 0, 5, 1, 60, 0.7)).toBeGreaterThan(0);
-    expect(jetEmission(1.5, thAxis, 0, 5, 1, 60, 0.7)).toBe(0); // below zBase launch
-    expect(jetEmission(400, thAxis, 0, 5, 1, 60, 0.7)).toBe(0); // beyond jetLength
-    expect(jetEmission(8, Math.PI / 2, 0, 5, 1, 60, 0.7)).toBe(0); // equatorial: outside funnel
+    expect(jetShape(rIn, thAxis, 0, 60, 0.7, 2)).toBeGreaterThan(0);
+    expect(jetShape(1.5, thAxis, 0, 60, 0.7, 2)).toBe(0); // below zBase launch
+    expect(jetShape(400, thAxis, 0, 60, 0.7, 2)).toBe(0); // beyond jetLength
+    expect(jetShape(8, Math.PI / 2, 0, 60, 0.7, 2)).toBe(0); // equatorial: outside funnel
+  });
+  it("jetShape is a mean-one modulation of the wall profile (energy budget assumes it, synchrotron.ts)", () => {
+    // average over many times at a fixed point in the wall: the knots stream past and average out.
+    // g280 = 8 so the flow moves here (Gamma(20) = 1.73; at g280 = 2 the plasma is still at Gamma = 1
+    // below z ~ 84 and the knot pattern is static there - a consequence of M87's measured profile).
+    const r = 20, th = Math.atan2(funnelEdge(20) * JET.qPeak, 20), z = r * Math.cos(th), rho = r * Math.sin(th);
+    let m = 0; const N = 4000;
+    for (let k = 0; k < N; k++) m += jetShape(r, th, k * 0.37, 60, 0.7, 8);
+    const turb = 1 + JET.turbAmpJet * (vnoise(Math.log(1 + rho), JET.kz * z) - 0.5) * 2;
+    expect(m / N / (wallProfile(rho, z) * lengthFalloff(z, 60) * turb)).toBeCloseTo(1, 1);
   });
 });
 
 describe("jet envelope (geodesic-cache bookmark region)", () => {
   it("contains every point where the jet can emit", () => {
-    // jetEmission > 0 anywhere => inJetEnvelope true, over a grid and several times
+    // jetShape > 0 anywhere => inJetEnvelope true, over a grid and several times
     for (let r = 1.2; r < 80; r *= 1.07) {
       for (let th = 0.001; th < Math.PI; th += 0.013) {
         for (const t of [0, 3.3, 77]) {
-          if (jetEmission(r, th, t, 5, 1, 60, 0.7) > 0) expect(inJetEnvelope(r, th, 60)).toBe(true);
+          if (jetShape(r, th, t, 60, 0.7, 2) > 0) expect(inJetEnvelope(r, th, 60)).toBe(true);
         }
       }
     }
