@@ -131,7 +131,7 @@ fn hotspotFieldE(rHit: f32, psi: f32) -> f32 {
   return s;
 }
 fn emissionFieldE(rHit: f32, psi: f32, tEmit: f32) -> f32 {
-  let turb = 1.0 + U.turbAmp * (turbulenceE(log(rHit), psi) - 0.5) * 2.0;
+  let turb = 1.0; // Task 4 wires turbulenceFieldE
   let breathe = 1.0 + U.breatheAmp * sin(2.0 * PI * tEmit / 2000.0);
   return max(0.0, turb * breathe + hotspotFieldE(rHit, psi));
 }

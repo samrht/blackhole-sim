@@ -3,7 +3,7 @@ import { omegaKepler } from "../physics/orbits";
 import { gFactorKepler } from "../physics/redshift";
 import parityWGSL from "../render/parity.wgsl?raw";
 import integratorSharedWGSL from "../render/integrator-shared.wgsl?raw";
-import { turbulence } from "../physics/emission";
+import { turbulenceAt } from "../physics/emission";
 import turbParityWGSL from "../render/turb-parity.wgsl?raw";
 import emissionSharedWGSL from "../render/emission-shared.wgsl?raw";
 import jetParityWGSL from "../render/jet-parity.wgsl?raw";
@@ -21,7 +21,7 @@ import integratorParityWGSL from "../render/integrator-parity.wgsl?raw";
 
 /** Runs the WGSL metric/orbit/g-factor helpers on fixed inputs and returns the max relative
  *  error vs the TypeScript core. f32 GPU vs f64 CPU keeps this in the ~1e-6..1e-4 range. */
-export async function runParity(): Promise<{ maxErr: number; rows: number; jetLogErr: number }> {
+export async function runParity(): Promise<{ maxErr: number; rows: number; jetLogErr: number; turbErr: number; turbWorst: string }> {
   const cases = [
     { r: 8, th: Math.PI / 2, a: 0.0, xi: 3 }, { r: 6, th: 1.2, a: 0.5, xi: 2 },
     { r: 12, th: Math.PI / 2, a: 0.9, xi: -4 }, { r: 20, th: 0.9, a: 0.99, xi: 5 },
@@ -50,14 +50,17 @@ export async function runParity(): Promise<{ maxErr: number; rows: number; jetLo
                  omegaKepler(c.r, c.a, true), gFactorKepler(c.r, c.a, c.xi, true)];
     for (let k = 0; k < 4; k++) maxErr = Math.max(maxErr, Math.abs(gpu[i * 4 + k] - cpu[k]) / (1 + Math.abs(cpu[k])));
   });
-  // --- turbulence parity (CPU emission.ts vs GPU turb-parity.wgsl) ---
+  // --- turbulence parity (CPU emission.ts turbulenceAt vs the shipped turbulenceFieldE) ---
+  // Late (2e5), negative (-50) and both spin extremes are Review Focus 1-3.
   const tcases = [
-    { logR: Math.log(6), psi: 0.4 }, { logR: Math.log(9), psi: 1.7 },
-    { logR: Math.log(14), psi: 3.9 }, { logR: Math.log(22), psi: 5.2 },
+    { r: 6, phi: 0.4, t: 1.7, a: 0.9 }, { r: 9, phi: 1.7, t: 500, a: 0.9 },
+    { r: 14, phi: -3.9, t: 5000, a: 0.9 }, { r: 22, phi: 5.2, t: 2e5, a: 0.9 },
+    { r: 4, phi: 2.2, t: -50, a: 0.9 }, { r: 7, phi: 0.9, t: 333, a: 0 },
+    { r: 1.3, phi: 4.4, t: 81, a: 0.998 }, { r: 35, phi: -0.6, t: 12345, a: 0.5 },
   ];
-  const tin = device.createBuffer({ size: tcases.length * 8, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
-  const tarr = new Float32Array(tcases.length * 2);
-  tcases.forEach((c, i) => { tarr.set([c.logR, c.psi], i * 2); });
+  const tin = device.createBuffer({ size: tcases.length * 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+  const tarr = new Float32Array(tcases.length * 4);
+  tcases.forEach((c, i) => { tarr.set([c.r, c.phi, c.t, c.a], i * 4); });
   device.queue.writeBuffer(tin, 0, tarr);
   const tout = device.createBuffer({ size: tcases.length * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
   const tread = device.createBuffer({ size: tcases.length * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
@@ -71,9 +74,18 @@ export async function runParity(): Promise<{ maxErr: number; rows: number; jetLo
   device.queue.submit([tenc.finish()]);
   await tread.mapAsync(GPUMapMode.READ);
   const tgpu = new Float32Array(tread.getMappedRange().slice(0));
+  // Tolerance per case: 2e-3, plus 8x the field's change over one f32 step of t. At late times the GPU's
+  // tau = t / T_c rounds by a few f32 steps of t (the same offset for every pixel of a lattice row, so a
+  // coherent time shift, not noise); the CPU, in f64, sees the exact f32 input. turbErr is the worst
+  // |d g| / tolerance (PASS <= 1).
+  let turbErr = 0, turbWorst = "";
   tcases.forEach((c, i) => {
-    const cpu = turbulence(c.logR, c.psi, 3);
-    maxErr = Math.max(maxErr, Math.abs(tgpu[i] - cpu) / (1 + Math.abs(cpu)));
+    const r = Math.fround(c.r), phi = Math.fround(c.phi), t = Math.fround(c.t), a = Math.fround(c.a);
+    const cpu = turbulenceAt(r, phi, t, a);
+    const ulpT = Math.max(Math.abs(t), 1) * 2 ** -23;
+    const tol = 2e-3 + 8 * Math.abs(turbulenceAt(r, phi, t + ulpT, a) - cpu);
+    const e = Math.abs(tgpu[i] - cpu) / tol;
+    if (e > turbErr) { turbErr = e; turbWorst = `t=${c.t}: |d g| ${Math.abs(tgpu[i] - cpu).toExponential(2)} tol ${tol.toExponential(2)}`; }
   });
   // --- jet parity (CPU synchrotron.ts / cyclosynch.ts / jet.ts vs the SHIPPED emission-shared.wgsl) ---
   // Cases are real photon states inside the jet: rays walked with the CPU integrator from the camera until
@@ -390,5 +402,5 @@ export async function runParity(): Promise<{ maxErr: number; rows: number; jetLo
     "cpu dl0", icases.map((c) => cpuStep(c).dl0.toPrecision(6)),
     "gpu dl0", icases.map((_, i) => igpu[i * OUT_F + 12].toPrecision(6)),
     "state relErr", icases.map((c, i) => { const { out } = cpuStep(c); let e = 0; for (let k = 0; k < c.nCmp; k++) e = Math.max(e, Math.abs(igpu[i * OUT_F + k] - out.s[k]) / (1 + Math.abs(out.s[k]))); return e.toExponential(2); }));
-  return { maxErr, rows: cases.length + tcases.length + jcases.length + scases.length + ccases.length + icases.length, jetLogErr };
+  return { maxErr, rows: cases.length + tcases.length + jcases.length + scases.length + ccases.length + icases.length, jetLogErr, turbErr, turbWorst };
 }

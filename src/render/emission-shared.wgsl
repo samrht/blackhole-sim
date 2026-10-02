@@ -1,9 +1,10 @@
-// Sole WGSL copy of the disk turbulence and the synchrotron jet (twins: src/physics/emission.ts,
+// Sole WGSL copy of the disk turbulence and the synchrotron jet (twins: turbulenceAt in src/physics/emission.ts,
 // src/physics/jet.ts, src/physics/synchrotron.ts). Prepended verbatim by gpu.ts (renderer) and
 // parity.browser.ts (?parity: turb and jet cases), so ?parity checks the shipped bytes. No uniforms,
-// no bindings; the jet code uses State/gUp from integrator-shared.wgsl, which both prepend too.
+// no bindings; the jet code uses State/gUp and the turbulence omegaKep from integrator-shared.wgsl, which both
+// prepend too.
 
-// --- Tier 2A turbulence noise -----------------------------------------------------------------
+// --- Value noise (the jet's knots and churn) -----------------------------------------------------------------
 fn ihashE(ix: i32, iy: i32) -> f32 {
   var n = u32(ix) * 1973u + u32(iy) * 9277u;
   n = (n ^ (n >> 15u)) * 2246822519u;
@@ -19,26 +20,50 @@ fn vnoiseE(x: f32, y: f32) -> f32 {
   return (a00 * (1.0 - fx) + a10 * fx) * (1.0 - fy) + (a01 * (1.0 - fx) + a11 * fx) * fy;
 }
 const TWO_PI_E = 6.283185307179586;
-// Value noise periodic in y with period n cells (twin: vnoiseRing in emission.ts).
-fn vnoiseRingE(x: f32, y: f32, n: i32) -> f32 {
-  let ix = i32(floor(x)); let iy = i32(floor(y));
-  let fx = smoothE(x - floor(x)); let fy = smoothE(y - floor(y));
-  let j0 = ((iy % n) + n) % n; let j1 = (j0 + 1) % n;
-  let a00 = ihashE(ix, j0); let a10 = ihashE(ix + 1, j0);
-  let a01 = ihashE(ix, j1); let a11 = ihashE(ix + 1, j1);
-  return (a00 * (1.0 - fx) + a10 * fx) * (1.0 - fy) + (a01 * (1.0 - fx) + a11 * fx) * fy;
+// --- MRI turbulence (spec 2026-10-03; twin: turbulenceAt in src/physics/emission.ts) ------------------
+// Unit-Gaussian lattice field on (ln r, phi) in overlapping generations frozen into the Keplerian flow;
+// see the CPU twin for the construction. u32 arithmetic wraps exactly as Math.imul/>>>0 on the CPU.
+const TURB_CELL_ETA = 0.086; const TURB_CELLS_PHI = 49u; const TURB_CLOCK = 0.32; const TURB_OCT2 = 0.5;
+fn mixT(n0: u32) -> u32 {
+  var n = (n0 ^ (n0 >> 15u)) * 2246822519u;
+  n = (n ^ (n >> 13u)) * 3266489917u;
+  return n ^ (n >> 16u);
 }
-// 2 pi-periodic in psi (an integer number of cells per octave around the ring): a ray's hit
-// azimuth is a continuous geodesic coordinate, and rays passing either side of the hole reach the
-// far side of the disk ~2 pi apart; non-periodic noise drew a seam above the shadow there.
-fn turbulenceE(logR: f32, psi: f32) -> f32 {
-  let turns = fract(psi / TWO_PI_E);
-  var sum = 0.0; var amp = 0.5; var freq = 1.0; var norm = 0.0;
-  for (var o = 0u; o < 3u; o++) {
-    let n = i32(round(TWO_PI_E * freq));
-    sum += amp * vnoiseRingE(logR * freq, turns * f32(n), n); norm += amp; amp *= 0.5; freq *= 2.0;
+fn hash4T(ix: i32, iy: u32, gen: i32, salt: u32) -> u32 {
+  return mixT(u32(ix) * 1973u + iy * 9277u + u32(gen) * 26699u + salt * 59359u);
+}
+fn gaussT(ix: i32, iy: u32, gen: i32, salt: u32) -> f32 {
+  let h1 = hash4T(ix, iy, gen, salt); let h2 = mixT(h1 ^ 0x9e3779b9u);
+  let u1 = (f32(h1 & 0xffffffu) + 0.5) / 16777216.0;  // f32 may round the top value to 1: log -> 0, finite
+  let u2 = f32(h2 & 0xffffffu) / 16777216.0;
+  return sqrt(max(0.0, -2.0 * log(u1))) * cos(TWO_PI_E * u2);
+}
+fn turbOctaveT(r: f32, phi: f32, t: f32, a: f32, cellEta: f32, cellsPhi: u32, salt: u32) -> f32 {
+  let x = log(r) / cellEta; let i0 = i32(floor(x)); let fx = smoothE(x - floor(x));
+  let Om = omegaKep(r, a);
+  var num = 0.0; var v = 0.0;
+  for (var d = 0; d < 2; d++) {
+    let i = i0 + d; let wr = select(1.0 - fx, fx, d == 1);
+    let Tc = TURB_CLOCK * TWO_PI_E / omegaKep(exp(f32(i) * cellEta), a);
+    let tau = t / Tc + f32(hash4T(i, 0x51edu, 0, salt) & 0xffffffu) / 16777216.0;
+    let k = i32(floor(tau)); let f = tau - floor(tau);
+    for (var e = 0; e < 2; e++) {
+      let wt = select(cos(0.25 * TWO_PI_E * f), sin(0.25 * TWO_PI_E * f), e == 1);
+      let age = select(1.0 + f, f, e == 1) * Tc;
+      let y = fract((phi - Om * age) / TWO_PI_E) * f32(cellsPhi);
+      let jf = floor(y); let fy = smoothE(y - jf);
+      let ja = u32(jf) % cellsPhi; let jb = (ja + 1u) % cellsPhi;
+      let w0 = wr * wt * (1.0 - fy); let w1 = wr * wt * fy;
+      num += w0 * gaussT(i, ja, k + e, salt) + w1 * gaussT(i, jb, k + e, salt);
+      v += w0 * w0 + w1 * w1;
+    }
   }
-  return sum / norm;
+  return num / sqrt(v);
+}
+// Unit-Gaussian turbulence g at (r, phi, t_emit, a). 2 pi-periodic in phi.
+fn turbulenceFieldE(r: f32, phi: f32, t: f32, a: f32) -> f32 {
+  return (turbOctaveT(r, phi, t, a, TURB_CELL_ETA, TURB_CELLS_PHI, 1u)
+        + TURB_OCT2 * turbOctaveT(r, phi, t, a, 0.5 * TURB_CELL_ETA, 2u * TURB_CELLS_PHI, 2u)) / sqrt(1.0 + TURB_OCT2 * TURB_OCT2);
 }
 
 // --- Tier 2B jet geometry -------------------------------------------------------------------

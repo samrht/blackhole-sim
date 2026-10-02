@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { patternPhase, turbulence, hotspotField, emissionField, lognormalFactor, T_BREATHE, type HotSpot } from "../src/physics/emission";
+import { patternPhase, hotspotField, emissionField, lognormalFactor, T_BREATHE, type HotSpot } from "../src/physics/emission";
 import { omegaKepler } from "../src/physics/orbits";
 
 const close = (a: number, b: number, tol = 1e-9) => Math.abs(a - b) <= tol * (1 + Math.abs(b));
@@ -15,32 +15,6 @@ describe("emission", () => {
     const dInner = 0 - patternPhase(6, 0, 1, 1, 0.9);   // phase swept in unit time at r=6
     const dOuter = 0 - patternPhase(20, 0, 1, 1, 0.9);  // at r=20
     expect(dInner).toBeGreaterThan(dOuter);             // |Omega(6)| > |Omega(20)|
-  });
-
-  it("turbulence is deterministic and bounded to ~[0,1)", () => {
-    const a = turbulence(Math.log(9), 1.0, 3);
-    expect(turbulence(Math.log(9), 1.0, 3)).toBe(a);    // deterministic
-    for (let p = 0; p < 6.28; p += 0.37) {
-      const v = turbulence(Math.log(9), p, 3);
-      expect(v).toBeGreaterThanOrEqual(0);
-      expect(v).toBeLessThan(1.0);
-    }
-  });
-
-  it("turbulence is 2 pi-periodic in psi: rays reaching one disk point around opposite sides agree", () => {
-    // The seam above the shadow: across the alpha = 0 column the hit azimuth jumps by exactly 2 pi
-    // (traced: -3.2085 vs +3.0732 at the default view), and non-periodic noise jumped 0.411 -> 0.872.
-    for (const [lr, p] of [[Math.log(10.46), -3.2085], [Math.log(6.45), 0.3], [Math.log(25), 2.9], [Math.log(4), -1.2]]) {
-      const v = turbulence(lr, p, 3);
-      for (const k of [-2, -1, 1, 3]) expect(turbulence(lr, p + 2 * Math.PI * k, 3)).toBeCloseTo(v, 6);
-    }
-  });
-  it("turbulence is centred near 0.5 so the emission multiplier is unbiased", () => {
-    let s = 0; const N = 200000;
-    for (let i = 0; i < N; i++) s += turbulence((i * 0.7331) % 50, (i * 1.4177) % 50, 3);
-    const mean = s / N;
-    expect(mean).toBeGreaterThan(0.47);
-    expect(mean).toBeLessThan(0.53);
   });
 
   it("hotspotField peaks at the spot center and decays far away, and is periodic in psi", () => {
