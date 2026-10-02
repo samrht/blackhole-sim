@@ -192,3 +192,95 @@ export function dNOverGuU(u: number, s: number): number {
 }
 export const nHat = (g: number, s: number) => nHatU(Math.sqrt(g * g - 1), s);
 export const dNOverGu = (g: number, s: number) => dNOverGuU(Math.sqrt(g * g - 1), s);
+
+// ---- the table (spec 2.3) --------------------------------------------------------------------------------
+export interface Grid { lnx0: number; lnx1: number; nx: number; lns0: number; lns1: number; ns: number }
+export const TABLE_GRID: Grid = { lnx0: Math.log(1e-4), lnx1: Math.log(1e10), nx: 1612, lns0: Math.log(1e-3), lns1: Math.log(40), ns: 160 };
+/** Below this momentum the dipole limit: the fundamental line alone, carrying the Larmor power. */
+export const U_COLD = 0.01;
+/** Momentum grid for the gamma integral: cold (1e-18..0.01), exact (to the seam), synchrotron (to 1e7). */
+export function uGrid(): { u: number[]; dlnu: number[] } {
+  const u: number[] = [], d: number[] = [];
+  const seg = (a: number, b: number, step: number) => { const n = Math.ceil((Math.log(b) - Math.log(a)) / step), h = (Math.log(b) - Math.log(a)) / n;
+    for (let i = 0; i < n; i++) { u.push(Math.exp(Math.log(a) + h * (i + 0.5))); d.push(h); } };
+  seg(1e-18, U_COLD, 0.1);
+  seg(U_COLD, Math.sqrt(GAMMA_SEAM * GAMMA_SEAM - 1), 0.03);
+  seg(Math.sqrt(GAMMA_SEAM * GAMMA_SEAM - 1), 1e7, 0.05);
+  return { u, dlnu: d };
+}
+/** Bin-averaged kernel for one momentum over all x bins (independent of s). */
+export function kernelRow(u: number, g: Grid, out: Float64Array) {
+  const gam = Math.sqrt(1 + u * u), h = (g.lnx1 - g.lnx0) / g.nx;
+  out.fill(0);
+  if (u < U_COLD) { // fundamental line [1/(gamma(1+beta)), gamma(1+beta)] with power (4/9) u^2, spread over its bins
+    const beta = u / gam, a = 1 / (gam * (1 + beta)), b = gam * (1 + beta), P = (4 / 9) * u * u;
+    if (!(b - a > 1e-9 * a)) { // narrower than double precision resolves: all in the bin holding x = 1/gamma
+      const i = Math.floor((Math.log(1 / gam) - g.lnx0) / h);
+      if (i >= 0 && i < g.nx) out[i] = P / (Math.exp(g.lnx0 + h * (i + 1)) - Math.exp(g.lnx0 + h * i));
+      return;
+    }
+    const ia = Math.floor((Math.log(a) - g.lnx0) / h), ib = Math.floor((Math.log(b) - g.lnx0) / h);
+    for (let i = Math.max(0, ia); i <= Math.min(g.nx - 1, ib); i++) {
+      const xa = Math.exp(g.lnx0 + h * i), xb = Math.exp(g.lnx0 + h * (i + 1)), ov = Math.max(0, Math.min(b, xb) - Math.max(a, xa));
+      out[i] = P * (ov / (b - a)) / (xb - xa);
+    }
+    return;
+  }
+  const xmax = 90 * gam * gam + 10; // beyond 60 x the critical frequency the kernel is below exp(-60)
+  for (let i = 0; i < g.nx; i++) {
+    const xa = Math.exp(g.lnx0 + h * i), xb = Math.exp(g.lnx0 + h * (i + 1));
+    if (xa > xmax) break;
+    out[i] = kernelBin(xa, xb, gam);
+  }
+}
+export interface Population { n(u: number, s: number): number; d(u: number, s: number): number }
+const COOLED: Population = { n: nHatU, d: dNOverGuU };
+/** J^ = Int N^ p^ dgamma, A^ = -Int p^ gamma u d/dgamma(N^/(gamma u)) dgamma on the (x, s) grid (p^ = 2 pi kernel). */
+export function contract(rows: Float64Array[], uu: { u: number[]; dlnu: number[] }, g: Grid, pop: Population = COOLED) {
+  const J = new Float64Array(g.nx * g.ns), A = new Float64Array(g.nx * g.ns);
+  for (let js = 0; js < g.ns; js++) {
+    const s = Math.exp(g.lns0 + (g.lns1 - g.lns0) * js / (g.ns - 1));
+    for (let k = 0; k < uu.u.length; k++) {
+      const u = uu.u[k], gam = Math.sqrt(1 + u * u), dg = (u * u / gam) * uu.dlnu[k];
+      const n = pop.n(u, s), dn = pop.d(u, s); if (n === 0 && dn === 0) continue;
+      const wj = n * 2 * Math.PI * dg, wa = -2 * Math.PI * gam * u * dn * dg, row = rows[k];
+      for (let i = 0; i < g.nx; i++) { const r = row[i]; if (r === 0) continue; J[js * g.nx + i] += wj * r; A[js * g.nx + i] += wa * r; }
+    }
+  }
+  return { J, A };
+}
+// File: Uint32 [magic 'SYNT', version 1, nx, ns], Float32 [lnx0, lnx1, lns0, lns1, G_MIN, G_BR, P1, P2, GAMMA_SEAM,
+// U_COLD, 0, 0], then Float32 pairs (ln J^, ln A^), s rows of x columns. Non-positive values (frequencies no
+// electron reaches; a few slow-cooling maser cells) are stored as ln = -80, i.e. zero.
+const MAGIC = 0x544e5953, HEAD = 16;
+export function encodeTable(J: Float64Array, A: Float64Array, g: Grid): ArrayBuffer {
+  const buf = new ArrayBuffer(HEAD * 4 + g.nx * g.ns * 8), u32 = new Uint32Array(buf, 0, 4), f32 = new Float32Array(buf);
+  u32.set([MAGIC, 1, g.nx, g.ns]);
+  f32.set([g.lnx0, g.lnx1, g.lns0, g.lns1, G_MIN, G_BR, P1, P2, GAMMA_SEAM, U_COLD, 0, 0], 4);
+  for (let i = 0; i < g.nx * g.ns; i++) { f32[HEAD + 2 * i] = J[i] > 0 ? Math.log(J[i]) : -80; f32[HEAD + 2 * i + 1] = A[i] > 0 ? Math.log(A[i]) : -80; }
+  return buf;
+}
+export interface SynchTable { nx: number; ns: number; lnx0: number; lnx1: number; lns0: number; lns1: number; data: Float32Array }
+export function parseTable(buf: ArrayBuffer): SynchTable {
+  const u32 = new Uint32Array(buf, 0, 4), f32 = new Float32Array(buf);
+  if (u32[0] !== MAGIC || u32[1] !== 1) throw new Error("synch-table.bin: bad magic or version");
+  const c = [G_MIN, G_BR, P1, P2, GAMMA_SEAM, U_COLD];
+  c.forEach((v, i) => { if (Math.abs(f32[8 + i] - v) > 1e-6 * Math.abs(v)) throw new Error("synch-table.bin: built for other constants; rebuild it"); });
+  return { nx: u32[2], ns: u32[3], lnx0: f32[4], lnx1: f32[5], lns0: f32[6], lns1: f32[7], data: f32.subarray(HEAD) };
+}
+/** Bilinear (ln J^, ln A^) at (ln x, ln s) between cell centres. Above the x grid: the fast-cooled gamma^-4
+ *  asymptote (J^ ~ x^-1.5, A^ ~ x^-2); below: the first column; below the s grid: slope 1 in ln s (N^ ~ s);
+ *  above: the last row. Twin of synchLookupJ in emission-shared.wgsl. */
+export function lookup(t: SynchTable, lnx: number, lns: number): [number, number] {
+  const h = (t.lnx1 - t.lnx0) / t.nx;
+  let fx = (lnx - t.lnx0) / h - 0.5, extX = 0;
+  if (fx > t.nx - 1) { extX = (fx - (t.nx - 1)) * h; fx = t.nx - 1; }
+  if (fx < 0) fx = 0;
+  let fs = (lns - t.lns0) / (t.lns1 - t.lns0) * (t.ns - 1), extS = 0;
+  if (fs < 0) { extS = lns - t.lns0; fs = 0; }
+  if (fs > t.ns - 1) fs = t.ns - 1;
+  const ix = Math.min(t.nx - 2, Math.floor(fx)), is = Math.min(t.ns - 2, Math.floor(fs)), ax = fx - ix, as = fs - is;
+  const v = (i: number, j: number, c: number) => t.data[2 * (j * t.nx + i) + c];
+  const bil = (c: number) => (1 - as) * ((1 - ax) * v(ix, is, c) + ax * v(ix + 1, is, c)) + as * ((1 - ax) * v(ix, is + 1, c) + ax * v(ix + 1, is + 1, c));
+  return [bil(0) - 1.5 * extX + extS, bil(1) - 2 * extX + extS];
+}

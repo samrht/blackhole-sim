@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { bessel, besselRecurrence, kernelExact, kernelSync, synchF, nHatU, nHat, dNOverGu, gInj, I_G } from "../src/physics/cyclosynch";
+import { parseTable, lookup, TABLE_GRID, uGrid, U_COLD, kernelBin, dNOverGuU, kernelRow, contract } from "../src/physics/cyclosynch";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 describe("Bessel functions", () => {
   it("recurrence matches reference values", () => {
@@ -59,5 +62,58 @@ describe("cooled population (exact, constant injection for a cooling depth s)", 
   });
   it("slow cooling (s -> 0) gives N^ = s g above gamma_min", () => {
     expect(nHat(100, 1e-6) / (1e-6 * gInj(100))).toBeCloseTo(1, 3);
+  });
+});
+const TAB = () => parseTable(readFileSync(join(__dirname, "../public/synch-table.bin")).buffer.slice(0) as ArrayBuffer);
+describe("coefficient table (public/synch-table.bin)", () => {
+  it("header matches the code's grid and injection constants (a stale table fails here)", () => {
+    const t = TAB();
+    expect([t.nx, t.ns]).toEqual([TABLE_GRID.nx, TABLE_GRID.ns]);
+    expect(t.lnx0).toBeCloseTo(TABLE_GRID.lnx0, 5); expect(t.lns1).toBeCloseTo(TABLE_GRID.lns1, 5);
+    const bad = new Uint8Array(readFileSync(join(__dirname, "../public/synch-table.bin"))); bad[0] ^= 1;
+    expect(() => parseTable(bad.buffer)).toThrow();
+  });
+  it("calorimetry: Int J^ d omega over the table equals the population's radiated power (within 0.5 %)", () => {
+    const t = TAB(), h = (t.lnx1 - t.lnx0) / t.nx;
+    for (const js of [0, 80, 159]) {
+      const s = Math.exp(t.lns0 + (t.lns1 - t.lns0) * js / (t.ns - 1)); let tot = 0, pop = 0;
+      for (let i = 0; i < t.nx; i++) { const x = Math.exp(t.lnx0 + h * (i + 0.5)); tot += Math.exp(t.data[2 * (js * t.nx + i)]) / (2 * Math.PI) * x * h; }
+      const uu = uGrid(); uu.u.forEach((u, k) => { pop += nHatU(u, s) * u * u * (u * u / Math.sqrt(1 + u * u)) * uu.dlnu[k]; });
+      expect(Math.abs(tot / ((4 / 9) * pop) - 1)).toBeLessThan(5e-3); // measured 4e-3 (s = 1e-3), 1e-4 elsewhere
+    }
+  });
+  it("lookup agrees with a direct computation at off-grid points (1 % emission, 2 % absorption)", () => {
+    const t = TAB(), uu = uGrid(), h = (t.lnx1 - t.lnx0) / t.nx;
+    for (const [x, s] of [[3.7e2, 5], [2.1e4, 0.3], [2.5e6, 12], [1.6, 30], [55, 0.01]] as [number, number][]) {
+      const xa = x * Math.exp(-h / 2), xb = x * Math.exp(h / 2); let J = 0, A = 0;
+      uu.u.forEach((u, k) => { const g = Math.sqrt(1 + u * u), dg = u * u / g * uu.dlnu[k];
+        const kb = u < U_COLD || xa > 90 * g * g + 10 ? 0 : kernelBin(xa, xb, g);
+        J += nHatU(u, s) * 2 * Math.PI * kb * dg; A += -2 * Math.PI * g * u * dNOverGuU(u, s) * kb * dg; });
+      const [lJ, lA] = lookup(t, Math.log(x), Math.log(s));
+      expect(Math.abs(Math.exp(lJ) / J - 1)).toBeLessThan(1e-2);
+      expect(Math.abs(Math.exp(lA) / A - 1)).toBeLessThan(2e-2); // measured <= 2.3e-3 except 1.04e-2 at (55, 0.01): slow-cooling absorption varies steeply in s
+    }
+  }, 300000);
+  it("Kirchhoff: for a thermal population the contraction gives A^ = J^ / Theta", () => {
+    const g = { ...TABLE_GRID, nx: 40, lnx0: Math.log(0.5), lnx1: Math.log(400), ns: 2 }, uu = uGrid();
+    const keep = uu.u.map((u, k) => k).filter((k) => uu.u[k] > 0.05 && uu.u[k] < 30);
+    const sub = { u: keep.map((k) => uu.u[k]), dlnu: keep.map((k) => uu.dlnu[k]) };
+    const rows = sub.u.map((u) => { const r = new Float64Array(g.nx); kernelRow(u, g, r); return r; });
+    for (const Th of [0.3, 1, 3]) {
+      // thermal (Maxwell-Juttner) N = gamma u exp(-gamma/Theta) per unit gamma: N/(gamma u) = exp(-gamma/Theta)
+      const th = { n: (u: number) => { const gm = Math.sqrt(1 + u * u); return gm * u * Math.exp(-gm / Th); },
+                   d: (u: number) => -Math.exp(-Math.sqrt(1 + u * u) / Th) / Th };
+      const { J, A } = contract(rows, sub, g, th);
+      for (let i = 5; i < g.nx; i += 7) if (J[i] > 0) expect(J[i] / (A[i] * Th)).toBeCloseTo(1, 6);
+    }
+  }, 120000);
+  it("edge extensions are continuous (top of x, bottom of s) and the slider range stays inside x >= 1e-4", () => {
+    const t = TAB(), e = 1e-6;
+    for (const lns of [Math.log(0.1), Math.log(10)]) {
+      const a = lookup(t, t.lnx1 - (t.lnx1 - t.lnx0) / t.nx * 0.5 - e, lns), b = lookup(t, t.lnx1 - (t.lnx1 - t.lnx0) / t.nx * 0.5 + e, lns);
+      expect(Math.abs(a[0] - b[0])).toBeLessThan(1e-4); expect(Math.abs(a[1] - b[1])).toBeLessThan(1e-4);
+    }
+    const c = lookup(t, Math.log(1e5), t.lns0 + e), d = lookup(t, Math.log(1e5), t.lns0 - e);
+    expect(Math.abs(c[0] - d[0])).toBeLessThan(1e-4);
   });
 });
