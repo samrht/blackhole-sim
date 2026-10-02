@@ -1,7 +1,7 @@
 # Synchrotron jet (Tier 2) — design
 
 **Date:** 2026-10-02
-**Status:** approved (2026-10-02); plan `docs/plans/2026-10-02-synchrotron-jet.md`
+**Status:** implemented on `feat/synchrotron-jet` (plan `docs/plans/2026-10-02-synchrotron-jet.md`)
 **Roadmap item:** `docs/ROADMAP.md`, "Physics features: Synchrotron jet emission"
 
 ## 1. Intent (agreed)

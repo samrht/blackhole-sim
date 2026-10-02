@@ -35,15 +35,17 @@ this file is the queue. Each item gets its own spec (and plan) before code, as e
 
 ## Physics features (original Tier 2, not started)
 
-- [ ] **Synchrotron jet emission** from a field and electron distribution (the jet is
-  phenomenological today; see the README's Tier 2B caveats).
+- [x] **Synchrotron jet emission** (2026-10-02): magnetically arrested field, M87's measured
+  acceleration, p = 2.4 electrons, GR transfer with self-absorption, brightness from ε × the
+  Blandford–Znajek power (README "Synchrotron jet").
 - [ ] **Evolving alpha-disk** (surface-density diffusion) in place of static Novikov-Thorne plus
   decorative turbulence.
 - [x] **Light-travel delay** (2026-10-01) (the model has none: disk and jet are seen at one coordinate time).
 
 ## Open questions from the presets work
 
-- [x] **Jet brightness vs the disk** (2026-10-01): presets calibrate the jet where an observation
+- [x] **Jet brightness vs the disk** (2026-10-01; superseded 2026-10-02 by the energy budget, which
+  predicts M87\*'s jet at 12 % of the disk's light): presets calibrate the jet where an observation
   bounds it. M87\*: EHT horizon-scale jet base <= ~10 % of the ring -> jet strength 0.1 / 29.8
   (measured jet/disk light ratio at strength 1). Cyg X-1 / GRS 1915+105: unmeasured, model default,
   said in their captions. The default view keeps strength 1 (not a real object).
