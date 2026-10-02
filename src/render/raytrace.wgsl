@@ -7,7 +7,7 @@ struct Uniforms {
   jitterMode: u32, setIndex: u32, rowStart: u32, rowEnd: u32,
   lumNorm: f32,
   lightDelay: f32,
-  jetB0: f32, jetKScale: f32, rgCm: f32,   // synchrotron jet (CPU: jetUniforms in synchrotron.ts)
+  jetB0: f32, jetQ0: f32, rgCm: f32,   // synchrotron jet (CPU: jetUniforms in synchrotron.ts)
 };
 @group(0) @binding(0) var<uniform> U: Uniforms;
 @group(0) @binding(1) var<storage, read_write> accum: array<vec4<f32>>;
@@ -241,7 +241,7 @@ fn jetChordMisses(p0: vec3<f32>, dvec: vec3<f32>) -> bool {
 fn jetStep(s: State, sNew: State, dl: f32, accIn: JetOut) -> JetOut {
   // a = 0: no Blandford-Znajek power, so the energy budget gives no emitting electrons (k_scale = 0);
   // skip before log(k_scale), which WGSL leaves undefined at 0.
-  if (U.jetKScale <= 0.0) { return accIn; }
+  if (U.jetQ0 <= 0.0) { return accIn; }
   let p0 = cartOf(s.x);
   let dvec = cartOf(sNew.x) - p0;                           // inward step (camera -> hole)
   if (dot(dvec, dvec) <= 1e-12) { return accIn; }
@@ -256,7 +256,7 @@ fn jetStep(s: State, sNew: State, dl: f32, accIn: JetOut) -> JetOut {
     if (shape > 0.0) {
       let D = plasmaShiftJ(q.x, q.y, mix(s.p, sNew.p, f), U.a, jetGammaAt(q.x * cos(q.y), U.jetGamma));
       if (D > 1e-6) {                                       // never divide by D -> 0
-        let so = synchSampleJ(q.x, q.y, D, U.a, U.jetB0, U.jetKScale, shape);
+        let so = synchSampleJ(q.x, q.y, D, U.a, U.jetB0, U.jetQ0, shape);
         acc = jetSlabJ(acc, so.j, so.a, U.rgCm * D * dl / f32(n));
       }
     }
