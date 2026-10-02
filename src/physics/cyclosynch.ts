@@ -44,9 +44,13 @@ function airy(t: number): [number, number] {
 function jAiry(nu: number, z: number): number {
   const w = z / nu;
   if (Math.abs(w - 1) < 1e-9) return Math.pow(2, 1 / 3) * airy(0)[0] / Math.pow(nu, 1 / 3);
+  // (2/3) zeta^(3/2) = atanh(s) - s (w < 1, s = sqrt(1 - w^2)) or s - atan(s) (w > 1, s = sqrt(w^2 - 1)). Near the
+  // turning point both differences cancel catastrophically (s ~ 1e-4 left ~1e-13 of noise and a negative base:
+  // NaN, final review 2026-10-02), so small s uses the series s^3/3 +- s^5/5 + s^7/7 +- ...
+  const series = (s: number, sign: number) => { let sum = 0, p = s * s * s, sg = 1; for (let k = 3; k <= 15; k += 2) { sum += sg * p / k; p *= s * s; sg *= sign; } return sum; };
   let zeta: number;
-  if (w > 1) { const s = Math.sqrt(w * w - 1); zeta = -Math.pow(1.5 * (s - Math.acos(1 / w)), 2 / 3); }
-  else { const s = Math.sqrt(1 - w * w); zeta = Math.pow(1.5 * (Math.log((1 + s) / w) - s), 2 / 3); }
+  if (w > 1) { const s = Math.sqrt(w * w - 1); zeta = -Math.pow(1.5 * (s < 0.1 ? series(s, -1) : s - Math.atan(s)), 2 / 3); }
+  else { const s = Math.sqrt(1 - w * w); zeta = Math.pow(1.5 * (s < 0.1 ? series(s, 1) : Math.atanh(s) - s), 2 / 3); }
   return Math.pow(4 * zeta / (1 - w * w), 0.25) * airy(Math.pow(nu, 2 / 3) * zeta)[0] / Math.pow(nu, 1 / 3);
 }
 /** [J_n(z), J_n'(z)]: exact recurrence for n <= 40; above, the uniform expansion for J (6e-4 at n = 41, falling
@@ -195,17 +199,19 @@ export const dNOverGu = (g: number, s: number) => dNOverGuU(Math.sqrt(g * g - 1)
 
 // ---- the table (spec 2.3) --------------------------------------------------------------------------------
 export interface Grid { lnx0: number; lnx1: number; nx: number; lns0: number; lns1: number; ns: number }
-export const TABLE_GRID: Grid = { lnx0: Math.log(1e-4), lnx1: Math.log(1e10), nx: 1612, lns0: Math.log(1e-3), lns1: Math.log(40), ns: 160 };
+export const TABLE_GRID: Grid = { lnx0: Math.log(1e-4), lnx1: Math.log(1e10), nx: 1612, lns0: Math.log(1e-7), lns1: Math.log(40), ns: 300 };
 /** Below this momentum the dipole limit: the fundamental line alone, carrying the Larmor power. */
 export const U_COLD = 0.01;
-/** Momentum grid for the gamma integral: cold (1e-18..0.01), exact (to the seam), synchrotron (to 1e7). */
-export function uGrid(): { u: number[]; dlnu: number[] } {
+/** Momentum grid for the gamma integral: cold (1e-18..0.01), exact (to the seam), synchrotron (to 1e7);
+ *  `refine` divides every step (convergence tests). */
+export function uGrid(refine = 1): { u: number[]; dlnu: number[] } {
   const u: number[] = [], d: number[] = [];
   const seg = (a: number, b: number, step: number) => { const n = Math.ceil((Math.log(b) - Math.log(a)) / step), h = (Math.log(b) - Math.log(a)) / n;
     for (let i = 0; i < n; i++) { u.push(Math.exp(Math.log(a) + h * (i + 0.5))); d.push(h); } };
-  seg(1e-18, U_COLD, 0.1);
-  seg(U_COLD, Math.sqrt(GAMMA_SEAM * GAMMA_SEAM - 1), 0.03);
-  seg(Math.sqrt(GAMMA_SEAM * GAMMA_SEAM - 1), 1e7, 0.05);
+  seg(1e-18, U_COLD, 0.1 / refine);
+  seg(U_COLD, 2, 0.01 / refine); // cyclotron regime: few harmonics (cheap), kernel changes fast with u
+  seg(2, Math.sqrt(GAMMA_SEAM * GAMMA_SEAM - 1), 0.015 / refine); // where slow-cooling ramps meet harmonic structure
+  seg(Math.sqrt(GAMMA_SEAM * GAMMA_SEAM - 1), 1e7, 0.05 / refine);
   return { u, dlnu: d };
 }
 /** Bin-averaged kernel for one momentum over all x bins (independent of s). */
@@ -233,31 +239,43 @@ export function kernelRow(u: number, g: Grid, out: Float64Array) {
     out[i] = kernelBin(xa, xb, gam);
   }
 }
-export interface Population { n(u: number, s: number): number; d(u: number, s: number): number }
-const COOLED: Population = { n: nHatU, d: dNOverGuU };
-/** J^ = Int N^ p^ dgamma, A^ = -Int p^ gamma u d/dgamma(N^/(gamma u)) dgamma on the (x, s) grid (p^ = 2 pi kernel). */
+/** N^ per unit gamma as a function of momentum u and cooling depth s. */
+export interface Population { n(u: number, s: number): number }
+const COOLED: Population = { n: nHatU };
+/** J^ = Int N^ p^ dgamma, A^ = -Int p^ gamma u d/dgamma(N^/(gamma u)) dgamma on the (x, s) grid (p^ = 2 pi kernel).
+ *  Absorption is finite-volume: over each momentum cell p^ gamma u is taken constant and the derivative is integrated
+ *  exactly, f(u_hi) - f(u_lo) with f = N^/(gamma u) at the cell edges. The cooled population turns on over a range
+ *  narrower than a cell (near gamma_min in slow cooling, near the cyclotron regime at s ~ 0.1-2), where a pointwise
+ *  derivative sampled it at an arbitrary phase (up to 10x off, spurious negative cells; final review 2026-10-02). */
 export function contract(rows: Float64Array[], uu: { u: number[]; dlnu: number[] }, g: Grid, pop: Population = COOLED) {
   const J = new Float64Array(g.nx * g.ns), A = new Float64Array(g.nx * g.ns);
   for (let js = 0; js < g.ns; js++) {
     const s = Math.exp(g.lns0 + (g.lns1 - g.lns0) * js / (g.ns - 1));
     for (let k = 0; k < uu.u.length; k++) {
       const u = uu.u[k], gam = Math.sqrt(1 + u * u), dg = (u * u / gam) * uu.dlnu[k];
-      const n = pop.n(u, s), dn = pop.d(u, s); if (n === 0 && dn === 0) continue;
-      const wj = n * 2 * Math.PI * dg, wa = -2 * Math.PI * gam * u * dn * dg, row = rows[k];
+      const e = Math.exp(0.5 * uu.dlnu[k]), uLo = u / e, uHi = u * e;
+      const f = (v: number) => pop.n(v, s) / (Math.sqrt(1 + v * v) * v);
+      const n = pop.n(u, s), df = f(uHi) - f(uLo); if (n === 0 && df === 0) continue;
+      const wj = n * 2 * Math.PI * dg, wa = -2 * Math.PI * gam * u * df, row = rows[k];
       for (let i = 0; i < g.nx; i++) { const r = row[i]; if (r === 0) continue; J[js * g.nx + i] += wj * r; A[js * g.nx + i] += wa * r; }
     }
   }
   return { J, A };
 }
 // File: Uint32 [magic 'SYNT', version 1, nx, ns], Float32 [lnx0, lnx1, lns0, lns1, G_MIN, G_BR, P1, P2, GAMMA_SEAM,
-// U_COLD, 0, 0], then Float32 pairs (ln J^, ln A^), s rows of x columns. Non-positive values (frequencies no
-// electron reaches; a few slow-cooling maser cells) are stored as ln = -80, i.e. zero.
+// U_COLD, 0, 0], then Float32 pairs (ln J^, ln A^), s rows of x columns. Non-positive values are stored as ln = -80,
+// i.e. zero: frequencies no electron reaches, and 144 cells of genuinely negative absorption (a weak cyclotron maser
+// at the low edge of the fundamental of electrons at the cooled population's switch-on edge, x 0.16-1.5, s ~0.15;
+// converged on a 10x finer grid), whose amplification the model leaves out.
 const MAGIC = 0x544e5953, HEAD = 16;
 export function encodeTable(J: Float64Array, A: Float64Array, g: Grid): ArrayBuffer {
   const buf = new ArrayBuffer(HEAD * 4 + g.nx * g.ns * 8), u32 = new Uint32Array(buf, 0, 4), f32 = new Float32Array(buf);
   u32.set([MAGIC, 1, g.nx, g.ns]);
   f32.set([g.lnx0, g.lnx1, g.lns0, g.lns1, G_MIN, G_BR, P1, P2, GAMMA_SEAM, U_COLD, 0, 0], 4);
-  for (let i = 0; i < g.nx * g.ns; i++) { f32[HEAD + 2 * i] = J[i] > 0 ? Math.log(J[i]) : -80; f32[HEAD + 2 * i + 1] = A[i] > 0 ? Math.log(A[i]) : -80; }
+  for (let i = 0; i < g.nx * g.ns; i++) {
+    if (!Number.isFinite(J[i]) || !Number.isFinite(A[i])) throw new Error(`synch table: non-finite value in cell ${i} (x column ${i % g.nx}, s row ${Math.floor(i / g.nx)})`);
+    f32[HEAD + 2 * i] = J[i] > 0 ? Math.log(J[i]) : -80; f32[HEAD + 2 * i + 1] = A[i] > 0 ? Math.log(A[i]) : -80;
+  }
   return buf;
 }
 export interface SynchTable { nx: number; ns: number; lnx0: number; lnx1: number; lns0: number; lns1: number; data: Float32Array<ArrayBuffer> }
@@ -268,19 +286,32 @@ export function parseTable(buf: ArrayBuffer): SynchTable {
   c.forEach((v, i) => { if (Math.abs(f32[8 + i] - v) > 1e-6 * Math.abs(v)) throw new Error("synch-table.bin: built for other constants; rebuild it"); });
   return { nx: u32[2], ns: u32[3], lnx0: f32[4], lnx1: f32[5], lns0: f32[6], lns1: f32[7], data: f32.subarray(HEAD) };
 }
-/** Bilinear (ln J^, ln A^) at (ln x, ln s) between cell centres. Above the x grid: the fast-cooled gamma^-4
- *  asymptote (J^ ~ x^-1.5, A^ ~ x^-2); below: the first column; below the s grid: slope 1 in ln s (N^ ~ s);
- *  above: the last row. Twin of synchLookupJ in emission-shared.wgsl. */
+/** Bilinear (ln J^, ln A^) at (ln x, ln s) between cell centres. Above the x grid: linear in ln x with the slope of the
+ *  last two columns (the spectrum's own power law: x^-1.5 / x^-2 when fast-cooled, x^-1 / x^-1.5 when uncooled at tiny
+ *  s, where electrons up to gamma ~ 1/s emit past the grid); below: the first column; below the s grid: slope 1 in ln s (N^ ~ s, all
+ *  electrons that matter uncooled); above it: linear in s from the last two rows. Cold electrons cooled to rest pile
+ *  up in number ~ s, and their absorption at the cyclotron fundamental grows linearly with s (final review
+ *  2026-10-02); elsewhere the last two rows agree and the extension is flat. Twin of synchLookupJ (emission-shared.wgsl). */
 export function lookup(t: SynchTable, lnx: number, lns: number): [number, number] {
   const h = (t.lnx1 - t.lnx0) / t.nx;
   let fx = (lnx - t.lnx0) / h - 0.5, extX = 0;
   if (fx > t.nx - 1) { extX = (fx - (t.nx - 1)) * h; fx = t.nx - 1; }
   if (fx < 0) fx = 0;
-  let fs = (lns - t.lns0) / (t.lns1 - t.lns0) * (t.ns - 1), extS = 0;
+  let fs = (lns - t.lns0) / (t.lns1 - t.lns0) * (t.ns - 1), extS = 0, above = 0;
   if (fs < 0) { extS = lns - t.lns0; fs = 0; }
-  if (fs > t.ns - 1) fs = t.ns - 1;
+  if (fs > t.ns - 1) { above = Math.exp(lns) - Math.exp(t.lns1); fs = t.ns - 1; }
   const ix = Math.min(t.nx - 2, Math.floor(fx)), is = Math.min(t.ns - 2, Math.floor(fs)), ax = fx - ix, as = fs - is;
   const v = (i: number, j: number, c: number) => t.data[2 * (j * t.nx + i) + c];
   const bil = (c: number) => (1 - as) * ((1 - ax) * v(ix, is, c) + ax * v(ix + 1, is, c)) + as * ((1 - ax) * v(ix, is + 1, c) + ax * v(ix + 1, is + 1, c));
-  return [bil(0) - 1.5 * extX + extS, bil(1) - 2 * extX + extS];
+  let lJ = bil(0), lA = bil(1);
+  if (above > 0) {
+    const sPrev = Math.exp(t.lns0 + (t.lns1 - t.lns0) * (t.ns - 2) / (t.ns - 1)), dS = Math.exp(t.lns1) - sPrev;
+    const row = (j: number, c: number) => (1 - ax) * v(ix, j, c) + ax * v(ix + 1, j, c);
+    const ext = (c: number, last: number) => { const slope = Math.max(0, (Math.exp(last) - Math.exp(row(t.ns - 2, c))) / dS); return Math.log(Math.exp(last) + slope * above); };
+    lJ = ext(0, lJ); lA = ext(1, lA);
+  }
+  // slope in ln x from the last two columns, interpolated in s like the value itself
+  const col = (i: number, c: number) => (1 - as) * v(i, is, c) + as * v(i, is + 1, c);
+  const sl = (c: number) => (extX > 0 ? (col(t.nx - 1, c) - col(t.nx - 2, c)) / h : 0);
+  return [lJ + sl(0) * extX + extS, lA + sl(1) * extX + extS];
 }

@@ -121,25 +121,41 @@ const SYN_LNNUB0 = 14.84486172;     // ln(nu_B / B)
 const SYN_LNK0 = -20.46682379;      // ln(k / B^2), k = sigma_T B^2 / (6 pi m_e c)
 const SYN_LNT0 = -19.98809263;      // ln[280^0.58 / (0.42 c)]
 const SYN_LNX0 = -9.210340372; const SYN_LNX1 = 23.02585093;
-const SYN_LNS0 = -6.907755279; const SYN_LNS1 = 3.688879454;
+const SYN_LNS0 = -16.11809565; const SYN_LNS1 = 3.688879454;
 fn synchReady() -> bool { return textureDimensions(synchTab).x >= 2u; } // 1x1 placeholder: table not loaded
-// Twin of lookup() in cyclosynch.ts: bilinear between cell centres, with the same edge extensions.
+// Twin of lookup() in cyclosynch.ts: bilinear between cell centres, with the same edge extensions (above the s grid:
+// linear in s from the last two rows, the cold electrons' cyclotron-fundamental absorption growing with s; above the
+// x grid: the last two columns' slope).
 fn synchLookupJ(lnx: f32, lns: f32) -> vec2<f32> {
   let dims = textureDimensions(synchTab); let nx = f32(dims.x); let ns = f32(dims.y);
   let h = (SYN_LNX1 - SYN_LNX0) / nx;
   var fx = (lnx - SYN_LNX0) / h - 0.5; var extX = 0.0;
   if (fx > nx - 1.0) { extX = (fx - (nx - 1.0)) * h; fx = nx - 1.0; }
   fx = max(fx, 0.0);
-  var fs = (lns - SYN_LNS0) / (SYN_LNS1 - SYN_LNS0) * (ns - 1.0); var extS = 0.0;
+  var fs = (lns - SYN_LNS0) / (SYN_LNS1 - SYN_LNS0) * (ns - 1.0); var extS = 0.0; var above = 0.0;
   if (fs < 0.0) { extS = lns - SYN_LNS0; fs = 0.0; }
-  fs = min(fs, ns - 1.0);
+  if (fs > ns - 1.0) { above = exp(lns) - exp(SYN_LNS1); fs = ns - 1.0; }
   let ix = min(i32(dims.x) - 2, i32(floor(fx))); let iy = min(i32(dims.y) - 2, i32(floor(fs)));
   let ax = fx - f32(ix); let ay = fs - f32(iy);
   let v00 = textureLoad(synchTab, vec2<i32>(ix, iy), 0).xy;
   let v10 = textureLoad(synchTab, vec2<i32>(ix + 1, iy), 0).xy;
   let v01 = textureLoad(synchTab, vec2<i32>(ix, iy + 1), 0).xy;
   let v11 = textureLoad(synchTab, vec2<i32>(ix + 1, iy + 1), 0).xy;
-  return mix(mix(v00, v10, ax), mix(v01, v11, ax), ay) + vec2<f32>(-1.5 * extX + extS, -2.0 * extX + extS);
+  var v = mix(mix(v00, v10, ax), mix(v01, v11, ax), ay);
+  if (above > 0.0) {
+    let sPrev = exp(SYN_LNS0 + (SYN_LNS1 - SYN_LNS0) * (ns - 2.0) / (ns - 1.0));
+    let prev = mix(v00, v10, ax); // row ns - 2 (iy = ns - 2, ay = 1 here)
+    let slope = max(vec2<f32>(0.0), (exp(v) - exp(prev)) / (exp(SYN_LNS1) - sPrev));
+    v = log(exp(v) + slope * above);
+  }
+  // above the x grid: the slope of the last two columns (the spectrum's own power law, cooled or not)
+  var slope = vec2<f32>(0.0);
+  if (extX > 0.0) {
+    let c1 = mix(textureLoad(synchTab, vec2<i32>(i32(dims.x) - 1, iy), 0).xy, textureLoad(synchTab, vec2<i32>(i32(dims.x) - 1, iy + 1), 0).xy, ay);
+    let c0 = mix(textureLoad(synchTab, vec2<i32>(i32(dims.x) - 2, iy), 0).xy, textureLoad(synchTab, vec2<i32>(i32(dims.x) - 2, iy + 1), 0).xy, ay);
+    slope = (c1 - c0) / h;
+  }
+  return v + slope * extX + vec2<f32>(extS, extS);
 }
 // Per band: j = (nu/nu')^3 j'(nu') (cgs per sr) and alpha'(nu') (1/cm) of the cooled population at nu' = D nu.
 fn synchSampleJ(r: f32, th: f32, D: f32, a: f32, b0: f32, q0: f32, shape: f32, g280: f32, rgCm: f32) -> SynchOut {
