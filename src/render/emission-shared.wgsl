@@ -1,6 +1,7 @@
-// Sole WGSL copy of the disk turbulence and jet emissivity (twins: src/physics/emission.ts,
-// src/physics/jet.ts). Prepended verbatim by gpu.ts (renderer) and parity.browser.ts (?parity: turb
-// and jet cases), so ?parity checks the shipped bytes. Self-contained: no uniforms, no bindings.
+// Sole WGSL copy of the disk turbulence and the synchrotron jet (twins: src/physics/emission.ts,
+// src/physics/jet.ts, src/physics/synchrotron.ts). Prepended verbatim by gpu.ts (renderer) and
+// parity.browser.ts (?parity: turb and jet cases), so ?parity checks the shipped bytes. No uniforms,
+// no bindings; the jet code uses State/gUp from integrator-shared.wgsl, which both prepend too.
 
 // --- Tier 2A turbulence noise -----------------------------------------------------------------
 fn ihashE(ix: i32, iy: i32) -> f32 {
@@ -40,11 +41,11 @@ fn turbulenceE(logR: f32, psi: f32) -> f32 {
   return sum / norm;
 }
 
-// --- Tier 2B jet emissivity ----------------------------------------------------------------
+// --- Tier 2B jet geometry -------------------------------------------------------------------
 const JET_QPEAK = 0.8;   const JET_WWALL = 0.22;
 const JET_RHO0  = 0.6;   const JET_SLOPE = 0.7;
 const JET_ZBASE = 2.0;   const JET_KZ    = 0.35;
-const JET_PBEAM = 3.5;   const JET_TURB  = 0.35;  const JET_SEED  = 17.0;
+const JET_TURB  = 0.35;  const JET_SEED  = 17.0;
 
 fn smoothstepJ(a: f32, b: f32, x: f32) -> f32 {
   let t = clamp((x - a) / (b - a), 0.0, 1.0);
@@ -70,25 +71,6 @@ fn knotsJ(z: f32, t: f32, gamma: f32, knotAmp: f32) -> f32 {
   let phase = JET_KZ * (abs(z) - beta * t);
   return 1.0 + knotAmp * (vnoiseE(phase, JET_SEED) - 0.5) * 2.0;
 }
-fn boostJ(mu: f32, gamma: f32) -> f32 {
-  let beta = sqrt(max(0.0, 1.0 - 1.0 / (gamma * gamma)));
-  let delta = 1.0 / (gamma * (1.0 - beta * mu));
-  return pow(delta, JET_PBEAM);
-}
-// scalar emissivity (no beaming); exactly 0 when jet off / below zBase / beyond zMax / outside wall
-// Scalar jet emissivity (no beaming, no on/off switch); exactly 0 below zBase / beyond jetLength /
-// outside the wall. Twin: jetEmission in jet.ts (with jetStrength != 0).
-fn jetEmissionCoreJ(r: f32, th: f32, t: f32, jetLength: f32, knotAmp: f32, gamma: f32) -> f32 {
-  let z = r * cos(th);
-  let az = abs(z);
-  if (az < JET_ZBASE || az > jetLength) { return 0.0; }
-  let rho = r * sin(th);
-  let w = wallJ(rho, z);
-  if (w <= 0.0) { return 0.0; }
-  let turb = 1.0 + JET_TURB * (vnoiseE(log(1.0 + rho), JET_KZ * z) - 0.5) * 2.0;
-  return max(0.0, w * lengthFalloffJ(z, jetLength) * knotsJ(z, t, gamma, knotAmp) * turb);
-}
-
 // --- Tier 2B synchrotron (spec 2026-10-02; twin: src/physics/synchrotron.ts). Constants for p = 2.4,
 // gamma_min = 10; tests/synchrotron.test.ts checks every literal against the CPU twin. -------------
 const SYN_P = 2.4;

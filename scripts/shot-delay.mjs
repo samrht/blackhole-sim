@@ -17,7 +17,8 @@ for (const ld of [0, 1]) {
     r.uploadHotSpots(new Float32Array([7, 0, 0.8, 6])); r.rebind();
     for (let f = 0; f < 16; f++) r.frame({ resW: r.width, resH: r.height, outW: r.displayW, outH: r.displayH, a, incl: (60 * Math.PI) / 180, rObs: 1000,
       fovScale: 14, rIn, rOut: 40, Tpeak: 3e4, lumNorm: lumNormFor(3e4), lightDelay: ld, exposure: -1, time: 50, frame: f, reset: f === 0 ? 1 : 0,
-      maxSteps: 4800, blend: 1 / (f + 1), timeScale: 1, turbAmp: 0, breatheAmp: 0, nSpots: 1, jetStrength: 0, jetGamma: 5, jetLength: 60, jetKnots: 0, skyStrength: 0 });
+      maxSteps: 4800, blend: 1 / (f + 1), timeScale: 1, turbAmp: 0, breatheAmp: 0, nSpots: 1, jetStrength: 0, jetGamma: 2, jetLength: 60, jetKnots: 0, skyStrength: 0,
+      jetB0: 0, jetKScale: 0, rgCm: 0 }); // jet off
     await r.device.queue.onSubmittedWorkDone();
     return c.toDataURL("image/png");
   }, ld);

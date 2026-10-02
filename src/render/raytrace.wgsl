@@ -7,6 +7,7 @@ struct Uniforms {
   jitterMode: u32, setIndex: u32, rowStart: u32, rowEnd: u32,
   lumNorm: f32,
   lightDelay: f32,
+  jetB0: f32, jetKScale: f32, rgCm: f32,   // synchrotron jet (CPU: jetUniforms in synchrotron.ts)
 };
 @group(0) @binding(0) var<uniform> U: Uniforms;
 @group(0) @binding(1) var<storage, read_write> accum: array<vec4<f32>>;
@@ -135,15 +136,10 @@ fn emissionFieldE(rHit: f32, psi: f32, tEmit: f32) -> f32 {
   return max(0.0, turb * breathe + hotspotFieldE(rHit, psi));
 }
 
-// --- Tier 2B jet (WGSL twin of src/physics/jet.ts) --------------------------------------------
-const JET_GAIN  = 0.03;  const JET_CEIL  = 4.0;
-const JET_TINT  = vec3<f32>(0.55, 0.78, 1.0);
-// Jet emissivity lives in emission-shared.wgsl (sole copy, also prepended by the ?parity route);
-// the renderer only adds the on/off switch and its live settings.
-fn jetEmissionJ(r: f32, th: f32, t: f32) -> f32 {
-  if (U.jetStrength == 0.0) { return 0.0; }
-  return jetEmissionCoreJ(r, th, t, U.jetLength, U.jetKnots, U.jetGamma);
-}
+// --- Tier 2B synchrotron jet ----------------------------------------------------------------
+// The jet's physics (density shape, plasma shift, coefficients, slab transfer) lives in
+// emission-shared.wgsl (sole copy, also prepended by the ?parity route); the renderer integrates it
+// along the ray and adds the on/off switch and its live settings.
 fn cartOf(x: vec4<f32>) -> vec3<f32> {
   let r = x.y; let th = x.z; let ph = x.w; let s = sin(th);
   return vec3<f32>(r * s * cos(ph), r * s * sin(ph), r * cos(th));
@@ -203,7 +199,6 @@ fn shadeDisk(rHit: f32, phiHit: f32, g: f32, a: f32, tEmit: f32) -> vec3<f32> {
   return sampleColor(Tobs) * U.lumNorm * E;
 }
 
-// Optically-thin jet radiance gathered over one step s -> sNew (zero outside the emitting region).
 // Light-travel delay (spec 2026-10-01): the backward ray starts at t = 0 and t decreases, so an
 // emitter at coordinate time t_e is seen delay = -t_e - rObs later than a reference at the camera's
 // distance (the constant rObs keeps values in tens of M). Emission time of what this pixel shows:
@@ -232,7 +227,7 @@ fn jetSample(s: State, p0: vec3<f32>, dvec: vec3<f32>, k: u32, n: u32) -> vec2<f
 }
 // Exact skip: the emitter lies inside |z| <= jetLength, rho <= 1.2 funnelEdge(jetLength), so a
 // chord whose closest approach to the hole is beyond that bounding sphere sees no jet (its first
-// sample, the only one when n = 1, is then outside too and jetEmissionJ would return 0).
+// sample, the only one when n = 1, is then outside too and jetShapeJ would return 0).
 fn jetChordMisses(p0: vec3<f32>, dvec: vec3<f32>) -> bool {
   let fe = 1.2 * funnelEdgeJ(U.jetLength);
   let rJet = sqrt(U.jetLength * U.jetLength + fe * fe);
@@ -240,32 +235,37 @@ fn jetChordMisses(p0: vec3<f32>, dvec: vec3<f32>) -> bool {
   return length(p0 + dvec * tc) > rJet;
 }
 
-fn jetStep(s: State, sNew: State, dl: f32) -> vec3<f32> {
+// Synchrotron emission and absorption along one integrator step (spec 2026-10-02 2.4): each sub-sample
+// is a uniform slab of plasma-frame path ds' = r_g D dl / n, with D = nu' / nu_obs from the photon
+// momentum (interpolated across the step like the position and time) and the local flow.
+fn jetStep(s: State, sNew: State, dl: f32, accIn: JetOut) -> JetOut {
+  // a = 0: no Blandford-Znajek power, so the energy budget gives no emitting electrons (k_scale = 0);
+  // skip before log(k_scale), which WGSL leaves undefined at 0.
+  if (U.jetKScale <= 0.0) { return accIn; }
   let p0 = cartOf(s.x);
   let dvec = cartOf(sNew.x) - p0;                           // inward step (camera -> hole)
-  // guard normalize() against a zero-length step: a NaN mu here would poison the EMA accum
-  // buffer permanently (mix(accum, NaN, blend) stays NaN). Effectively unreachable, cheap insurance.
-  if (dot(dvec, dvec) <= 1e-12) { return vec3<f32>(0.0); }
-  if (jetChordMisses(p0, dvec)) { return vec3<f32>(0.0); }
-  let marchDir = normalize(dvec);
+  if (dot(dvec, dvec) <= 1e-12) { return accIn; }
+  if (jetChordMisses(p0, dvec)) { return accIn; }
   let n = jetSubCount(dl);
-  var acc = vec3<f32>(0.0);
+  var acc = accIn;
   for (var k = 0u; k < n; k++) {
     let q = jetSample(s, p0, dvec, k, n);
-    let tS = select(s.x.x + (sNew.x.x - s.x.x) * (f32(k) / f32(n)), s.x.x, k == 0u);
-    let e = jetEmissionJ(q.x, q.y, emitTime(-tS - U.rObs));
-    if (e > 0.0) {
-      let jz = q.x * cos(q.y);
-      let axisSign = select(-1.0, 1.0, jz >= 0.0);
-      let mu = -axisSign * marchDir.z;                      // emitter outflow toward observer
-      acc += JET_TINT * (e * JET_GAIN) * boostJ(mu, U.jetGamma) * (dl / f32(n));
+    let f = f32(k) / f32(n);
+    let tS = select(s.x.x + (sNew.x.x - s.x.x) * f, s.x.x, k == 0u);
+    let shape = jetShapeJ(q.x, q.y, emitTime(-tS - U.rObs), U.jetLength, U.jetKnots, U.jetGamma);
+    if (shape > 0.0) {
+      let D = plasmaShiftJ(q.x, q.y, mix(s.p, sNew.p, f), U.a, jetGammaAt(q.x * cos(q.y), U.jetGamma));
+      if (D > 1e-6) {                                       // never divide by D -> 0
+        let so = synchSampleJ(q.x, q.y, D, U.a, U.jetB0, U.jetKScale, shape);
+        acc = jetSlabJ(acc, so.j, so.a, U.rgCm * D * dl / f32(n));
+      }
     }
   }
   return acc;
 }
 
-// Geometric (jetStrength-independent): can this step's jetStep be non-zero for SOME jet strength
-// and time? True iff one of its sample points is inside the jet envelope -- jetEmissionJ is zero
+// Geometric (independent of the jet switch and brightness): can this step's jetStep be non-zero at
+// SOME time? True iff one of its sample points is inside the jet envelope -- jetShapeJ is zero
 // outside it. The geodesic cache bookmarks exactly these steps, so its replay sums the same samples.
 fn jetTouches(s: State, sNew: State, dl: f32) -> bool {
   let p0 = cartOf(s.x);
@@ -279,8 +279,8 @@ fn jetTouches(s: State, sNew: State, dl: f32) -> bool {
   return false;
 }
 
-// Where jetEmissionJ can be non-zero for SOME jetStrength/time (twin: inJetEnvelope in jet.ts).
-// Geometric only, so the cache's bookmark never depends on jetStrength.
+// Where jetShapeJ can be non-zero at SOME time (twin: inJetEnvelope in jet.ts).
+// Geometric only, so the cache's bookmark never depends on the jet switch or brightness.
 fn inJetEnvelope(r: f32, th: f32) -> bool {
   let z = r * cos(th);
   let az = abs(z);
@@ -297,7 +297,7 @@ fn pixelImpact(pix: vec2<u32>, jit: vec2<f32>) -> vec2<f32> {
 }
 
 struct TraceOut {
-  color: vec3<f32>, jet: vec3<f32>,
+  color: vec3<f32>, jet: JetOut,
   kind: u32, payload: vec3<f32>,   // DISK: (rHit, phiHit, delay); SKY: asymptotic direction; else 0
   hasBm: bool, bm: State, nJet: u32, // record only: first state inside the jet envelope, steps through the last
 };
@@ -324,7 +324,7 @@ fn traceRay(pix: vec2<u32>, jit: vec2<f32>, record: bool) -> TraceOut {
   let rh = 1.0 + sqrt(max(0.0, 1.0 - a*a)); // horizon
   var color = vec3<f32>(0.0);
   var resolved = false; // set by each real termination; false => the step budget ran out
-  var jetAccum = vec3<f32>(0.0); // optically-thin jet emission integrated along the ray
+  var jet: JetOut; jet.I = vec3<f32>(0.0); jet.tau = vec3<f32>(0.0); // synchrotron light and optical depth along the ray
   var firstJ = 0u; var lastJ = 0u;
 
   for (var step = 0u; step < U.maxSteps; step++) {
@@ -339,9 +339,9 @@ fn traceRay(pix: vec2<u32>, jit: vec2<f32>, record: bool) -> TraceOut {
     // classifier below as before; a NaN state still ends in the `usable` guard.
     let dl = st.dl; let sNew = st.s;
 
-    // Optically-thin jet: integrate emissivity * relativistic beaming along the ray. The disk
-    // hit below still `break`s (opaque), so jet segments behind the disk/horizon are occluded.
-    if (U.jetStrength > 0.0) { jetAccum += jetStep(s, sNew, dl); }
+    // Synchrotron jet: emission and absorption along the ray. The disk hit below still `break`s
+    // (opaque), so jet segments behind the disk/horizon are occluded.
+    if (U.jetStrength > 0.0) { jet = jetStep(s, sNew, dl, jet); }
     // Cache bookmark: the first step whose jet samples can see the envelope, through the last one.
     if (record && jetTouches(s, sNew, dl)) {
       if (!out.hasBm) { out.hasBm = true; out.bm = s; firstJ = step; }
@@ -404,16 +404,19 @@ fn traceRay(pix: vec2<u32>, jit: vec2<f32>, record: bool) -> TraceOut {
       out.kind = KIND_SKY; out.payload = dir;
     }
   }
-  out.color = color; out.jet = jetAccum;
+  out.color = color; out.jet = jet;
   if (out.hasBm) { out.nJet = lastJ - firstJ + 1u; }
   return out;
 }
 
 // Temporal EMA: blend = 1/(frame+1) reproduces the Tier-1 running mean when static; a fixed
 // blend (~0.15) tracks an animating scene. blend==1 (first frame after a reset) clears cleanly.
-// Additive optically-thin jet on top of whatever the ray terminated on (disk/starfield/shadow).
-fn storeComposite(idx: u32, color: vec3<f32>, jetAccum: vec3<f32>) {
-  let raw = color + U.jetStrength * min(jetAccum, vec3<f32>(JET_CEIL));
+// The jet over whatever the ray terminated on (disk/starfield/shadow).
+fn storeComposite(idx: u32, color: vec3<f32>, jet: JetOut) {
+  // Light from behind the jet (disk, sky) is absorbed: R, G, B by the 650 / 550 / 450 nm optical depths.
+  // The jet's own light enters in the disk's units (band matrix) times the disk's lumNorm (spec 2.5);
+  // clamped at 0 like blackbodyVisibleRGB (a pure power law can sit just outside the sRGB gamut).
+  let raw = color * exp(-vec3<f32>(jet.tau.z, jet.tau.y, jet.tau.x)) + U.lumNorm * max(JET_BAND_M * jet.I, vec3<f32>(0.0));
   // Single choke point: nothing non-finite may enter accum. The in-loop escape branch above reads
   // s.x without the `usable` guard, so a diverged RK4 ray (r = +inf compares true, th/ph NaN) can
   // still produce a NaN colour there. A NaN in accum is PERMANENT -- mix(NaN, ..) stays NaN for
@@ -434,14 +437,14 @@ fn storeComposite(idx: u32, color: vec3<f32>, jetAccum: vec3<f32>) {
 
 // Re-integrate a bookmarked jet stretch: the same steps, in the same order, as traceRay took from
 // the bookmark through the last step whose jet samples touched the envelope (jetTouches).
-fn replayJet(bm: State, nJet: u32) -> vec3<f32> {
+fn replayJet(bm: State, nJet: u32) -> JetOut {
   let a = U.a;
   let rh = 1.0 + sqrt(max(0.0, 1.0 - a*a));
-  var s = bm; var acc = vec3<f32>(0.0);
+  var s = bm; var acc: JetOut; acc.I = vec3<f32>(0.0); acc.tau = vec3<f32>(0.0);
   for (var k = 0u; k < nJet; k++) {
     let far = s.x.y > U.rOut * 1.5;
     let st = stepGeodesic(s, a, stepSize(s, rh, U.rOut), select(H_TOL, H_TOL_FAR, far));
-    acc += jetStep(s, st.s, st.dl);
+    acc = jetStep(s, st.s, st.dl, acc);
     s = st.s;
   }
   return acc;
@@ -486,7 +489,7 @@ fn replayJet(bm: State, nJet: u32) -> vec3<f32> {
     color = shadeDisk(e.p0, e.p1, g, U.a, emitTime(e.p2));
   }
   else if (kind == KIND_SKY) { color = skyColor(vec3<f32>(e.p0, e.p1, e.p2)); }
-  var jet = vec3<f32>(0.0);
+  var jet: JetOut; jet.I = vec3<f32>(0.0); jet.tau = vec3<f32>(0.0);
   let bi = e.word >> 2u;
   if (U.jetStrength > 0.0 && bi != BM_NONE) {
     let b = bookmarks[bi];

@@ -7,6 +7,7 @@ import { buildTempLUT, buildVisibleLUT } from "./physics/lookups";
 import { iscoRadius, photonOrbit } from "./physics/orbits";
 import { PRESETS, CUSTOM_DEFAULT, type Preset } from "./physics/presets";
 import { computeReadouts, type Readouts } from "./physics/readouts";
+import { jetUniforms } from "./physics/synchrotron";
 import { formatLength, formatDuration } from "./physics/units";
 import type { HotSpot } from "./physics/emission";
 
@@ -83,7 +84,7 @@ ratio to analytic critical curve = ${res.calibration} (NOT a calibration — the
   let geoKey = "", cachedFrame = 0, wasCached = false, liveScale = r.scale;
   let dtEma = 0, lastFpsShow = 0; // display rate (what the user sees): EMA of rAF deltas, shown <= 2x/s
 
-  const state = { a: 0.9, incl: 72, exposure: -1.0, timeScale: 1.0, turbAmp: 0.6, breatheAmp: 0.0, playing: true, flareScale: 1.0, jetStrength: 1.0, jetGamma: 5.0, jetLength: 60.0, jetKnots: 0.7, skyStrength: 1.0, maxSteps: 4800, massSun: CUSTOM_DEFAULT.massSun, lambda: CUSTOM_DEFAULT.lambda, lightDelay: true };
+  const state = { a: 0.9, incl: 72, exposure: -1.0, timeScale: 1.0, turbAmp: 0.6, breatheAmp: 0.0, playing: true, flareScale: 1.0, jetStrength: 1.0, jetGamma: 2.0, jetEff: 2e-3, jetLength: 60.0, jetKnots: 0.7, skyStrength: 1.0, maxSteps: 4800, massSun: CUSTOM_DEFAULT.massSun, lambda: CUSTOM_DEFAULT.lambda, lightDelay: true };
   const SPEED = 20;        // coordinate-time M per real second at Motion 1 (Motion = playback speed)
   const EMA_BLEND = 0.15;  // trailing-window weight while animating
   let simTime = 0, lastNow = 0;
@@ -102,7 +103,14 @@ ratio to analytic critical curve = ${res.calibration} (NOT a calibration — the
   // Physical state -> peak disk temperature, lumNorm and the panel's physical readouts (spec
   // 2026-10-01). Mass and accretion are shading-only: they never enter the geometry key.
   let phys: Readouts = computeReadouts(state, SPEED);
-  const refreshPhysics = () => { phys = computeReadouts(state, SPEED); };
+  // The jet's field scale, energy-budget density scale and r_g (spec 2026-10-02); ~20 ms, so it is
+  // recomputed only when one of its inputs changed (refreshPhysics also runs for the Motion slider).
+  let jetU = jetUniforms(state.massSun, state.a, state.lambda, state.jetEff, state.jetLength), jetKey = "";
+  const refreshJet = () => {
+    const k = `${state.massSun}|${state.a}|${state.lambda}|${state.jetEff}|${state.jetLength}`;
+    if (k !== jetKey) { jetKey = k; jetU = jetUniforms(state.massSun, state.a, state.lambda, state.jetEff, state.jetLength); }
+  };
+  const refreshPhysics = () => { phys = computeReadouts(state, SPEED); refreshJet(); };
 
   // --- DOM controls + live physics readouts -------------------------------------------------
   const spin = $("spin") as HTMLInputElement, incl = $("incl") as HTMLInputElement, exp = $("exp") as HTMLInputElement;
@@ -287,7 +295,7 @@ ratio to analytic critical curve = ${res.calibration} (NOT a calibration — the
       time: simTime, frame: sample, reset: sample === 0 ? 1 : 0, maxSteps: state.maxSteps,
       blend, timeScale: state.timeScale, turbAmp: state.turbAmp,
       breatheAmp: state.breatheAmp, nSpots: baseSpots.length,
-      jetStrength: state.jetStrength, jetGamma: state.jetGamma,
+      jetStrength: state.jetStrength, jetGamma: state.jetGamma, jetB0: jetU.jetB0, jetKScale: jetU.jetKScale, rgCm: jetU.rgCm,
       jetLength: state.jetLength, jetKnots: state.jetKnots,
       skyStrength: skyReady ? state.skyStrength : 0, setIndex,
     };

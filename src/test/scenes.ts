@@ -2,6 +2,8 @@ import type { Renderer } from "../render/gpu";
 import type { UniformValues } from "../render/uniforms";
 import { buildTempLUT, buildVisibleLUT, lumNormFor } from "../physics/lookups";
 import { iscoRadius } from "../physics/orbits";
+import { jetUniforms } from "../physics/synchrotron";
+import { CUSTOM_DEFAULT } from "../physics/presets";
 
 /** Fixed scenes shared by the ?golden and ?cachecheck validation routes. */
 export interface Scene { name: string; a: number; inclDeg: number; time: number; frame: number; jetStrength: number; skyStrength: number; lightDelay?: number; }
@@ -25,11 +27,14 @@ export function prepareScene(r: Renderer, s: Scene): number {
 }
 
 export function sceneUniforms(r: Renderer, s: Scene, rIn: number, extra: Partial<UniformValues> = {}): UniformValues {
+  // The default view's object (1e8 M_sun, 3e4 K peak) at the scene's spin; epsilon at its default.
+  const J = jetUniforms(CUSTOM_DEFAULT.massSun, s.a, CUSTOM_DEFAULT.lambda, 2e-3, 60);
   return {
     resW: r.width, resH: r.height, outW: r.displayW, outH: r.displayH, a: s.a, incl: (s.inclDeg * Math.PI) / 180,
     rObs: 1000, fovScale: 14, rIn, rOut: 40, Tpeak: 3e4, lumNorm: lumNormFor(3e4), lightDelay: s.lightDelay ?? 0, exposure: 1.6, time: s.time, frame: s.frame, reset: 1,
     maxSteps: 4800, blend: 1, timeScale: 1, turbAmp: 0.6, breatheAmp: 0.2, nSpots: 3,
-    jetStrength: s.jetStrength, jetGamma: 5, jetLength: 60, jetKnots: 0.7, skyStrength: s.skyStrength,
+    jetStrength: s.jetStrength, jetGamma: 2, jetLength: 60, jetKnots: 0.7, skyStrength: s.skyStrength,
+    jetB0: J.jetB0, jetKScale: J.jetKScale, rgCm: J.rgCm,
     ...extra,
   };
 }
