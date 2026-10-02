@@ -178,5 +178,21 @@ const preDiag = diagSince(dPre);
 if (preDiag) failed = true;
 console.log(`${preSteps.every((s) => !s.includes("FAILED")) && afterDrag === "custom" && !preDiag ? "✓ PASS" : "✗ FAIL"}  presets: ${preSteps.join(", ")}${preDiag}`);
 
+// Every control must be reachable in a laptop-sized window, with the longest preset caption showing: the panel
+// scrolls inside itself (it is fixed and the page does not scroll). Was clipped at the window's edge.
+await page.setViewportSize({ width: 1280, height: 720 });
+await page.selectOption("#preset", "m87");
+await page.waitForTimeout(300);
+const reach = await page.evaluate(() => {
+  const p = document.getElementById("panel"), ctrls = [...p.querySelectorAll("input, select")].filter((c) => c.offsetParent);
+  p.scrollTop = 1e6; // the lowest control (by layout, not document order) once scrolled to the end
+  const r = { panelBottom: p.getBoundingClientRect().bottom, lastBottom: Math.max(...ctrls.map((c) => c.getBoundingClientRect().bottom)), viewport: innerHeight };
+  p.scrollTop = 0;
+  return r;
+});
+const reachOk = reach.panelBottom <= reach.viewport && reach.lastBottom <= reach.viewport;
+console.log(`${reachOk ? "✓ PASS" : "✗ FAIL"}  panel reachable at 1280x720 with a caption: panel bottom ${reach.panelBottom.toFixed(0)}, last control ${reach.lastBottom.toFixed(0)}, window ${reach.viewport}`);
+if (!reachOk) failed = true;
+
 await browser.close();
 process.exit(failed ? 1 : 0);

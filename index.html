@@ -24,7 +24,14 @@
     -webkit-backdrop-filter:blur(22px) saturate(125%);
     border:1px solid var(--hair);border-radius:16px;
     box-shadow:0 24px 70px -24px rgba(0,0,0,0.85), inset 0 1px 0 rgba(255,255,255,0.06);
-    user-select:none}
+    user-select:none;
+    /* the page never scrolls (the canvas fills it), so the panel scrolls itself when taller than the window */
+    max-height:calc(100vh - 52px);max-height:calc(100dvh - 52px);box-sizing:border-box;
+    overflow-y:auto;overscroll-behavior:contain;
+    scrollbar-width:thin;scrollbar-color:rgba(255,255,255,0.18) transparent}
+  #panel::-webkit-scrollbar{width:6px}
+  #panel::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.18);border-radius:3px}
+  #panel::-webkit-scrollbar-track{background:transparent}
   .eyebrow{font-size:10px;letter-spacing:0.36em;text-transform:uppercase;color:var(--accent);
     margin:0 0 9px}
   h1{font-family:"Fraunces",Georgia,serif;font-weight:600;font-size:50px;line-height:0.86;
