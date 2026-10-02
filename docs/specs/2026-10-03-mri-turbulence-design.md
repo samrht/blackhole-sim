@@ -1,7 +1,7 @@
 # Physical disk turbulence (MRI) — design
 
 **Date:** 2026-10-03
-**Status:** approved in conversation; awaiting written-spec review
+**Status:** approved 2026-10-03; §2.2 and §5 corrected while planning (see "Corrections from prototyping")
 **Roadmap:** `docs/ROADMAP.md`, Physics features. Replaces the item "Evolving alpha-disk (surface-density
 diffusion)": a thin disk's viscous time, t_visc ≈ [α (h/r)²]⁻¹ orbital times ≈ 3 × 10⁶ M at r = 10 M (α = 0.1,
 h/r = 0.01), takes ~9 hours to play even at the fastest Motion (100 M/s), so surface-density evolution is static on
@@ -28,8 +28,8 @@ decorative.
 
 | Property | Value | Source |
 |---|---|---|
-| Structure size | δ(ln r) ≈ 0.3, δφ ≈ 25°, self-similar over 3–25 M | Schnittman, Krolik & Hawley 2006 (SKH06) |
-| Lifetime | exponential distribution, mean 0.3 T_orb(r) | SKH06 (eq. 36) |
+| Structure size | spectral peak (break) wavelengths λ_η = 0.26 (δr/r = 0.3) and λ_φ = 25°, measured after removing the shear; self-similar over 3–25 M | Schnittman, Krolik & Hawley 2006 (SKH06, §5) |
+| Lifetime | correlation following the flow decays with time constant 0.3 T_orb(r) | SKH06 (eqs. 33–36) |
 | Shape | trailing spirals, Δφ ≈ 0.9π ln r in a snapshot | SKH06 (eq. 38); global thin-disk runs agree (Beckwith, Armitage & Simon 2011) |
 | Statistics | multiplicative fluctuations → lognormal | Hogg & Reynolds 2016 |
 
@@ -49,14 +49,15 @@ turns into ever-tighter stripes) — the defect this design removes.
   Keplerian rotation from its birth: it is sampled at φ_j = φ − Ω_K (t − (j − 1) T_c), with its own seed. In cell
   k = ⌊τ⌋ with phase f = τ − k: g = cos(πf/2) g_k + sin(πf/2) g_{k+1} (unit variance; continuous across cells and
   across radius). Features therefore only ever wind forward (trailing), by at most two cells of shear.
-- **Calibration of the clock and lattice:** T_c is set so the field's integral autocorrelation time following
-  the flow equals 0.3 T_orb; the lattice cell sizes so its autocorrelation e-folding lengths are δη = 0.3 and
-  δφ = 25°. Both constants are measured on the CPU twin and pinned by tests.
+- **Calibration of the clock and lattice:** T_c is set so the field's correlation following the flow falls to
+  1/e at 0.3 T_orb; the lattice cell sizes so the variance spectra k P(k), in coordinates de-sheared by the
+  0.9π spiral (SKH06 eq. 38), peak at λ_η = 0.26 and λ_φ = 25°. Measured on the CPU twin and pinned by tests:
+  cell 0.086 in ln r, 49 cells around the ring, T_c = 0.32 T_orb.
 - **Emission:** the Novikov–Thorne surface brightness times **exp(σ g − σ²/2)** — lognormal with mean exactly 1.
   Then × (breathing) + (hot spots) as today (both default 0).
 - **σ from the flicker target:** the intrinsic (face-on, before relativistic beaming) rms of the disk's integrated
-  light is ≈ κ σ for small σ; κ is measured on the CPU twin (a = 0.9, default disk) and stored as a constant;
-  σ = flicker / κ. Relativistic beaming then raises the visible flicker with inclination, as SKH06 found.
+  light is ≈ κ σ for small σ (κ ≈ 0.035); the full curve rms(σ) is measured on the CPU twin (a = 0.9, default
+  disk) and stored as a table that the slider inverts. Relativistic beaming then raises the visible flicker with inclination, as SKH06 found.
 
 ## 3. Interfaces
 
@@ -76,10 +77,25 @@ turns into ever-tighter stripes) — the defect this design removes.
 
 ## 5. Testing
 
-- Field statistics: mean 0, variance 1, kurtosis 3 (±5 %); emission factor mean 1 (±1e-3); 2π-periodic in φ.
-- Measured on the CPU twin: correlation lengths 0.3 (η) and 25° (φ) within 10 %; integral lifetime following the
-  flow 0.3 T_orb within 10 %; emergent snapshot spiral tilt dφ/dη ≈ 0.9π within 20 %; statistics after 1000 orbits
+- Field statistics: mean 0, variance 1, kurtosis 3 (±5 %); emission factor mean 1 (±1e-3, by Gauss–Hermite
+  quadrature over the unit Gaussian, since g is Gaussian at every point by construction); 2π-periodic in φ.
+- Measured on the CPU twin: spectral peak wavelengths 0.26 (η) and 25° (φ) within 10 %; flow-following
+  correlation 1/e time 0.3 T_orb within 10 %; emergent snapshot spiral tilt dφ/dη ≈ 0.9π within 20 %; statistics after 1000 orbits
   equal those after 1 (no runaway winding).
 - Calibration: intrinsic integrated rms at the default slider 2.0 % ± 0.2 %.
 - GPU: `?parity` on the new field; `?golden` re-recorded (every scene uses turbulence); `?cachecheck`; app checks;
   probes; screenshots.
+
+## Corrections from prototyping (2026-10-03)
+
+- SKH06's sizes are the break wavelengths of broken power-law fits to the variance spectra, where the variance
+  per log wavenumber peaks, measured after de-shearing; not autocorrelation e-fold lengths (which for this field
+  are about half as long). §2.1, §2.2 and §5 now use the measured quantity.
+- SKH06's lifetime is the decay constant of their flow-following overlap function. The test uses the plain
+  correlation's 1/e time. Their overlap is written with a square root (eq. 33), and on that reading the 1/e time
+  is 0.39 T_orb with these constants; the plain reading is used, and the emergent tilt (0.94π against 0.9π)
+  is between the two readings.
+- The correlation in time follows the two-generation crossfade (smooth at zero lag, zero beyond 2 T_c) rather
+  than a pure exponential; only the 1/e time is calibrated.
+- σ is not small: κ ≈ 0.035, so 2 % flicker needs σ ≈ 0.55, where exp(σg) is visibly nonlinear. σ is therefore
+  set from a measured table of integrated rms against σ (scripts/calibrate-turbulence.ts), not σ = flicker/κ.
