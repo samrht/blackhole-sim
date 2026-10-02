@@ -29,6 +29,76 @@ export function vnoise(x: number, y: number): number {
   const a01 = ihash(ix, iy + 1), a11 = ihash(ix + 1, iy + 1);
   return (a00 * (1 - fx) + a10 * fx) * (1 - fy) + (a01 * (1 - fx) + a11 * fx) * fy;
 }
+// --- MRI turbulence (spec 2026-10-03) -------------------------------------------------------------
+// A unit-Gaussian field on (eta = ln r, phi) whose structures have the size, lifetime, shape and statistics
+// measured for magnetorotational turbulence in thin disks (Schnittman, Krolik & Hawley 2006, "SKH06").
+// Lattice: hashed standard normals, smoothstep-interpolated and renormalised by sqrt(sum w^2), so every
+// point is exactly N(0, 1). Generations: each lattice row i runs a clock tau = t / T_c(r_i) with
+// T_c = clock * T_orb; generation k is born at tick k - 1, frozen into the Keplerian flow from birth
+// (sampled at phi - Omega(r) * age), and cross-faded out over the next tick (cos/sin weights, unit
+// variance). Shear acting on each generation for its age makes trailing spirals; no generation lives more
+// than 2 T_c, so the winding never runs away. Twin: turbulenceFieldE in emission-shared.wgsl.
+export const TURB = {
+  cellEta: 0.086, // ln r cell (octave 1): variance spectrum peaks at lambda_eta = 0.26 (SKH06 dr/r = 0.3)
+  cellsPhi: 49,   // cells around the ring (octave 1): peaks at lambda_phi = 25 deg (SKH06)
+  clock: 0.32,    // T_c / T_orb: the flow-following correlation falls to 1/e at 0.30 T_orb (SKH06 eq. 36)
+  octave2: 0.5,   // weight of the half-size octave (small-scale tail of the spectrum)
+} as const;
+
+/** u32 avalanche (twin: mixT). */
+export function mixHash(n: number): number {
+  n = Math.imul(n ^ (n >>> 15), 2246822519) >>> 0;
+  n = Math.imul(n ^ (n >>> 13), 3266489917) >>> 0;
+  return (n ^ (n >>> 16)) >>> 0;
+}
+/** u32 hash of a lattice node (row ix, column iy, generation, octave salt). Negative ints hash through
+ *  their u32 bit pattern, as WGSL's u32(i32) does. */
+export function hash4(ix: number, iy: number, gen: number, salt: number): number {
+  return mixHash((Math.imul(ix >>> 0, 1973) + Math.imul(iy >>> 0, 9277) + Math.imul(gen >>> 0, 26699) + Math.imul(salt >>> 0, 59359)) >>> 0);
+}
+/** Standard normal from two u32 hashes (Box-Muller); u1 is offset by half a step so it is never 0. */
+export function boxMuller(h1: number, h2: number): number {
+  const u1 = ((h1 & 0xffffff) + 0.5) / 16777216, u2 = (h2 & 0xffffff) / 16777216;
+  return Math.sqrt(-2 * Math.log(u1)) * Math.cos(TWO_PI * u2);
+}
+function gaussNode(ix: number, iy: number, gen: number, salt: number): number {
+  const h1 = hash4(ix, iy, gen, salt);
+  return boxMuller(h1, mixHash((h1 ^ 0x9e3779b9) >>> 0));
+}
+/** One octave: rows ix of height cellEta in ln r, cellsPhi columns around the ring. */
+function turbOctave(r: number, phi: number, t: number, a: number, cellEta: number, cellsPhi: number, salt: number): number {
+  const x = Math.log(r) / cellEta, i0 = Math.floor(x), fx = smooth(x - i0);
+  const Om = omegaKepler(r, a, true);
+  let num = 0, v = 0;
+  for (let d = 0; d < 2; d++) {
+    const i = i0 + d, wr = d ? fx : 1 - fx;
+    const Tc = (TURB.clock * TWO_PI) / omegaKepler(Math.exp(i * cellEta), a, true);
+    const tau = t / Tc + (hash4(i, 0x51ed, 0, salt) & 0xffffff) / 16777216; // per-row clock phase
+    const k = Math.floor(tau), f = tau - k;
+    for (let e = 0; e < 2; e++) {
+      const gen = k + e, wt = e ? Math.sin((Math.PI / 2) * f) : Math.cos((Math.PI / 2) * f);
+      const age = (e ? f : 1 + f) * Tc;               // generation k + e was born at tick k + e - 1
+      const ph = phi - Om * age, y = (ph / TWO_PI - Math.floor(ph / TWO_PI)) * cellsPhi;
+      const j0 = Math.floor(y), fy = smooth(y - j0), ja = j0 % cellsPhi, jb = (j0 + 1) % cellsPhi;
+      const w0 = wr * wt * (1 - fy), w1 = wr * wt * fy;
+      num += w0 * gaussNode(i, ja, gen, salt) + w1 * gaussNode(i, jb, gen, salt);
+      v += w0 * w0 + w1 * w1;
+    }
+  }
+  return num / Math.sqrt(v);
+}
+/** Unit-Gaussian MRI turbulence g at disk radius r, azimuth phi (any branch: 2 pi-periodic), coordinate
+ *  time t (the emission time; negative is fine), spin a. */
+export function turbulenceAt(r: number, phi: number, t: number, a: number): number {
+  const w = TURB.octave2;
+  return (turbOctave(r, phi, t, a, TURB.cellEta, TURB.cellsPhi, 1) + w * turbOctave(r, phi, t, a, TURB.cellEta / 2, 2 * TURB.cellsPhi, 2)) / Math.sqrt(1 + w * w);
+}
+/** Lognormal brightness factor exp(sigma g - sigma^2 / 2): mean exactly 1 over a unit Gaussian g, so the
+ *  turbulence redistributes the Novikov-Thorne light without changing its average (Hogg & Reynolds 2016). */
+export function lognormalFactor(g: number, sigma: number): number {
+  return Math.exp(sigma * g - 0.5 * sigma * sigma);
+}
+
 /** Value noise in (x, y), periodic in y with period n cells (n integer): the cell index wraps, so
  *  y and y + n give the same value. Same hash and interpolation as vnoise. */
 function vnoiseRing(x: number, y: number, n: number): number {
