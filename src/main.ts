@@ -84,7 +84,7 @@ ratio to analytic critical curve = ${res.calibration} (NOT a calibration — the
   let geoKey = "", cachedFrame = 0, wasCached = false, liveScale = r.scale;
   let dtEma = 0, lastFpsShow = 0; // display rate (what the user sees): EMA of rAF deltas, shown <= 2x/s
 
-  const state = { a: 0.9, incl: 72, exposure: -1.0, timeScale: 1.0, turbAmp: 0.6, breatheAmp: 0.0, playing: true, flareScale: 1.0, jetStrength: 1.0, jetGamma: 2.0, jetEff: 2e-3, jetLength: 60.0, jetKnots: 0.7, skyStrength: 1.0, maxSteps: 4800, massSun: CUSTOM_DEFAULT.massSun, lambda: CUSTOM_DEFAULT.lambda, lightDelay: true };
+  const state = { a: 0.9, incl: 72, exposure: -1.0, timeScale: 1.0, turbAmp: 0.6, breatheAmp: 0.0, playing: true, flareScale: 1.0, jetOn: true, jetGamma: 2.0, jetEff: 2e-3, jetLength: 60.0, jetKnots: 0.7, skyStrength: 1.0, maxSteps: 4800, massSun: CUSTOM_DEFAULT.massSun, lambda: CUSTOM_DEFAULT.lambda, lightDelay: true };
   const SPEED = 20;        // coordinate-time M per real second at Motion 1 (Motion = playback speed)
   const EMA_BLEND = 0.15;  // trailing-window weight while animating
   let simTime = 0, lastNow = 0;
@@ -168,12 +168,13 @@ ratio to analytic critical curve = ${res.calibration} (NOT a calibration — the
     reset(); // clean restart (play) or fresh convergence to a still (pause)
   });
 
-  const jet = $("jet") as HTMLInputElement, jg = $("jg") as HTMLInputElement, jk = $("jk") as HTMLInputElement;
-  const jetv = $("jetv"), jgv = $("jgv"), jkv = $("jkv");
-
-  // Two significant digits below 0.1 (M87*'s calibrated jet is 0.0034).
-  const showJet = () => { jetv.textContent = state.jetStrength >= 0.1 || state.jetStrength === 0 ? state.jetStrength.toFixed(1) : state.jetStrength.toPrecision(2); };
-  jet.addEventListener("input", () => { state.jetStrength = +jet.value; showJet(); reset(); });
+  const jg = $("jg") as HTMLInputElement, jk = $("jk") as HTMLInputElement, jgv = $("jgv"), jkv = $("jkv");
+  // Jet on/off and its radiative efficiency eps (spec 2026-10-02): brightness = eps x Blandford-Znajek power.
+  const jeton = $("jeton") as HTMLInputElement, jeteff = $("jeteff") as HTMLInputElement, jeteffv = $("jeteffv");
+  const showEff = () => { jeteffv.textContent = state.jetEff.toExponential(1); };
+  jeton.addEventListener("change", () => { state.jetOn = jeton.checked; reset(); });
+  jeteff.addEventListener("input", () => { state.jetEff = 10 ** +jeteff.value; showEff(); physicsChanged(); });
+  showEff();
   jg.addEventListener("input", () => { state.jetGamma = +jg.value; jgv.textContent = state.jetGamma.toFixed(1); reset(); });
   jk.addEventListener("input", () => { state.jetKnots = +jk.value; jkv.textContent = state.jetKnots.toFixed(2); reset(); });
 
@@ -193,18 +194,17 @@ ratio to analytic critical curve = ${res.calibration} (NOT a calibration — the
 
   function applyPreset(p: Preset) {
     state.a = p.a; state.incl = p.inclDeg; state.massSun = p.massSun; state.lambda = p.lambda;
-    state.jetStrength = p.jetStrength;
+    state.jetOn = p.jet; jeton.checked = p.jet;
     spin.value = String(p.a); spinv.textContent = p.a.toFixed(3);
     incl.value = String(p.inclDeg); inclv.textContent = String(p.inclDeg);
     mass.value = String(Math.log10(p.massSun)); showMass();
     acc.value = String(Math.log10(p.lambda)); showAcc();
-    jet.value = String(state.jetStrength); showJet();
     pcap.textContent = p.caption; pcap.hidden = !p.caption;
     rebuildLUTs(); physicsChanged();
   }
   /** The opening view: what "Default view" restores after a preset or custom changes. */
   const DEFAULT_VIEW: Preset = { id: "default", name: "Default view", massSun: CUSTOM_DEFAULT.massSun, a: 0.9, inclDeg: 72,
-    lambda: CUSTOM_DEFAULT.lambda, jetStrength: 1, caption: "" };
+    lambda: CUSTOM_DEFAULT.lambda, jet: true, caption: "" };
   presetSel.addEventListener("change", () => {
     const p = presetSel.value === "default" ? DEFAULT_VIEW : PRESETS.find((q) => q.id === presetSel.value);
     if (p) applyPreset(p);
@@ -295,7 +295,7 @@ ratio to analytic critical curve = ${res.calibration} (NOT a calibration — the
       time: simTime, frame: sample, reset: sample === 0 ? 1 : 0, maxSteps: state.maxSteps,
       blend, timeScale: state.timeScale, turbAmp: state.turbAmp,
       breatheAmp: state.breatheAmp, nSpots: baseSpots.length,
-      jetStrength: state.jetStrength, jetGamma: state.jetGamma, jetB0: jetU.jetB0, jetKScale: jetU.jetKScale, rgCm: jetU.rgCm,
+      jetStrength: state.jetOn ? 1 : 0, jetGamma: state.jetGamma, jetB0: jetU.jetB0, jetKScale: jetU.jetKScale, rgCm: jetU.rgCm,
       jetLength: state.jetLength, jetKnots: state.jetKnots,
       skyStrength: skyReady ? state.skyStrength : 0, setIndex,
     };

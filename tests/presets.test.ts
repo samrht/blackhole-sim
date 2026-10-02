@@ -28,15 +28,9 @@ describe("presets", () => {
     expect(m87.lambda).toBeCloseTo(lambdaFromMdot(6.5e9, 0.9, 7.7e-4), 12);
     expect(sgra.lambda).toBeCloseTo(lambdaFromMdot(4.3e6, 0.94, 1e-8), 15);
   });
-  it("jet strengths: M87*'s jet is calibrated to ~10 % of the disk's light (EHT bound); others as modelled", () => {
-    const by = (id: string) => PRESETS.find((p) => p.id === id)!;
-    for (const p of PRESETS) { expect(p.jetStrength).toBeGreaterThanOrEqual(0); expect(p.jetStrength).toBeLessThanOrEqual(3); }
-    // Measured: at strength 1 the M87* jet carries 29.8x the disk's light in view (GPU, 5 times).
-    expect(by("m87").jetStrength * 29.8).toBeCloseTo(0.1, 3);
-    expect(by("sgra").jetStrength).toBe(0);
-    expect(by("gargantua").jetStrength).toBe(0);
-    expect(by("cygx1").jetStrength).toBe(1);
-    expect(by("grs1915").jetStrength).toBe(1);
+  it("jets: on for M87*, Cygnus X-1, GRS 1915+105; off for Sgr A* and Gargantua", () => {
+    const on = Object.fromEntries(PRESETS.map((p) => [p.id, p.jet]));
+    expect(on).toEqual({ m87: true, sgra: false, cygx1: true, grs1915: true, gargantua: false });
   });
   it("the Custom default reproduces today's 30,000 K at a = 0.9", () => {
     expect(peakTemperature(CUSTOM_DEFAULT.massSun, 0.9, CUSTOM_DEFAULT.lambda)).toBeCloseTo(3e4, 3);

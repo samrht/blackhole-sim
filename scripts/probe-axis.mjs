@@ -90,7 +90,9 @@ async function shadowTop(png, x) {
 
 let failed = false;
 for (const incl of [72, 8]) {
-  await setSlider("spin", 0); await setSlider("sky", 0); await setSlider("jet", 0); await setSlider("incl", incl);
+  await setSlider("spin", 0); await setSlider("sky", 0);
+  await page.evaluate(() => { const c = document.getElementById("jeton"); c.checked = false; c.dispatchEvent(new Event("change", { bubbles: true })); });
+  await setSlider("incl", incl);
   await page.waitForTimeout(6000); // EMA at ~15 fps converges well inside this
   const png = await page.screenshot({ type: "png" });
   const file = `axis-i${incl}.png`;
