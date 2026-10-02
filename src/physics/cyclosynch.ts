@@ -260,7 +260,7 @@ export function encodeTable(J: Float64Array, A: Float64Array, g: Grid): ArrayBuf
   for (let i = 0; i < g.nx * g.ns; i++) { f32[HEAD + 2 * i] = J[i] > 0 ? Math.log(J[i]) : -80; f32[HEAD + 2 * i + 1] = A[i] > 0 ? Math.log(A[i]) : -80; }
   return buf;
 }
-export interface SynchTable { nx: number; ns: number; lnx0: number; lnx1: number; lns0: number; lns1: number; data: Float32Array }
+export interface SynchTable { nx: number; ns: number; lnx0: number; lnx1: number; lns0: number; lns1: number; data: Float32Array<ArrayBuffer> }
 export function parseTable(buf: ArrayBuffer): SynchTable {
   const u32 = new Uint32Array(buf, 0, 4), f32 = new Float32Array(buf);
   if (u32[0] !== MAGIC || u32[1] !== 1) throw new Error("synch-table.bin: bad magic or version");

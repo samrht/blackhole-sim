@@ -71,12 +71,8 @@ fn knotsJ(z: f32, t: f32, gamma: f32, knotAmp: f32) -> f32 {
   let phase = JET_KZ * (abs(z) - beta * t);
   return 1.0 + knotAmp * (vnoiseE(phase, JET_SEED) - 0.5) * 2.0;
 }
-// --- Tier 2B synchrotron (spec 2026-10-02; twin: src/physics/synchrotron.ts). Constants for p = 2.4,
-// gamma_min = 10; tests/synchrotron.test.ts checks every literal against the CPU twin. -------------
-const SYN_P = 2.4;
-const SYN_LNCJ = -42.13253082;
-const SYN_LNCA = 28.35789673;
-const SYN_LNNUMIN0 = 19.85549701;
+// --- Tier 2B synchrotron jet (specs 2026-10-02; twin: src/physics/synchrotron.ts): bands, colour, flow,
+// shift, density shape; tests/synchrotron.test.ts checks every literal against the CPU twin. ------------
 const JET_LNNU = vec3<f32>(34.13261924, 33.93194855, 33.76489446);   // ln nu at 450, 550, 650 nm
 // I_nu (cgs) per band -> linear sRGB in the disk's units (before lumNorm); column b = band b.
 const JET_BAND_M = mat3x3<f32>(-57.85676090, -199.6091852, 8197.725079, 563.0803652, 5602.051454, -395.0105294, 4364.033919, -151.6783697, -69.56073163);
@@ -115,23 +111,53 @@ fn jetShapeJ(r: f32, th: f32, t: f32, jetLength: f32, knotAmp: f32, g280: f32) -
   return max(0.0, w * lengthFalloffJ(z, jetLength) * knotsJ(z, t, jetGammaAt(z, g280), knotAmp) * turb);
 }
 struct SynchOut { j: vec3<f32>, a: vec3<f32> };
-// Per band: j = (nu/nu')^3 j'(nu') (observed-frame weighted, cgs per sr) and alpha' (1/cm) at nu' = D nu.
-fn synchSampleJ(r: f32, th: f32, D: f32, a: f32, b0: f32, kScale: f32, shape: f32) -> SynchOut {
+// --- Cooled synchrotron jet (spec 2026-10-02 cooled jet; twins: src/physics/synchrotron.ts, cyclosynch.ts) --
+// Exact cyclo-synchrotron coefficients of the cooled population, tabulated as (ln J^, ln A^) over
+// (ln x = ln nu'/nu_B, ln s = ln cooling depth); every literal is checked by tests/synchrotron.test.ts.
+@group(0) @binding(10) var synchTab: texture_2d<f32>;
+const SYN_LNCJ = -18.74798845;      // ln[3 e^3 / (2 I_g sigma_T m_e c^3)]
+const SYN_LNCA = 13.13221847;       // ln[3 pi^2 e / (c I_g sigma_T)]
+const SYN_LNNUB0 = 14.84486172;     // ln(nu_B / B)
+const SYN_LNK0 = -20.46682379;      // ln(k / B^2), k = sigma_T B^2 / (6 pi m_e c)
+const SYN_LNT0 = -19.98809263;      // ln[280^0.58 / (0.42 c)]
+const SYN_LNX0 = -9.210340372; const SYN_LNX1 = 23.02585093;
+const SYN_LNS0 = -6.907755279; const SYN_LNS1 = 3.688879454;
+fn synchReady() -> bool { return textureDimensions(synchTab).x >= 2u; } // 1x1 placeholder: table not loaded
+// Twin of lookup() in cyclosynch.ts: bilinear between cell centres, with the same edge extensions.
+fn synchLookupJ(lnx: f32, lns: f32) -> vec2<f32> {
+  let dims = textureDimensions(synchTab); let nx = f32(dims.x); let ns = f32(dims.y);
+  let h = (SYN_LNX1 - SYN_LNX0) / nx;
+  var fx = (lnx - SYN_LNX0) / h - 0.5; var extX = 0.0;
+  if (fx > nx - 1.0) { extX = (fx - (nx - 1.0)) * h; fx = nx - 1.0; }
+  fx = max(fx, 0.0);
+  var fs = (lns - SYN_LNS0) / (SYN_LNS1 - SYN_LNS0) * (ns - 1.0); var extS = 0.0;
+  if (fs < 0.0) { extS = lns - SYN_LNS0; fs = 0.0; }
+  fs = min(fs, ns - 1.0);
+  let ix = min(i32(dims.x) - 2, i32(floor(fx))); let iy = min(i32(dims.y) - 2, i32(floor(fs)));
+  let ax = fx - f32(ix); let ay = fs - f32(iy);
+  let v00 = textureLoad(synchTab, vec2<i32>(ix, iy), 0).xy;
+  let v10 = textureLoad(synchTab, vec2<i32>(ix + 1, iy), 0).xy;
+  let v01 = textureLoad(synchTab, vec2<i32>(ix, iy + 1), 0).xy;
+  let v11 = textureLoad(synchTab, vec2<i32>(ix + 1, iy + 1), 0).xy;
+  return mix(mix(v00, v10, ax), mix(v01, v11, ax), ay) + vec2<f32>(-1.5 * extX + extS, -2.0 * extX + extS);
+}
+// Per band: j = (nu/nu')^3 j'(nu') (cgs per sr) and alpha'(nu') (1/cm) of the cooled population at nu' = D nu.
+fn synchSampleJ(r: f32, th: f32, D: f32, a: f32, b0: f32, q0: f32, shape: f32, g280: f32, rgCm: f32) -> SynchOut {
   let z = r * cos(th); let rho = r * sin(th);
   let rf = funnelEdgeJ(z); let rH = 1.0 + sqrt(max(0.0, 1.0 - a * a)); let w = rho * a / (4.0 * rH);
   let lnB = log(b0 / (rf * rf)) + 0.5 * log(1.0 + w * w);
-  let lnK = log(kScale) + 2.0 * lnB + log(shape);
-  let lnNuMin = SYN_LNNUMIN0 + lnB;
+  // cooling depth s = k t', t' = (r_g / c) 280^0.58 / U0 (|z|^0.42 - z_b^0.42) / 0.42
+  let U0 = sqrt(max(g280 * g280 - 1.0, 1e-12));
+  let dz = max(pow(abs(z), 0.42) - pow(JET_ZBASE, 0.42), 1e-6);
+  let lns = max(SYN_LNK0 + 2.0 * lnB + log(rgCm) + SYN_LNT0 - log(U0) + log(dz), -30.0);
+  let base = log(q0) + log(shape);
   let lnD = log(D);
   var o: SynchOut;
   for (var b = 0; b < 3; b++) {
-    let lnNu = JET_LNNU[b] + lnD;
-    let le = max(lnNu, lnNuMin);
-    var lj = SYN_LNCJ + lnK + 0.5 * (SYN_P + 1.0) * lnB - 0.5 * (SYN_P - 1.0) * le;
-    var la = SYN_LNCA + lnK + 0.5 * (SYN_P + 2.0) * lnB - 0.5 * (SYN_P + 4.0) * le;
-    if (lnNu < lnNuMin) { lj += (lnNu - lnNuMin) / 3.0; la -= (5.0 / 3.0) * (lnNu - lnNuMin); }
-    o.j[b] = exp(lj - 3.0 * lnD);
-    o.a[b] = exp(la);
+    let lnx = JET_LNNU[b] + lnD - SYN_LNNUB0 - lnB;
+    let t = synchLookupJ(lnx, lns);
+    o.j[b] = exp(SYN_LNCJ + base + lnB + t.x - 3.0 * lnD);
+    o.a[b] = exp(SYN_LNCA + base - lnB - 2.0 * lnx + t.y);
   }
   return o;
 }

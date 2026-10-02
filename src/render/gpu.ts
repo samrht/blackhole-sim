@@ -8,6 +8,7 @@ import integratorSharedWGSL from "./integrator-shared.wgsl?raw";
 import emissionSharedWGSL from "./emission-shared.wgsl?raw";
 import bloomWGSL from "./bloom.wgsl?raw";
 import { planCache, BOOKMARK_BYTES, type CachePlan } from "./cache-plan";
+import { parseTable, type SynchTable } from "../physics/cyclosynch";
 
 /** Per-frame geodesic-cache work. `build` traces one row slice of a jitter set (full resolution,
  *  its own uniform buffer); `cachedSet` shades from that set instead of tracing (`main`). */
@@ -18,6 +19,7 @@ export class Renderer {
   uniformBuf!: GPUBuffer; accumBuf!: GPUBuffer;
   tempBuf!: GPUBuffer; colorBuf!: GPUBuffer;
   spotBuf!: GPUBuffer;   // hot-spot params: array of vec4 (r, psi, sigma, amp)
+  synchTex!: GPUTexture; // cooled-jet coefficient table (rg32float: ln J^, ln A^); 1x1 placeholder until loaded
   skyTex!: GPUTexture; skySampler!: GPUSampler;
   bloomA!: GPUBuffer; bloomB!: GPUBuffer;       // half-res ping/pong glow buffers
   computePipe!: GPUComputePipeline; presentPipe!: GPURenderPipeline;
@@ -73,6 +75,13 @@ export class Renderer {
       usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT });
     this.skySampler = this.device.createSampler({ magFilter: "linear", minFilter: "linear",
       mipmapFilter: "linear", addressModeU: "repeat", addressModeV: "clamp-to-edge" });
+    // Cooled-jet coefficient table (spec 2026-10-02 cooled jet 2.3). Without it synchReady() is false in the
+    // shader and the jet draws nothing; the rest of the image is unaffected.
+    this.synchTex = this.device.createTexture({ size: [1, 1], format: "rg32float", usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
+    try {
+      const res = await fetch(new URL("/synch-table.bin", location.href));
+      if (res.ok) this.uploadSynchTable(parseTable(await res.arrayBuffer()));
+    } catch { /* keep the placeholder */ }
     this.buildPipelines();
   }
 
@@ -196,7 +205,8 @@ export class Renderer {
       { binding: 6, visibility: GPUShaderStage.COMPUTE, sampler: { type: "filtering" } },
       { binding: 7, visibility: GPUShaderStage.COMPUTE, buffer: st("storage") },
       { binding: 8, visibility: GPUShaderStage.COMPUTE, buffer: st("storage") },
-      { binding: 9, visibility: GPUShaderStage.COMPUTE, buffer: st("storage") }] });
+      { binding: 9, visibility: GPUShaderStage.COMPUTE, buffer: st("storage") },
+      { binding: 10, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: "unfilterable-float" } }] });
     const layout = this.device.createPipelineLayout({ bindGroupLayouts: [this.computeLayout] });
     this.computePipe = this.device.createComputePipeline({ layout, compute: { module: cMod, entryPoint: "main" } });
     this.buildPipe = this.device.createComputePipeline({ layout, compute: { module: cMod, entryPoint: "build" } });
@@ -211,6 +221,12 @@ export class Renderer {
     this.rebind();
   }
 
+  uploadSynchTable(t: SynchTable) {
+    const tex = this.device.createTexture({ size: [t.nx, t.ns], format: "rg32float", usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
+    this.device.queue.writeTexture({ texture: tex }, t.data, { bytesPerRow: t.nx * 8 }, [t.nx, t.ns]);
+    this.synchTex?.destroy(); this.synchTex = tex;
+  }
+
   rebind() {
     const common = (ub: GPUBuffer, entryBuf: GPUBuffer): GPUBindGroupEntry[] => [
       { binding: 0, resource: { buffer: ub } },
@@ -222,7 +238,8 @@ export class Renderer {
       { binding: 6, resource: this.skySampler },
       { binding: 7, resource: { buffer: entryBuf } },
       { binding: 8, resource: { buffer: this.bookmarkBuf } },
-      { binding: 9, resource: { buffer: this.bmCountBuf } }];
+      { binding: 9, resource: { buffer: this.bmCountBuf } },
+      { binding: 10, resource: this.synchTex.createView() }];
     this.computeBinds = this.entryBufs.map((b) => this.device.createBindGroup({ layout: this.computeLayout, entries: common(this.uniformBuf, b) }));
     this.buildBinds = this.entryBufs.map((b) => this.device.createBindGroup({ layout: this.computeLayout, entries: common(this.buildUniformBuf, b) }));
     // bloom pass 1: accum -> bloomA ; pass 2: bloomA -> bloomB

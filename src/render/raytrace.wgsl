@@ -239,9 +239,9 @@ fn jetChordMisses(p0: vec3<f32>, dvec: vec3<f32>) -> bool {
 // is a uniform slab of plasma-frame path ds' = r_g D dl / n, with D = nu' / nu_obs from the photon
 // momentum (interpolated across the step like the position and time) and the local flow.
 fn jetStep(s: State, sNew: State, dl: f32, accIn: JetOut) -> JetOut {
-  // a = 0: no Blandford-Znajek power, so the energy budget gives no emitting electrons (k_scale = 0);
-  // skip before log(k_scale), which WGSL leaves undefined at 0.
-  if (U.jetQ0 <= 0.0) { return accIn; }
+  // a = 0: no Blandford-Znajek power, so the energy budget injects no electrons (q0 = 0): skip before
+  // log(q0), which WGSL leaves undefined at 0. Without the coefficient table (1x1 placeholder) nothing either.
+  if (U.jetQ0 <= 0.0 || !synchReady()) { return accIn; }
   let p0 = cartOf(s.x);
   let dvec = cartOf(sNew.x) - p0;                           // inward step (camera -> hole)
   if (dot(dvec, dvec) <= 1e-12) { return accIn; }
@@ -256,7 +256,7 @@ fn jetStep(s: State, sNew: State, dl: f32, accIn: JetOut) -> JetOut {
     if (shape > 0.0) {
       let D = plasmaShiftJ(q.x, q.y, mix(s.p, sNew.p, f), U.a, jetGammaAt(q.x * cos(q.y), U.jetGamma));
       if (D > 1e-6) {                                       // never divide by D -> 0
-        let so = synchSampleJ(q.x, q.y, D, U.a, U.jetB0, U.jetQ0, shape);
+        let so = synchSampleJ(q.x, q.y, D, U.a, U.jetB0, U.jetQ0, shape, U.jetGamma, U.rgCm);
         acc = jetSlabJ(acc, so.j, so.a, U.rgCm * D * dl / f32(n));
       }
     }

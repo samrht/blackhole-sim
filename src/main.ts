@@ -17,9 +17,10 @@ if (location.search.includes("parity")) {
   // Validation entry: CPU<->GPU parity for the metric/orbit/g-factor math.
   const { runParity } = await import("./test/parity.browser");
   const res = await runParity();
-  const ok = res.maxErr < 1e-3;
+  // jet coefficients are compared as logs with an absolute tolerance (cooled-jet plan, Task 5)
+  const ok = res.maxErr < 1e-3 && res.jetLogErr <= 2e-3;
   document.body.innerHTML = `<pre style="color:${ok ? "#6f6" : "#f66"};font-size:18px;padding:20px">
-PARITY ${ok ? "PASS" : "FAIL"} — maxRelErr=${res.maxErr.toExponential(3)} over ${res.rows} cases</pre>`;
+PARITY ${ok ? "PASS" : "FAIL"} — maxRelErr=${res.maxErr.toExponential(3)} over ${res.rows} cases; jet max |d ln| ${res.jetLogErr.toExponential(2)}</pre>`;
   console.log("parity", res);
 } else if (location.search.includes("shadow")) {
   // Validation entry: Schwarzschild shadow-radius check (a=0, pole-on).

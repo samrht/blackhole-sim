@@ -11,6 +11,7 @@ import { jetEnergetics, jetUniforms, injUnit, nuLnuAt, flowTime, jetField, ETA_D
 import { TABLE_GRID } from "../src/physics/cyclosynch";
 import { PRESETS } from "../src/physics/presets";
 import { JET } from "../src/physics/jet";
+import { LN_CJ, LN_CA, LN_K0, LN_T0 } from "../src/physics/synchrotron";
 const T = parseTable(readFileSync(join(__dirname, "../public/synch-table.bin")).buffer.slice(0) as ArrayBuffer);
 
 describe("jet model and energy budget", () => {
@@ -94,5 +95,24 @@ describe("full-spectrum energy budget (spec 2.4)", () => {
       expect(lnx).toBeGreaterThan(TABLE_GRID.lnx0);
       expect(Number.isFinite(Math.log(flowTime(30, g, U.rgCm)))).toBe(true);
     }
+  });
+});
+
+const WGSL = readFileSync(join(__dirname, "../src/render/emission-shared.wgsl"), "utf8");
+const rawConst = (name: string) => { const m = WGSL.match(new RegExp(`const ${name}\\s*=\\s*([^;]+);`)); if (!m) throw new Error(`no ${name}`); return m[1]; };
+const constOf = (name: string) => +rawConst(name);
+describe("emission-shared.wgsl constants match the CPU twin", () => {
+  it("coefficient prefactors, cyclotron and cooling scales, table grid", () => {
+    for (const [n, v] of [["SYN_LNCJ", LN_CJ], ["SYN_LNCA", LN_CA], ["SYN_LNNUB0", LN_NUB0], ["SYN_LNK0", LN_K0], ["SYN_LNT0", LN_T0],
+      ["SYN_LNX0", TABLE_GRID.lnx0], ["SYN_LNX1", TABLE_GRID.lnx1], ["SYN_LNS0", TABLE_GRID.lns0], ["SYN_LNS1", TABLE_GRID.lns1]] as [string, number][])
+      expect(constOf(n)).toBeCloseTo(v, 6);
+  });
+  it("band frequencies and the band matrix (column b = band b)", () => {
+    const raw = rawConst;
+    const args = (s: string) => s.slice(s.indexOf("(") + 1).split(",").map((v) => +v.replace(")", ""));
+    const nu = args(raw("JET_LNNU")); expect(nu.length).toBe(3);
+    nu.forEach((v, b) => expect(v).toBeCloseTo(Math.log(C_CGS / (JET_BANDS_NM[b] * 1e-7)), 6));
+    const M = jetBandMatrix(), m = args(raw("JET_BAND_M")); expect(m.length).toBe(9);
+    for (let b = 0; b < 3; b++) for (let r = 0; r < 3; r++) expect(Math.abs(m[b * 3 + r] / M[r][b] - 1)).toBeLessThan(1e-7);
   });
 });
