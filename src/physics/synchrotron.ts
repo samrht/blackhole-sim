@@ -5,6 +5,8 @@
 import { metricUpper, horizonOuter } from "./kerr";
 import { mdotFromLambda } from "./units";
 import { funnelEdge, wallProfile, lengthFalloff, JET } from "./jet";
+import { cieX, cieY, cieZ } from "./color";
+import { VIS_LREF } from "./lookups";
 export { gammaProfile, GAMMA_REF_Z, GAMMA_SLOPE } from "./jet";
 
 export const Q_E = 4.80320471e-10, M_E = 9.1093837e-28, C_CGS = 2.99792458e10, G_CGS = 6.6743e-8, MSUN_G = 1.98847e33;
@@ -111,4 +113,19 @@ export function jetUniforms(mSun: number, a: number, lambda: number, eps: number
 export function slabStep(I: number, tau: number, j: number, alpha: number, ds: number): [number, number] {
   const dt = alpha * ds, fac = dt < 1e-4 ? 1 - 0.5 * dt : (1 - Math.exp(-dt)) / dt;
   return [I + j * ds * fac * Math.exp(-tau), Math.min(tau + dt, 1e30)];
+}
+
+/** Colour bands (nm): 450, 550, 650; I_nu is taken piecewise constant over 360-500 / 500-600 / 600-830 nm. */
+export const JET_BANDS_NM = [450, 550, 650] as const;
+/** 3x3 matrix (row R,G,B; column band) from I_nu (cgs) per band to linear sRGB in the disk's units
+ *  (blackbodyVisibleRGB / VIS_LREF). blackbodyVisibleRGB sums planck_m(lambda) = lambda_m^-5 / (e^x - 1) over
+ *  5 nm bins; the cgs B_lambda = 2 h c^2 1e-10 planck_m, so an I_lambda = I_nu c / lambda^2 maps the same way. */
+export function jetBandMatrix(): number[][] {
+  const H_CGS = 6.62607015e-27, xyz = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
+  for (let nm = 360; nm <= 830; nm += 5) {
+    const b = nm < 500 ? 0 : nm < 600 ? 1 : 2, lcm = nm * 1e-7, f = C_CGS / (lcm * lcm) / (2 * H_CGS * C_CGS ** 2 * 1e-10);
+    xyz[0][b] += cieX(nm) * f; xyz[1][b] += cieY(nm) * f; xyz[2][b] += cieZ(nm) * f;
+  }
+  const T = [[3.2406, -1.5372, -0.4986], [-0.9689, 1.8758, 0.0415], [0.0557, -0.2040, 1.0570]];
+  return [0, 1, 2].map((r) => [0, 1, 2].map((b) => (T[r][0] * xyz[0][b] + T[r][1] * xyz[1][b] + T[r][2] * xyz[2][b]) / VIS_LREF));
 }

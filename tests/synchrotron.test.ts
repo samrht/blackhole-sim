@@ -3,6 +3,9 @@ import { synchConsts, synchCoeffs, lnGamma, Q_E, M_E, C_CGS, SYN_P, GAMMA_MIN } 
 import { jetEnergetics, gammaProfile, plasmaShift, streamlineDir, jetUniforms, visLuminanceUnit, slabStep } from "../src/physics/synchrotron";
 import { screenToState } from "../src/physics/camera";
 import { lambdaFromMdot } from "../src/physics/units";
+import { jetBandMatrix, JET_BANDS_NM } from "../src/physics/synchrotron";
+import { blackbodyVisibleRGB, relLuminance } from "../src/physics/color";
+import { VIS_LREF } from "../src/physics/lookups";
 
 // Direct numerical integration of the single-electron spectrum F(x) = x Int_x^inf K_5/3 over the power
 // law and an isotropic pitch-angle distribution (Rybicki & Lightman 6.18, 6.50).
@@ -97,6 +100,19 @@ describe("jet model and energy budget", () => {
     for (const [m, l, e] of [[1, 1e-10, 1e-5], [1e10, 1e-10, 1e-1], [1, 1, 1e-1], [1e10, 1, 1e-5]]) {
       const U = jetUniforms(m, 0.9, l, e, 60);
       for (const v of [U.jetB0, U.jetKScale, U.rgCm]) { expect(Number.isFinite(v)).toBe(true); expect(v).toBeGreaterThan(0); }
+    }
+  });
+});
+
+describe("jet colour in the disk's units (spec 2.4/2.5)", () => {
+  it("a blackbody fed through the three bands has the disk path's luminance within 1 %", () => {
+    const M = jetBandMatrix(), h = 6.62607015e-27, kB = 1.380649e-16;
+    const Bnu = (T: number, nu: number) => (2 * h * nu ** 3) / C_CGS ** 2 / (Math.exp((h * nu) / (kB * T)) - 1);
+    for (const T of [6000, 3e4, 1e7]) {
+      const I = JET_BANDS_NM.map((nm) => Bnu(T, C_CGS / (nm * 1e-7)));
+      const rgb = [0, 1, 2].map((r) => M[r][0] * I[0] + M[r][1] * I[1] + M[r][2] * I[2]) as [number, number, number];
+      const ref = blackbodyVisibleRGB(T).map((v) => v / VIS_LREF) as [number, number, number];
+      expect(Math.abs(relLuminance(rgb) / relLuminance(ref) - 1)).toBeLessThan(0.01); // measured 0.5-0.6 %
     }
   });
 });

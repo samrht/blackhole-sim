@@ -4,9 +4,9 @@ function gaussian(x: number, mu: number, s1: number, s2: number): number {
   const t = (x - mu) * (x < mu ? 1 / s1 : 1 / s2);
   return Math.exp(-0.5 * t * t);
 }
-function cieX(l: number) { return 1.056 * gaussian(l, 599.8, 37.9, 31.0) + 0.362 * gaussian(l, 442.0, 16.0, 26.7) - 0.065 * gaussian(l, 501.1, 20.4, 26.2); }
-function cieY(l: number) { return 0.821 * gaussian(l, 568.8, 46.9, 40.5) + 0.286 * gaussian(l, 530.9, 16.3, 31.1); }
-function cieZ(l: number) { return 1.217 * gaussian(l, 437.0, 11.8, 36.0) + 0.681 * gaussian(l, 459.0, 26.0, 13.8); }
+export function cieX(l: number) { return 1.056 * gaussian(l, 599.8, 37.9, 31.0) + 0.362 * gaussian(l, 442.0, 16.0, 26.7) - 0.065 * gaussian(l, 501.1, 20.4, 26.2); }
+export function cieY(l: number) { return 0.821 * gaussian(l, 568.8, 46.9, 40.5) + 0.286 * gaussian(l, 530.9, 16.3, 31.1); }
+export function cieZ(l: number) { return 1.217 * gaussian(l, 437.0, 11.8, 36.0) + 0.681 * gaussian(l, 459.0, 26.0, 13.8); }
 
 const H = 6.62607015e-34, C = 2.99792458e8, KB = 1.380649e-23;
 function planck(lambda_m: number, T: number): number {

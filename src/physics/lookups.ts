@@ -15,10 +15,10 @@ export function buildTempLUT(a: number, prograde: boolean, rIn: number, rOut: nu
 }
 /** Visible-radiance LUT range and size (spec 2026-10-01 §2.3; 4096 entries: plan Task 2). */
 export const VIS_TMIN = 100, VIS_TMAX = 1e9, VIS_LUT_N = 4096, VIS_TREF = 1e4;
-const LREF = relLuminance(blackbodyVisibleRGB(VIS_TREF));
+export const VIS_LREF = relLuminance(blackbodyVisibleRGB(VIS_TREF));
 
 /** Visible luminance of a blackbody at T relative to one at VIS_TREF. */
-export const visibleLuminance = (T: number) => relLuminance(blackbodyVisibleRGB(T)) / LREF;
+export const visibleLuminance = (T: number) => relLuminance(blackbodyVisibleRGB(T)) / VIS_LREF;
 /** Cap for `lumNorm`: f32-safe with headroom (LUT entries reach ~1e5, exposure 2^4). A disk whose
  *  visible luminance is below 1e-30 of a 1e4 K one (T_peak below ~365 K) renders dark, not NaN. */
 export const LUM_NORM_MAX = 1e30;
@@ -33,7 +33,7 @@ export function buildVisibleLUT(n = VIS_LUT_N): Float32Array {
   const l0 = Math.log(VIS_TMIN), l1 = Math.log(VIS_TMAX);
   for (let i = 0; i < n; i++) {
     const c = blackbodyVisibleRGB(Math.exp(l0 + ((l1 - l0) * i) / (n - 1)));
-    out[i * 4] = c[0] / LREF; out[i * 4 + 1] = c[1] / LREF; out[i * 4 + 2] = c[2] / LREF; out[i * 4 + 3] = 1;
+    out[i * 4] = c[0] / VIS_LREF; out[i * 4 + 1] = c[1] / VIS_LREF; out[i * 4 + 2] = c[2] / VIS_LREF; out[i * 4 + 3] = 1;
   }
   return out;
 }
