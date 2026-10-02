@@ -1,7 +1,7 @@
 # Cooled synchrotron jet: full-spectrum energy budget — design
 
 **Date:** 2026-10-02
-**Status:** approved in conversation; awaiting written-spec review
+**Status:** implemented on `feat/cooled-jet` (plan `docs/plans/2026-10-02-cooled-jet.md`)
 **Follows:** `docs/specs/2026-10-02-synchrotron-jet-design.md` (shipped, main e950f65), whose final review found
 that the visible-band energy budget is energetically impossible for the X-ray binaries.
 
