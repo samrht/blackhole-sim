@@ -160,3 +160,35 @@ export function kernelBin(xa: number, xb: number, gamma: number): number {
   }
   return tot / (xb - xa);
 }
+
+// ---- cooled electron population (spec 2.1-2.2) -----------------------------------------------------------
+/** Injection fitted to M87's core SED: N ~ gamma^-2.2 (alpha 1.1) for 40..1200, gamma^-3.0 (alpha 1.5) above. */
+export const G_MIN = 40, G_BR = 1200, P1 = 2.2, P2 = 3.0;
+export const gInj = (g: number) => (g < G_MIN ? 0 : g <= G_BR ? Math.pow(g, -P1) : Math.pow(G_BR, P2 - P1) * Math.pow(g, -P2));
+/** Int_gamma^inf g. */
+export function gTail(g: number): number {
+  if (!Number.isFinite(g)) return 0;
+  const a = Math.max(g, G_MIN), t2 = Math.pow(G_BR, P2 - P1) * Math.pow(Math.max(a, G_BR), 1 - P2) / (P2 - 1);
+  return a >= G_BR ? t2 : (Math.pow(a, 1 - P1) - Math.pow(G_BR, 1 - P1)) / (P1 - 1) + t2;
+}
+/** I_g = Int (gamma - 1) g dgamma: injected kinetic energy per unit Q0, in m_e c^2. */
+export const I_G = (Math.pow(G_BR, 2 - P1) - Math.pow(G_MIN, 2 - P1)) / (2 - P1) - (Math.pow(G_MIN, 1 - P1) - Math.pow(G_BR, 1 - P1)) / (P1 - 1)
+  + Math.pow(G_BR, P2 - P1) * (Math.pow(G_BR, 2 - P2) / (P2 - 2) - Math.pow(G_BR, 1 - P2) / (P2 - 1));
+/** g(G) (G^2 - 1) without overflow for huge G. */
+const gInjG2 = (G: number) => (G > 1e100 ? Math.pow(G_BR, P2 - P1) * Math.pow(G, 2 - P2) : gInj(G) * (G * G - 1));
+/** acoth(gamma) from u = gamma beta without cancellation: ln((gamma + 1) / u). */
+const acothU = (u: number) => Math.log((1 + Math.sqrt(1 + u * u)) / u);
+/** Injection energy that cools to momentum u within cooling depth s: coth(acoth(gamma) - s), or Infinity. */
+export function coolFromU(u: number, s: number): number { const d = acothU(u) - s; return d > 0 ? 1 / Math.tanh(d) : Infinity; }
+/** N^ = N k / Q0 per unit gamma at momentum u: (1/u^2) Int_gamma^G g (spec 2.2). Written in u: gamma rounds to 1
+ *  for u < 1e-8 in double precision, and the cold electrons matter for absorption at the fundamental. */
+export function nHatU(u: number, s: number): number { const g = Math.sqrt(1 + u * u); return (gTail(g) - gTail(coolFromU(u, s))) / (u * u); }
+/** d/dgamma [N^ / (gamma u)] (analytic; dG/dgamma = (G^2 - 1) / u^2). */
+export function dNOverGuU(u: number, s: number): number {
+  const g = Math.sqrt(1 + u * u), u2 = u * u, G = coolFromU(u, s), T = gTail(g) - gTail(G);
+  const dT = -gInj(g) + (Number.isFinite(G) ? gInjG2(G) / u2 : 0);
+  const den = g * u2 * u;
+  return (dT * den - T * (u2 * u + 3 * g * g * u)) / (den * den);
+}
+export const nHat = (g: number, s: number) => nHatU(Math.sqrt(g * g - 1), s);
+export const dNOverGu = (g: number, s: number) => dNOverGuU(Math.sqrt(g * g - 1), s);
