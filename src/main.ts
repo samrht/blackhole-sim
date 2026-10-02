@@ -170,9 +170,10 @@ ratio to analytic critical curve = ${res.calibration} (NOT a calibration — the
   });
 
   const jg = $("jg") as HTMLInputElement, jk = $("jk") as HTMLInputElement, jgv = $("jgv"), jkv = $("jkv");
-  // Jet on/off and its radiative efficiency eps (spec 2026-10-02): brightness = eps x Blandford-Znajek power.
+  // Jet on/off and its efficiency eta (cooled-jet spec): the fraction of the jet power its electrons radiate.
   const jeton = $("jeton") as HTMLInputElement, jeteff = $("jeteff") as HTMLInputElement, jeteffv = $("jeteffv");
   const showEff = () => { jeteffv.textContent = state.jetEta.toExponential(1); };
+  jeteff.value = String(Math.log10(ETA_DEFAULT)); // default from M87's optical nucleus (synchrotron.ts)
   jeton.addEventListener("change", () => { state.jetOn = jeton.checked; reset(); });
   jeteff.addEventListener("input", () => { state.jetEta = 10 ** +jeteff.value; showEff(); physicsChanged(); });
   showEff();
