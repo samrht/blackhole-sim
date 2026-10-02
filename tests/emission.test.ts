@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { patternPhase, turbulence, hotspotField, emissionField, T_BREATHE, type HotSpot } from "../src/physics/emission";
+import { patternPhase, turbulence, hotspotField, emissionField, lognormalFactor, T_BREATHE, type HotSpot } from "../src/physics/emission";
 import { omegaKepler } from "../src/physics/orbits";
 
 const close = (a: number, b: number, tol = 1e-9) => Math.abs(a - b) <= tol * (1 + Math.abs(b));
@@ -52,13 +52,27 @@ describe("emission", () => {
   });
 
   it("emissionField reduces to exactly 1 when all features are off (Tier-1 regression gate)", () => {
-    expect(emissionField(9, 2.0, 123.4, 0, 0, [])).toBe(1);
-    expect(emissionField(15, -1.0, 5.0, 0, 0, [])).toBe(1);
+    expect(emissionField(9, 2.0, 123.4, 0.9, 0, 0, [])).toBe(1);
+    expect(emissionField(15, -1.0, -5.0, 0.0, 0, 0, [])).toBe(1);
   });
-
-  it("emissionField is non-negative even with strong features", () => {
+  it("lognormal factor has mean exactly 1 over a unit Gaussian (quadrature), so the disk's light is conserved", () => {
+    for (const s of [0.1, 0.55, 1.7]) {
+      let I = 0; const h = 1e-3;
+      for (let x = -14; x <= 14 + 1e-12; x += h) I += Math.exp(-x * x / 2) / Math.sqrt(2 * Math.PI) * lognormalFactor(x, s) * h;
+      expect(Math.abs(I - 1)).toBeLessThan(1e-3);
+    }
+  });
+  it("emissionField = lognormal turbulence x breathing + hot spots at the co-rotating phase", () => {
+    const spots: HotSpot[] = [{ r: 10, psi: 1.0, sigma: 1.0, amp: 2.0 }];
+    const t = 37, phi = 1.0 + omegaKepler(10, 0.9, true) * t; // the spot's centre at time t
+    expect(emissionField(10, phi, t, 0.9, 0, 0, spots)).toBeCloseTo(3.0, 9);
+  });
+  it("emissionField is non-negative and finite at the slider's top sigma with strong features", () => {
     const spots: HotSpot[] = [{ r: 8, psi: 0, sigma: 1.5, amp: 3 }];
-    for (let p = 0; p < 6.28; p += 0.5) expect(emissionField(8, p, 10, 1.5, 0.9, spots)).toBeGreaterThanOrEqual(0);
+    for (let p = 0; p < 6.28; p += 0.5) {
+      const e = emissionField(8, p, 10, 0.9, 1.8, 0.9, spots);
+      expect(Number.isFinite(e)).toBe(true); expect(e).toBeGreaterThanOrEqual(0);
+    }
   });
 
   it("T_BREATHE is the documented period constant", () => { expect(T_BREATHE).toBe(2000); });

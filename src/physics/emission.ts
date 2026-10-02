@@ -139,12 +139,29 @@ export function hotspotField(rHit: number, psi: number, spots: HotSpot[]): numbe
   return s;
 }
 
-/** Dimensionless emission multiplier. Exactly 1 when turbAmp=0, breatheAmp=0, no spots -> Tier-1. */
+/** Intrinsic flicker of the disk's integrated light (fractional rms, face-on, before beaming) against the
+ *  lognormal sigma, measured by scripts/calibrate-turbulence.ts at a = 0.9, r_in = ISCO .. 40 M, 1500
+ *  snapshots. Observed thermal-state disks flicker at ~2 % (SKH06 <~ 2 % above 10 Hz; soft states a few %). */
+export const FLICKER_TABLE: readonly (readonly [number, number])[] = [[0, 0], [0.05, 0.00173], [0.25, 0.00872], [0.5, 0.01787], [0.75, 0.02790], [1, 0.03945], [1.25, 0.05352], [1.5, 0.07198], [1.75, 0.09828], [2, 0.13887]];
+export const FLICKER_DEFAULT = 0.02;
+/** sigma giving intrinsic flicker `rms` (linear between table points; clamps to the table's top). */
+export function sigmaForFlicker(rms: number): number {
+  if (rms <= 0) return 0;
+  for (let i = 1; i < FLICKER_TABLE.length; i++) {
+    const [s0, r0] = FLICKER_TABLE[i - 1], [s1, r1] = FLICKER_TABLE[i];
+    if (rms <= r1) return s0 + ((rms - r0) / (r1 - r0)) * (s1 - s0);
+  }
+  return FLICKER_TABLE[FLICKER_TABLE.length - 1][0];
+}
+
+/** Dimensionless emission multiplier at disk point (r, phi) and emission time t: lognormal MRI turbulence
+ *  (sigma from sigmaForFlicker) x the optional breathing + the optional hot spots, which orbit at the
+ *  co-rotating phase psi = phi - Omega t. Exactly 1 when sigma = breatheAmp = 0 and there are no spots. */
 export function emissionField(
-  rHit: number, psi: number, t: number,
-  turbAmp: number, breatheAmp: number, spots: HotSpot[],
+  r: number, phi: number, t: number, a: number,
+  sigma: number, breatheAmp: number, spots: HotSpot[],
 ): number {
-  const turb = 1 + turbAmp * (turbulence(Math.log(rHit), psi, 3) - 0.5) * 2;
+  const turb = sigma > 0 ? lognormalFactor(turbulenceAt(r, phi, t, a), sigma) : 1;
   const breathe = 1 + breatheAmp * Math.sin(TWO_PI * t / T_BREATHE);
-  return Math.max(0, turb * breathe + hotspotField(rHit, psi, spots));
+  return Math.max(0, turb * breathe + hotspotField(r, patternPhase(r, phi, t, 1, a), spots));
 }
