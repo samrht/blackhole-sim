@@ -27,11 +27,11 @@ export const PRESETS: readonly Preset[] = [
   },
   {
     id: "cygx1", name: "Cygnus X-1", massSun: 21.2, a: 0.998, inclDeg: 27, lambda: 0.02, jet: true,
-    caption: "The first known stellar black hole: 21.2 ± 2.2 solar masses and spin above 0.9985 (Miller-Jones et al. 2021), seen at ~27° (Orosz et al. 2011), accreting at ~2 % of Eddington. Spin sits at the slider's 0.998 cap (the Thorne limit); the measured value is higher. The real disk peaks in X-rays; you see its blue-white visible tail. Its jet uses the same energy budget; the jet's brightness this close to the hole has not been measured.",
+    caption: "The first known stellar black hole: 21.2 ± 2.2 solar masses and spin above 0.9985 (Miller-Jones et al. 2021), seen at ~27° (Orosz et al. 2011), accreting at ~2 % of Eddington. Spin sits at the slider's 0.998 cap (the Thorne limit); the measured value is higher. The real disk peaks in X-rays; you see its blue-white visible tail. Its jet uses the same energy budget, but here the field (~10⁸–10⁹ G) puts visible light far below what the jet's electrons mainly emit, so electrons dense enough to supply that visible light would radiate more than the jet's own power: treat this jet's brightness (saturated white at the default exposure) as an overestimate outside the model's range. Its real brightness this close to the hole has not been measured.",
   },
   {
     id: "grs1915", name: "GRS 1915+105", massSun: 12.4, a: 0.98, inclDeg: 60, lambda: 0.3, jet: true,
-    caption: "A microquasar with a powerful jet: 12.4 solar masses, jet seen at 60° ± 5°, spin ~0.98 (Reid et al. 2014), accreting at ~30 % of Eddington. The real disk peaks in X-rays; you see its blue-white visible tail. Its jet uses the same energy budget; the jet's brightness this close to the hole has not been measured.",
+    caption: "A microquasar with a powerful jet: 12.4 solar masses, jet seen at 60° ± 5°, spin ~0.98 (Reid et al. 2014), accreting at ~30 % of Eddington. The real disk peaks in X-rays; you see its blue-white visible tail. Its jet uses the same energy budget, but here the field (~10⁸–10⁹ G) puts visible light far below what the jet's electrons mainly emit, so electrons dense enough to supply that visible light would radiate more than the jet's own power: treat this jet's brightness (saturated white at the default exposure) as an overestimate outside the model's range. Its real brightness this close to the hole has not been measured.",
   },
   {
     id: "gargantua", name: "Gargantua (Interstellar)", massSun: 1e8, a: 0.6, inclDeg: 85,

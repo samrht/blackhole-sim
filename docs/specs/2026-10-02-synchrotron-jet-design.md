@@ -44,8 +44,9 @@ All in Gaussian cgs units; r_g = GM/c² (cm), lengths in the shader in units of 
 ### 2.2 Flow
 
 - Outward along the funnel's streamlines (the self-similar parabola family through the point),
-  measured by the local zero-angular-momentum observer, with Lorentz factor from M87's measured
-  acceleration **Γ(z) = max(1, Γ₂₈₀ · (|z| / 280 r_g)^0.58)** (Mertens et al. 2016; Park et al.
+  measured by the local zero-angular-momentum observer, with M87's measured linear acceleration
+  applied to the proper speed **Γβ = √(Γ₂₈₀² − 1) · (|z| / 280 r_g)^0.58** (revised in the final review
+  from Γ = max(1, Γ₂₈₀ (|z|/280)^0.58), which left the plasma at rest across the view) (Mertens et al. 2016; Park et al.
   2019: Γ ≈ 2 at ~280 r_g, Γ ∝ z^0.56–0.58 below ~10³ r_s). The **Jet speed** slider sets Γ₂₈₀
   (default **2**, was a constant Γ = 5); within the ±60 r_g view the flow is mildly relativistic.
   No toroidal flow velocity (stated simplification).

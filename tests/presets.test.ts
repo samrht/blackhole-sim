@@ -32,6 +32,11 @@ describe("presets", () => {
     const on = Object.fromEntries(PRESETS.map((p) => [p.id, p.jet]));
     expect(on).toEqual({ m87: true, sgra: false, cygx1: true, grs1915: true, gargantua: false });
   });
+  it("X-ray-binary captions say their visible jet is outside the model's energy-consistent range (2026-10-02 review)", () => {
+    // B ~ 1e8-1e9 G puts the visible band far below nu_min; the budget's electrons would then radiate
+    // more than the jet power at nu_min, so the drawn jet is an overestimate, and the caption must say so.
+    for (const id of ["cygx1", "grs1915"]) expect(PRESETS.find((p) => p.id === id)!.caption).toMatch(/more than the jet's own power/);
+  });
   it("the Custom default reproduces today's 30,000 K at a = 0.9", () => {
     expect(peakTemperature(CUSTOM_DEFAULT.massSun, 0.9, CUSTOM_DEFAULT.lambda)).toBeCloseTo(3e4, 3);
   });

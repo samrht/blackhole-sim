@@ -63,10 +63,14 @@ describe("jet model and energy budget", () => {
     expect(E.pBZ).toBeGreaterThan(1e43); expect(E.pBZ).toBeLessThan(1e44);       // measured 4.26e43
     expect(E.pBZ / (E.mdot * C_CGS ** 2)).toBeCloseTo(0.977, 2);
   });
-  it("Gamma(z) = max(1, G280 (|z|/280)^0.58)", () => {
-    expect(gammaProfile(280, 2)).toBe(2); expect(gammaProfile(-280, 2)).toBe(2);
-    expect(gammaProfile(60, 2)).toBe(1);                                          // 0.82 -> clamped
-    expect(gammaProfile(1000, 2)).toBeCloseTo(2 * Math.pow(1000 / 280, 0.58), 12);
+  it("proper speed Gamma*beta = sqrt(G280^2 - 1) (|z|/280)^0.58: anchored at 280 r_g, moving everywhere in view", () => {
+    expect(gammaProfile(280, 2)).toBeCloseTo(2, 12); expect(gammaProfile(-280, 2)).toBeCloseTo(2, 12);
+    const ub = (z: number) => Math.sqrt(3) * Math.pow(z / 280, 0.58);
+    expect(gammaProfile(60, 2)).toBeCloseTo(Math.sqrt(1 + ub(60) ** 2), 12);      // beta = 0.58: no static plasma
+    expect(Math.sqrt(1 - 1 / gammaProfile(60, 2) ** 2)).toBeGreaterThan(0.5);
+    expect(Math.sqrt(1 - 1 / gammaProfile(10, 2) ** 2)).toBeGreaterThan(0.2);     // mildly relativistic near the base
+    expect(gammaProfile(1e5, 2) / (Math.sqrt(3) * Math.pow(1e5 / 280, 0.58))).toBeCloseTo(1, 3); // Gamma ~ z^0.58 when Gamma >> 1
+    expect(gammaProfile(0, 2)).toBe(1);
   });
   it("plasma frequency shift: static at r = 1000 ~1 (gravitational), toward/away Doppler (Review Focus 5)", () => {
     const s = screenToState(0, 0, 0, Math.PI / 2, 1000), b = Math.sqrt(1 - 1 / 9);

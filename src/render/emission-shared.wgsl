@@ -82,7 +82,11 @@ const JET_LNNU = vec3<f32>(34.13261924, 33.93194855, 33.76489446);   // ln nu at
 const JET_BAND_M = mat3x3<f32>(-57.85676090, -199.6091852, 8197.725079, 563.0803652, 5602.051454, -395.0105294, 4364.033919, -151.6783697, -69.56073163);
 const GAMMA_REF_Z = 280.0; const GAMMA_SLOPE = 0.58;
 
-fn jetGammaAt(z: f32, g280: f32) -> f32 { return max(1.0, g280 * pow(abs(z) / GAMMA_REF_Z, GAMMA_SLOPE)); }
+// Proper speed Gamma beta = sqrt(G280^2 - 1) (|z|/280)^0.58 (twin: gammaProfile in jet.ts).
+fn jetGammaAt(z: f32, g280: f32) -> f32 {
+  let ub = sqrt(max(0.0, g280 * g280 - 1.0)) * pow(max(abs(z), 1e-6) / GAMMA_REF_Z, GAMMA_SLOPE);
+  return sqrt(1.0 + ub * ub);
+}
 // Unit flow direction (n_r, n_theta): outward along the funnel family rho = q rho_f(z).
 fn streamlineDirJ(r: f32, th: f32) -> vec2<f32> {
   let z = r * cos(th); let rho = r * sin(th); let az = max(abs(z), 1e-6);

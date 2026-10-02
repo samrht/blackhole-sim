@@ -45,10 +45,16 @@ export function lengthFalloff(z: number, zMax: number): number {
   return fadeIn * fadeOut * decay;
 }
 
-/** Gamma(z) = max(1, G280 (|z| / 280 r_g)^0.58): M87's measured acceleration (Mertens et al. 2016,
- *  Park et al. 2019). WGSL twin: jetGammaAt in emission-shared.wgsl. */
+/** Flow Lorentz factor from M87's measured linear acceleration, Gamma ~ R ~ z^0.58 (Mertens et al. 2016):
+ *  the power law is applied to the proper speed, Gamma beta = sqrt(G280^2 - 1) (|z| / 280 r_g)^0.58, as in
+ *  force-free linear acceleration (Gamma beta ~ R Omega_F / c), so the flow is Gamma = G280 at 280 r_g,
+ *  ~ z^0.58 where Gamma >> 1, and mildly relativistic, never static, near the base (2026-10-02 review:
+ *  max(1, G280 (|z|/280)^0.58) held the plasma at rest below ~85 r_g). WGSL twin: jetGammaAt. */
 export const GAMMA_REF_Z = 280, GAMMA_SLOPE = 0.58;
-export const gammaProfile = (z: number, g280: number) => Math.max(1, g280 * Math.pow(Math.abs(z) / GAMMA_REF_Z, GAMMA_SLOPE));
+export const gammaProfile = (z: number, g280: number) => {
+  const ub = Math.sqrt(Math.max(0, g280 * g280 - 1)) * Math.pow(Math.abs(z) / GAMMA_REF_Z, GAMMA_SLOPE);
+  return Math.sqrt(1 + ub * ub);
+};
 
 /** Traveling-wave knots: blobs of brightness marching outward as t advances. */
 /** Knots are blobs carried by the jet plasma, so the pattern moves outward at the flow speed

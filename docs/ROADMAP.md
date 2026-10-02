@@ -44,8 +44,8 @@ this file is the queue. Each item gets its own spec (and plan) before code, as e
 
 ## Open questions from the presets work
 
-- [x] **Jet brightness vs the disk** (2026-10-01; superseded 2026-10-02 by the energy budget, which
-  predicts M87\*'s jet at 12 % of the disk's light): presets calibrate the jet where an observation
+- [x] **Jet brightness vs the disk** (2026-10-01; superseded 2026-10-02: jet brightness now follows from the
+  energy budget, ε × the Blandford–Znajek power): presets calibrate the jet where an observation
   bounds it. M87\*: EHT horizon-scale jet base <= ~10 % of the ring -> jet strength 0.1 / 29.8
   (measured jet/disk light ratio at strength 1). Cyg X-1 / GRS 1915+105: unmeasured, model default,
   said in their captions. The default view keeps strength 1 (not a real object).
