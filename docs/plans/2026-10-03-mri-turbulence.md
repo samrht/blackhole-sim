@@ -588,7 +588,6 @@ sizes and comparison:
     const cpu = turbulenceAt(Math.fround(c.r), Math.fround(c.phi), Math.fround(c.t), Math.fround(c.a));
     turbErr = Math.max(turbErr, Math.abs(tgpu[i] - cpu));
   });
-  maxErr = Math.max(maxErr, turbErr / 1e3); // reported separately below; gated at 2e-3 absolute
 ```
 
 and next to where the route reports its verdict add `turbErr` to the printed line and fail the route when
