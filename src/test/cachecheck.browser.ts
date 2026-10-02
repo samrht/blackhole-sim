@@ -22,6 +22,8 @@ const CHECKS: Check[] = [
   { ...withSky(SCENES[0], "overflow"), capacity: 64 },    // bookmark buffer forced tiny -> LIVE fallback
   { ...withSky(SCENES[0], "delay"), lightDelay: 1 },       // light-travel delay on (jet, spots, turbulence)
   { ...SCENES[2], name: "starfield", skyStrength: 0, starfield: true },
+  // Cygnus X-1's jet: optically thick over the disk, so the cached frame must attenuate the cached disk exactly
+  withSky({ name: "xrb-thick", a: 0.998, inclDeg: 27, time: 7, frame: 3, jetStrength: 1, skyStrength: 0, obj: { massSun: 21.2, lambda: 0.02 } }),
 ];
 const TIMES = [0, 137.5];
 const rel = (a: number, b: number) => Math.abs(a - b) / Math.max(Math.abs(a), 1e-3);
