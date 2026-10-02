@@ -61,8 +61,10 @@ Gaussian cgs; σ_T = 6.6524587 × 10⁻²⁵ cm²; ν_B = qB / (2π m_e c) (cycl
 
 - Single-electron spectrum: the **exact cyclo-synchrotron emissivity** (Bessel series over harmonics;
   Melrose 1980; Leung, Gammie & Noble 2011), integrated over emission direction and averaged over pitch
-  angle: P_ν(γ) = (q³ B / m_e c²) p̂(ν/ν_B, γ). For γ above a seam γ_s (≈ 20, chosen where the two agree
-  within 0.1 %) the pitch-averaged synchrotron kernel F(x) is used instead.
+  angle: P_ν(γ) = (q³ B / m_e c²) p̂(ν/ν_B, γ). For γ above a seam **γ_s = 10** the pitch-averaged
+  synchrotron kernel F(x) is used instead. (Revised in planning: measured, the kernel's power-weighted
+  difference from the exact sum is 14 % at γ = 3, 5.1 % at 5, 1.3 % at 10, falling as 1/γ²; 0.1 % would
+  need γ_s ≈ 35, ~40× the build cost, and summing harmonics as a continuum was measured 4–10 % off.)
 - Isotropic electrons in a random field: j_ν = (1/4π) ∫ N P_ν dγ and (Ghisellini & Svensson 1991, exact
   for any γ) α_ν = −(1 / (8π m_e ν²)) ∫ P_ν γ u ∂/∂γ [N / (γ u)] dγ.
 - Both reduce to j′ = C_j · q₀ · shape · B · Ĵ(x, s) and α′ = C_α · q₀ · shape · B^−1 · x^−2 · Â(x, s),
@@ -80,7 +82,9 @@ Gaussian cgs; σ_T = 6.6524587 × 10⁻²⁵ cm²; ν_B = qB / (2π m_e c) (cycl
 ### 2.4 Energy budget and anchor
 
 - **η = injected electron power / P_BZ**, with the injected power counted as energy at infinity:
-  L_inj = Σ_lobes ∫ α_lapse · Γ · q′ · √(g_rr g_θθ g_φφ) dr dθ dφ over the rendered region
+  L_inj = Σ_lobes ∫ α_lapse² · Γ · q′ · √(g_rr g_θθ g_φφ) dr dθ dφ over the rendered region (one lapse
+  factor for the energy's redshift, one for the time dilation; Γ for the plasma's density in the
+  zero-angular-momentum frame — revised in planning from a single lapse factor)
   (z_b ≤ |z| ≤ jetLength, ρ ≤ 1.2 ρ_f); the shape's knots and turbulence are mean-one, so their time
   average drops out. q₀ = η P_BZ / (that integral at q₀ = 1). What is radiated is ≤ what is injected by
   construction (equal in fast cooling), so energy is conserved for every object and slider value.
@@ -88,7 +92,7 @@ Gaussian cgs; σ_T = 6.6524587 × 10⁻²⁵ cm²; ν_B = qB / (2π m_e c) (cycl
   P_BZ = (κ / 4πc) Φ² Ω_H² f(Ω_H), f = 1 + 1.38 ω² − 9.2 ω⁴, ω = Ω_H r_g / c = a / (2 r_H)
   (+4.7 % at a = 0.9, −14 % at 0.998); κ = 0.05, Φ as shipped. M87* becomes ≈ 4.46 × 10⁴³ erg/s.
 - **Anchor:** the default η is solved once so the M87* preset's optically thin, comoving νL_ν at 550 nm
-  (both lobes, rendered region) equals 10⁴¹ erg/s. The HST nucleus aperture (~0.1″ ≈ 2 × 10⁴ r_g) contains
+  (both lobes, rendered region, the same α_lapse² Γ √γ weighting) equals 10⁴¹ erg/s. The HST nucleus aperture (~0.1″ ≈ 2 × 10⁴ r_g) contains
   more jet than the ±60 r_g view, so the anchored η is an upper bound; stated in the README.
 - **Slider:** "Jet efficiency η" (log 10⁻⁴–1, default = the anchor), replacing ε.
 
@@ -125,8 +129,8 @@ the funnel geometry, the panel's Jet checkbox and Jet speed, the presets' on/off
 ## 5. Testing
 
 - **Single electron:** the emission spectrum summed over harmonics and integrated over frequency equals
-  the Larmor power (4/3) σ_T c U_B u² within 0.5 % for u = 0.01–30; at γ ≫ 1 it equals the synchrotron
-  kernel; the seam at γ_s is continuous to 0.1 %.
+  the Larmor power (4/3) σ_T c U_B u² within 0.5 % for u = 0.1–3 (measured 0.03 %); the seam at γ_s = 10
+  differs from the synchrotron kernel by ≤ 1.5 % power-weighted.
 - **Kirchhoff:** for a thermal (Maxwell–Jüttner) population, j_ν / α_ν = B_ν(T) within 1 % at
   kT = 0.1, 1, 10 m_e c² — validates the absorption independently of the emission.
 - **Cooling:** N̂ solves the continuity equation (numerical check); calorimetry — the fast-cooled
