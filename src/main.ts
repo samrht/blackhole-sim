@@ -106,10 +106,10 @@ structural ${res.structural ? "ok" : "FAILED"} — centred dark shadow=${res.has
   let phys: Readouts = computeReadouts(state, SPEED);
   // The jet's field scale, energy-budget density scale and r_g (spec 2026-10-02); ~20 ms, so it is
   // recomputed only when one of its inputs changed (refreshPhysics also runs for the Motion slider).
-  let jetU = jetUniforms(state.massSun, state.a, state.lambda, state.jetEta, state.jetLength, state.jetGamma), jetKey = "";
+  let jetU = jetUniforms(state.massSun, state.a, state.lambda, state.jetEta, state.jetLength, state.jetGamma, state.jetKnots), jetKey = "";
   const refreshJet = () => {
-    const k = `${state.massSun}|${state.a}|${state.lambda}|${state.jetEta}|${state.jetLength}|${state.jetGamma}`;
-    if (k !== jetKey) { jetKey = k; jetU = jetUniforms(state.massSun, state.a, state.lambda, state.jetEta, state.jetLength, state.jetGamma); }
+    const k = `${state.massSun}|${state.a}|${state.lambda}|${state.jetEta}|${state.jetLength}|${state.jetGamma}|${state.jetKnots}`;
+    if (k !== jetKey) { jetKey = k; jetU = jetUniforms(state.massSun, state.a, state.lambda, state.jetEta, state.jetLength, state.jetGamma, state.jetKnots); }
   };
   const refreshPhysics = () => { phys = computeReadouts(state, SPEED); refreshJet(); };
 

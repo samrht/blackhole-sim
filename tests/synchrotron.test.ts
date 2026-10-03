@@ -7,7 +7,8 @@ import { VIS_LREF } from "../src/physics/lookups";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseTable } from "../src/physics/cyclosynch";
-import { jetEnergetics, jetUniforms, injUnit, nuLnuAt, flowTime, jetField, ETA_DEFAULT, C_CGS, LN_NUB0 } from "../src/physics/synchrotron";
+import { jetEnergetics, jetUniforms, injUnit, meanInjection, nuLnuAt, flowTime, jetField, ETA_DEFAULT, C_CGS, LN_NUB0 } from "../src/physics/synchrotron";
+import { fluxRatio } from "../src/physics/flux-history";
 import { TABLE_GRID } from "../src/physics/cyclosynch";
 import { PRESETS } from "../src/physics/presets";
 import { JET } from "../src/physics/jet";
@@ -71,12 +72,12 @@ describe("full-spectrum energy budget (spec 2.4)", () => {
   });
   it("injected power at infinity equals eta P_BZ", () => {
     for (const [m, a, l, eta] of [[6.5e9, 0.9, 8e-6, 0.05], [21.2, 0.998, 0.02, 1e-3], [1e8, 0.5, 3e-4, 1]]) {
-      const U = jetUniforms(m, a, l, eta, 60, 2);
+      const U = jetUniforms(m, a, l, eta, 60, 2, 0);
       expect((U.jetQ0 * injUnit(a, U.jetB0, U.rgCm, 60, 2)) / (eta * U.pBZ)).toBeCloseTo(1, 9);
     }
   });
   it("the default eta reproduces M87's optical nucleus: nu L_nu(550 nm) = 1e41 erg/s within 1 %", () => {
-    const m = PRESETS.find((p) => p.id === "m87")!, U = jetUniforms(m.massSun, m.a, m.lambda, ETA_DEFAULT, 60, 2);
+    const m = PRESETS.find((p) => p.id === "m87")!, U = jetUniforms(m.massSun, m.a, m.lambda, ETA_DEFAULT, 60, 2, 0); // the anchor is the steady jet
     const L = nuLnuAt(T, C_CGS / 550e-7, m.a, U.jetB0, U.rgCm, 60, 2, U.jetQ0);
     expect(Math.abs(L / 1e41 - 1)).toBeLessThan(0.01);
   });
@@ -87,7 +88,7 @@ describe("full-spectrum energy budget (spec 2.4)", () => {
   });
   it("slider corners: q0 finite and >= 0 (0 at spin 0); the strongest field keeps x inside the table (Review Focus 1, 2)", () => {
     for (const [m, a, l, eta, g] of [[1, 0, 1e-10, 1e-4, 1.5], [1e10, 0.998, 1, 1, 8], [1, 0.998, 1, 1, 1.5], [1e10, 0.001, 1e-10, 1e-4, 8]]) {
-      const U = jetUniforms(m, a, l, eta, 60, g);
+      const U = jetUniforms(m, a, l, eta, 60, g, 0);
       expect(Number.isFinite(U.jetQ0)).toBe(true); expect(U.jetQ0).toBeGreaterThanOrEqual(0);
       if (a === 0) expect(U.jetQ0).toBe(0);
       // the reddest plasma-frame frequency (650 nm, D = 0.1) at the strongest field (the funnel base)
@@ -95,6 +96,38 @@ describe("full-spectrum energy budget (spec 2.4)", () => {
       expect(lnx).toBeGreaterThan(TABLE_GRID.lnx0);
       expect(Number.isFinite(Math.log(flowTime(30, g, U.rgCm)))).toBe(true);
     }
+  });
+});
+
+describe("mean injected power with the flux-driven jet (spec 2.4 + corrections 2)", () => {
+  const E = jetEnergetics(6.5e9, 0.9, 1e-5);
+  const P = (f: number) => injUnit(0.9, E.b0, E.rgCm, 60, 2, f);
+  const F = [0.5, 1, 1.5, 2];
+  const lagrange = (Pn: number[]) => (f: number) =>
+    F.reduce((s, fi, i) => s + Pn[i] * F.reduce((p, fj, j) => (j === i ? p : (p * (f - fj)) / (fi - fj)), 1), 0);
+  it("injected power is ~f^2 (A + C f): the cubic through f = 0.5, 1, 1.5, 2 holds at other f within 0.5 %", () => {
+    const lag = lagrange(F.map(P));
+    for (const f of [0.17, 0.3, 0.75, 1.25, 1.58]) expect(Math.abs(lag(f) / P(f) - 1)).toBeLessThan(5e-3);
+    expect(P(1)).toBeCloseTo(injUnit(0.9, E.b0, E.rgCm, 60, 2), 12); // default argument f = 1
+  });
+  it("s = 0 reproduces the steady jet; s > 0 averages the cubic with <f^2>, <f^3>", () => {
+    expect(meanInjection(0.9, E.b0, E.rgCm, 60, 2, 0)).toBe(P(1));
+    const lag = lagrange(F.map(P));
+    for (const s of [0.5, 1, 1.4]) {
+      // over the moments' own 1e6 M window (2e5 M samples different eruptions: <f> = 0.986)
+      let m = 0, n = 0; for (let t = 0.5; t < 1e6; t += 3) { m += lag(fluxRatio(t, s)); n++; }
+      expect(Math.abs(meanInjection(0.9, E.b0, E.rgCm, 60, 2, s) / (m / n) - 1)).toBeLessThan(1e-2);
+    }
+  });
+  it("time-averaged injected power equals eta P_BZ at every slider value (spec 5 energy test)", () => {
+    for (const s of [0, 0.5, 1, 1.4]) {
+      const U = jetUniforms(6.5e9, 0.9, 1e-5, 2e-3, 60, 2, s);
+      expect((U.jetQ0 * meanInjection(0.9, U.jetB0, U.rgCm, 60, 2, s)) / (2e-3 * U.pBZ)).toBeCloseTo(1, 9);
+      expect(Number.isFinite(U.jetQ0)).toBe(true);
+    }
+  });
+  it("spin 0: no BZ power, q0 = 0, no NaN at any slider value (Review Focus 5)", () => {
+    for (const s of [0, 1, 1.4]) expect(jetUniforms(10, 0, 0.1, 2e-3, 60, 2, s).jetQ0).toBe(0);
   });
 });
 

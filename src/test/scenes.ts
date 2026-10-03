@@ -31,7 +31,7 @@ export function prepareScene(r: Renderer, s: Scene): number {
 
 export function sceneUniforms(r: Renderer, s: Scene, rIn: number, extra: Partial<UniformValues> = {}): UniformValues {
   // The default view's object (1e8 M_sun, 3e4 K peak) at the scene's spin; epsilon at its default.
-  const obj = s.obj ?? CUSTOM_DEFAULT, J = jetUniforms(obj.massSun, s.a, obj.lambda, ETA_DEFAULT, 60, 2);
+  const obj = s.obj ?? CUSTOM_DEFAULT, J = jetUniforms(obj.massSun, s.a, obj.lambda, ETA_DEFAULT, 60, 2, 1);
   return {
     resW: r.width, resH: r.height, outW: r.displayW, outH: r.displayH, a: s.a, incl: (s.inclDeg * Math.PI) / 180,
     rObs: 1000, fovScale: 14, rIn, rOut: 40, Tpeak: 3e4, lumNorm: lumNormFor(3e4), lightDelay: s.lightDelay ?? 0, exposure: 1.6, time: s.time, frame: s.frame, reset: 1,

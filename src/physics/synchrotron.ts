@@ -3,6 +3,7 @@
 // from the cooled population's exact cyclo-synchrotron table (cyclosynch.ts). Gaussian cgs; lengths in r_g.
 
 import { metricUpper, metricLower, horizonOuter } from "./kerr";
+import { fluxMoment } from "./flux-history";
 import { I_G, lookup, type SynchTable } from "./cyclosynch";
 import { mdotFromLambda } from "./units";
 import { funnelEdge, wallProfile, lengthFalloff, gammaProfile, JET } from "./jet";
@@ -55,11 +56,12 @@ export function volumeWeight(r: number, th: number, a: number, g280: number): nu
   const gl = metricLower(r, th, a), lapse2 = -1 / metricUpper(r, th, a).tt;
   return lapse2 * gammaProfile(r * Math.cos(th), g280) * Math.sqrt(gl.rr * gl.thth * gl.phph) / (r * r * Math.sin(th));
 }
-/** Sum of f(rho, z) weighted by volumeWeight over the rendered region (both lobes), in r_g^3. */
-function regionSum(a: number, jetLength: number, g280: number, f: (rho: number, z: number) => number): number {
+/** Sum of f(rho, z) weighted by volumeWeight over the rendered region (both lobes), in r_g^3, out to
+ *  rho = qMax rho_f(z) (1.2: the wall's cut; wider for a flux-widened jet). */
+function regionSum(a: number, jetLength: number, g280: number, f: (rho: number, z: number) => number, qMax = 1.2): number {
   const NZ = 160, NR = 48, zb = JET.zBase; let L = 0;
   for (let iz = 0; iz < NZ; iz++) {
-    const dz = (jetLength - zb) / NZ, z = zb + dz * (iz + 0.5), dr = (1.2 * funnelEdge(z)) / NR;
+    const dz = (jetLength - zb) / NZ, z = zb + dz * (iz + 0.5), dr = (qMax * funnelEdge(z)) / NR;
     for (let ir = 0; ir < NR; ir++) {
       const rho = dr * (ir + 0.5), v = f(rho, z); if (v === 0) continue;
       L += 2 * 2 * Math.PI * rho * dr * dz * volumeWeight(Math.hypot(rho, z), Math.atan2(rho, z), a, g280) * v;
@@ -67,10 +69,27 @@ function regionSum(a: number, jetLength: number, g280: number, f: (rho: number, 
   }
   return L;
 }
-/** Injected power at infinity for q0 = 1 (knots and turbulence are mean-one, so they drop out). */
-export function injUnit(a: number, b0: number, rgCm: number, jetLength: number, g280: number): number {
-  return regionSum(a, jetLength, g280, (rho, z) => { const sh = wallProfile(rho, z) * lengthFalloff(z, jetLength);
-    if (sh <= 0) return 0; const B = jetField(rho, z, a, b0); return B * B * sh; }) * rgCm ** 3;
+/** Injected power at infinity for q0 = 1 with the whole jet at flux ratio f (wall sqrt(f) wider, density x f;
+ *  filaments are mean-one and drop out). f = 1 is the steady jet. */
+export function injUnit(a: number, b0: number, rgCm: number, jetLength: number, g280: number, f = 1): number {
+  const sw = Math.sqrt(f);
+  return regionSum(a, jetLength, g280, (rho, z) => { const sh = f * wallProfile(rho / sw, z) * lengthFalloff(z, jetLength);
+    if (sh <= 0) return 0; const B = jetField(rho, z, a, b0); return B * B * sh; }, 1.2 * sw) * rgCm ** 3;
+}
+/** Time average of the injected power over the flux distribution at slider s (spec corrections 2): injUnit is
+ *  ~ f^2 (A + C f) (B_phi grows with rho), so the exact cubic through f = 0.5, 1, 1.5, 2 is averaged with the
+ *  generator's moments <f> = 1, <f^2>, <f^3>. s = 0: the steady jet. */
+export function meanInjection(a: number, b0: number, rgCm: number, jetLength: number, g280: number, fluxVar: number): number {
+  if (fluxVar === 0) return injUnit(a, b0, rgCm, jetLength, g280, 1);
+  const F = [0.5, 1, 1.5, 2], P = F.map((f) => injUnit(a, b0, rgCm, jetLength, g280, f));
+  // Power-basis coefficients c0..c3 of the cubic through (F, P): solve the 4x4 Vandermonde system.
+  const M = F.map((f, i) => [1, f, f * f, f * f * f, P[i]]);
+  for (let c = 0; c < 4; c++) {
+    for (let r = c + 1; r < 4; r++) { const k = M[r][c] / M[c][c]; for (let j = c; j < 5; j++) M[r][j] -= k * M[c][j]; }
+  }
+  const co = [0, 0, 0, 0];
+  for (let r = 3; r >= 0; r--) { let s = M[r][4]; for (let j = r + 1; j < 4; j++) s -= M[r][j] * co[j]; co[r] = s / M[r][r]; }
+  return co[0] + co[1] + co[2] * fluxMoment(2, fluxVar) + co[3] * fluxMoment(3, fluxVar);
 }
 // j' = C_J q0 shape B J^(x, s), alpha' = C_A q0 shape J^... (spec 2.3): logs of the prefactors, nu_B / B, k / B^2,
 // and of the flow-time constant 280^0.58 / (0.42 c).
@@ -95,10 +114,10 @@ export function nuLnuAt(t: SynchTable, nu: number, a: number, b0: number, rgCm: 
 }
 /** Default eta: M87*'s nu L_nu(550 nm) = 1e41 erg/s (spec 2.4; the anchor test re-derives it). */
 export const ETA_DEFAULT = 0.05527;
-/** The jet's uniforms: q0 = eta P_BZ / (injected power at q0 = 1); 0 at spin 0 (no BZ power). */
-export function jetUniforms(mSun: number, a: number, lambda: number, eta: number, jetLength: number, g280: number) {
+/** The jet's uniforms: q0 = eta P_BZ / (time-averaged injected power at q0 = 1); 0 at spin 0 (no BZ power). */
+export function jetUniforms(mSun: number, a: number, lambda: number, eta: number, jetLength: number, g280: number, fluxVar: number) {
   const E = jetEnergetics(mSun, a, lambda);
-  return { jetB0: E.b0, jetQ0: E.pBZ > 0 ? (eta * E.pBZ) / injUnit(a, E.b0, E.rgCm, jetLength, g280) : 0, rgCm: E.rgCm, pBZ: E.pBZ };
+  return { jetB0: E.b0, jetQ0: E.pBZ > 0 ? (eta * E.pBZ) / meanInjection(a, E.b0, E.rgCm, jetLength, g280, fluxVar) : 0, rgCm: E.rgCm, pBZ: E.pBZ };
 }
 /** One band of one jet sample: exact solution across a uniform slab of path ds (cm) behind optical depth
  *  tau already accumulated from the camera. Twin of jetSlabJ in emission-shared.wgsl. */

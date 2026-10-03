@@ -36,7 +36,7 @@ const out = await page.evaluate(async () => {
     const a = 0.9, rIn = iscoRadius(a, true);
     const { jetUniforms, ETA_DEFAULT } = await import("/src/physics/synchrotron.ts");
     const { CUSTOM_DEFAULT } = await import("/src/physics/presets.ts");
-    const J = jetUniforms(CUSTOM_DEFAULT.massSun, a, CUSTOM_DEFAULT.lambda, ETA_DEFAULT, 60, 2);
+    const J = jetUniforms(CUSTOM_DEFAULT.massSun, a, CUSTOM_DEFAULT.lambda, ETA_DEFAULT, 60, 2, 1);
     r.uploadLUTs(buildTempLUT(a, true, rIn, 40, 512), buildVisibleLUT()); r.rebind();
     r.uploadHotSpots(new Float32Array([8, 0, 1.2, 1.8, 12, 2.1, 1.6, 1.2, 16, 4.3, 2.0, 0.9])); r.rebind();
     const u = (f) => ({
