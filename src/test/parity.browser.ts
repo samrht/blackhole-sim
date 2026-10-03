@@ -430,7 +430,7 @@ export async function runParity(): Promise<{ maxErr: number; rows: number; jetLo
   const fcases: number[][] = [];
   for (const epoch of [0, 2048 * 7, 2048 * 5000, 2048 * 8000])
     for (const rel of [-900.5, 13.25, 377.75, 1024.5, 1999.875])
-      for (const [z, g, q, ph, a, s] of [[5, 2, 0.8, 0.3, 0.9, 1], [-40, 5, 1.1, -7.2, 0.998, 1.4], [59, 1.5, 0.2, 12.9, 0, 0.5]])
+      for (const [z, g, q, ph, a, s] of [[5, 2, 0.8, 0.3, 0.9, 1], [-40, 5, 1.1, -7.2, 0.998, 1.4], [59, 1.5, 0.2, 12.9, 0, 0.5], [20, 3, 0.6, 2.2, 0.6, 1], [33, 2, 0.9, 4.4, 0.45, 1.2]])
         fcases.push([epoch, rel, z, g, q, ph, a, s]);
   const farr = new Float32Array(fcases.length * 8);
   fcases.forEach((c, i) => farr.set(c, i * 8));
@@ -453,7 +453,7 @@ export async function runParity(): Promise<{ maxErr: number; rows: number; jetLo
     const [epoch, rel, z, g, q, ph, a, s] = Array.from(farr.subarray(i * 8, i * 8 + 8)); // f32-rounded, as the GPU got
     const t = epoch + rel, tau = launchDelay(z, g);
     // Errors: absolute on f and filaments (bounded ~0.2-1.6 and 0.65-1.35), relative on tau, absolute on the azimuth.
-    const want = [fluxRatio(t, s), tau, comovingAzimuth(ph, z, a, g), filaments(q, ph, t)];
+    const want = [fluxRatio(t, s, a), tau, comovingAzimuth(ph, z, a, g), filaments(q, ph, t)];
     const tol = [2e-3, 1e-4 * Math.max(1, tau), 2e-3, 2e-3];
     for (let k = 0; k < 4; k++) { const e = Math.abs(fgpu[i * 4 + k] - want[k]) / tol[k];
       if (e > fluxErr) { fluxErr = e; fluxWorst = `case ${i} out ${k}: gpu ${fgpu[i * 4 + k]} cpu ${want[k]}`; } }

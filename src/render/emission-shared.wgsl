@@ -95,7 +95,11 @@ fn jetGammaAt(z: f32, g280: f32) -> f32 {
 }
 // --- Horizon-flux history and launch time (spec 2026-10-03 jet flux knots; twins: flux-history.ts, jet.ts) ----
 const FLUX_T = 1500.0; const FLUX_JIT = 0.33333334; const FLUX_TAUD = 500.0; const FLUX_SPREAD = 0.5;
-const FLUX_FLOOR = 0.05; const FLUX_DBAR = 0.5058; const FLUX_D1 = 0.262371;
+const FLUX_FLOOR = 0.05;
+// Flicker (spec 2026-10-03 flux statistics) and the per-spin table rows a = 0, 0.3, 0.6, 0.9 of (dbar, eps, <d>)
+// (twin: FLUX, FLUX_SPIN in flux-history.ts).
+const FLUX_CELL_N = 50.0; const FLUX_CLIP = 3.0; const FLUX_SALT_N = 0x464eu;
+const FLUX_TAB = array<f32, 12>(0.1455, 0.05499, 0.073273, 0.1682, 0.06295, 0.084751, 0.191, 0.07072, 0.096304, 0.2138, 0.0783, 0.107885);
 const FLUX_SALT_T = 0x464cu; const FLUX_SALT_D = 0x4458u;
 const JET_ENV_Q = 1.51;   // envelope bound on rho / rho_f: 1.2 x the widest flux-driven width (jet.ts JET_ENV_Q)
 // Absolute time epoch + rel as (whole periods k, remainder in [0, P)): the epoch is a multiple of 2048, so for
@@ -107,21 +111,38 @@ fn splitPeriodJ(epoch: f32, rel: f32, P: f32) -> vec2<f32> {
   return vec2<f32>(kE + kl, x - kl * P);
 }
 fn fluxHashJ(k: i32, salt: u32) -> f32 { return f32(hash4T(k, 0x7a11u, 0, salt) & 0xffffffu) / 16777216.0 - 0.5; }
-fn fluxDeficitJ(kf: f32, loc: f32) -> f32 {
+fn fluxDeficitJ(kf: f32, loc: f32, dbar: f32) -> f32 {
   var k = i32(kf);
   var dt = loc - FLUX_T * (0.5 + FLUX_JIT * fluxHashJ(k, FLUX_SALT_T));
   if (dt < 0.0) { k = k - 1; dt = loc + FLUX_T - FLUX_T * (0.5 + FLUX_JIT * fluxHashJ(k, FLUX_SALT_T)); }
   let gap = FLUX_T * (1.0 + FLUX_JIT * (fluxHashJ(k + 1, FLUX_SALT_T) - fluxHashJ(k, FLUX_SALT_T)));
-  let depth = FLUX_DBAR * (1.0 + FLUX_SPREAD * fluxHashJ(k, FLUX_SALT_D));
+  let depth = dbar * (1.0 + FLUX_SPREAD * fluxHashJ(k, FLUX_SALT_D));
   let D = -FLUX_TAUD * log(1.0 - depth);
   if (dt < D) { return 1.0 - exp(-dt / FLUX_TAUD); }
   return depth * (gap - dt) / (gap - D);
 }
-// f = phi / mean(phi) at absolute time epoch + rel for slider s (s = 0: exactly 1).
-fn fluxRatioJ(epoch: f32, rel: f32, s: f32) -> f32 {
+// Flicker: unit-Gaussian lattice in time, 50 M cells (gaussT nodes), smoothstep weights renormalised, clipped
+// at +-3 (twin: fluxFlicker). The time is split into whole cells + remainder (exact at any epoch).
+fn fluxFlickerJ(epoch: f32, rel: f32) -> f32 {
+  let kc = splitPeriodJ(epoch, rel, FLUX_CELL_N);
+  let i = i32(kc.x); let f = smoothE(kc.y / FLUX_CELL_N); let w0 = 1.0 - f; let w1 = f;
+  let n = (w0 * gaussT(i, 0x0f1cu, 0, FLUX_SALT_N) + w1 * gaussT(i + 1, 0x0f1cu, 0, FLUX_SALT_N)) / sqrt(w0 * w0 + w1 * w1);
+  return clamp(n, -FLUX_CLIP, FLUX_CLIP);
+}
+// (dbar, eps, <d>) at spin a: linear in clamp(a, 0, 0.9) between the table rows (twin: fluxParams).
+fn fluxParamsJ(a: f32) -> vec3<f32> {
+  var tab = FLUX_TAB; // function-scope copy: dynamic indexing
+  let x = clamp(a, 0.0, 0.9) / 0.3; let i = min(u32(floor(x)), 2u); let w = x - f32(i);
+  let lo = vec3<f32>(tab[3u * i], tab[3u * i + 1u], tab[3u * i + 2u]);
+  let hi = vec3<f32>(tab[3u * i + 3u], tab[3u * i + 4u], tab[3u * i + 5u]);
+  return mix(lo, hi, w);
+}
+// f = Phi / <Phi> at absolute time epoch + rel, slider s, spin a (s = 0: exactly 1; twin: fluxRatio).
+fn fluxRatioJ(epoch: f32, rel: f32, s: f32, a: f32) -> f32 {
   if (s == 0.0) { return 1.0; }
+  let p = fluxParamsJ(a);
   let kl = splitPeriodJ(epoch, rel, FLUX_T);
-  return max(FLUX_FLOOR, 1.0 - s * fluxDeficitJ(kl.x, kl.y)) / (1.0 - s * FLUX_D1);
+  return max(FLUX_FLOOR, (1.0 - s * fluxDeficitJ(kl.x, kl.y, p.x)) * (1.0 + s * p.y * fluxFlickerJ(epoch, rel))) / (1.0 - s * p.z);
 }
 const GL6_X = array<f32, 6>(-0.9324695142031521, -0.6612093864662645, -0.2386191860831969, 0.2386191860831969, 0.6612093864662645, 0.9324695142031521);
 const GL6_W = array<f32, 6>(0.1713244923791704, 0.3607615730481386, 0.4679139345726910, 0.4679139345726910, 0.3607615730481386, 0.1713244923791704);
@@ -194,7 +215,7 @@ fn jetShapeJ(r: f32, th: f32, ph: f32, epoch: f32, rel: f32, jetLength: f32, flu
   // for any f (final review: running launchDelayJ first slowed the live trace ~30 %).
   if (r * sin(th) > JET_ENV_Q * funnelEdgeJ(z)) { return 0.0; }
   let relL = rel - launchDelayJ(z, g280);
-  let f = fluxRatioJ(epoch, relL, fluxVar); let sw = sqrt(f);
+  let f = fluxRatioJ(epoch, relL, fluxVar, a); let sw = sqrt(f);
   let rho = r * sin(th);
   let w = wallJ(rho / sw, z);
   if (w <= 0.0) { return 0.0; }
