@@ -2,7 +2,7 @@ struct Uniforms {
   res: vec2<f32>, a: f32, incl: f32, rObs: f32, fovScale: f32, rIn: f32, rOut: f32,
   Tpeak: f32, exposure: f32, time: f32, frame: u32, reset: u32, maxSteps: u32,
   blend: f32, timeScale: f32, turbAmp: f32, breatheAmp: f32, nSpots: u32,
-  jetStrength: f32, jetGamma: f32, jetLength: f32, jetKnots: f32,
+  jetStrength: f32, jetGamma: f32, jetLength: f32, fluxVar: f32,
   skyStrength: f32, outW: f32, outH: f32,
   jitterMode: u32, setIndex: u32, rowStart: u32, rowEnd: u32,
   lumNorm: f32,
@@ -212,9 +212,8 @@ fn shadeDisk(rHit: f32, phiHit: f32, g: f32, a: f32, tRel: f32) -> vec3<f32> {
 // emitter at coordinate time t_e is seen delay = -t_e - rObs later than a reference at the camera's
 // distance (the constant rObs keeps values in tens of M). Emission time of what this pixel shows:
 // U.time is the clock's remainder after the epoch U.timeEpoch (sim-clock.ts), so emitRel keeps full f32
-// precision per pixel at any session length; emitTime is the absolute time for the other time-dependent terms.
+// precision per pixel at any session length; every time-dependent term takes (U.timeEpoch, emitRel(...)).
 fn emitRel(delay: f32) -> f32 { return U.time - U.lightDelay * delay; }
-fn emitTime(delay: f32) -> f32 { return U.timeEpoch + emitRel(delay); }
 
 // The jet quadrature is a left Riemann sum along the ray with samples at most JET_DL apart,
 // independent of the geodesic stride: a step longer than JET_DL is split into n = ceil(dl / JET_DL)
@@ -231,17 +230,19 @@ const JET_NSUB_MAX = 32u;
 // geodesic cache bookmarks), so the two cannot disagree. Sample k of n sits at k/n along the
 // step's Cartesian chord; k = 0 is the step's start state itself.
 fn jetSubCount(dl: f32) -> u32 { return clamp(u32(ceil(dl / JET_DL)), 1u, JET_NSUB_MAX); }
-fn jetSample(s: State, p0: vec3<f32>, dvec: vec3<f32>, k: u32, n: u32) -> vec2<f32> {
-  if (k == 0u) { return vec2<f32>(s.x.y, s.x.z); }
+// Sample k of n: (r, theta, phi). k = 0 is the step's start state itself (its phi may be unwrapped; the
+// filaments use it modulo 2 pi); interior samples take phi from the chord's Cartesian point.
+fn jetSample(s: State, p0: vec3<f32>, dvec: vec3<f32>, k: u32, n: u32) -> vec3<f32> {
+  if (k == 0u) { return vec3<f32>(s.x.y, s.x.z, s.x.w); }
   let p = p0 + dvec * (f32(k) / f32(n));
   let r = length(p);
-  return vec2<f32>(r, acos(clamp(p.z / r, -1.0, 1.0)));
+  return vec3<f32>(r, acos(clamp(p.z / r, -1.0, 1.0)), atan2(p.y, p.x));
 }
-// Exact skip: the emitter lies inside |z| <= jetLength, rho <= 1.2 funnelEdge(jetLength), so a
+// Exact skip: the emitter lies inside |z| <= jetLength, rho <= JET_ENV_Q funnelEdge(jetLength), so a
 // chord whose closest approach to the hole is beyond that bounding sphere sees no jet (its first
 // sample, the only one when n = 1, is then outside too and jetShapeJ would return 0).
 fn jetChordMisses(p0: vec3<f32>, dvec: vec3<f32>) -> bool {
-  let fe = 1.2 * funnelEdgeJ(U.jetLength);
+  let fe = JET_ENV_Q * funnelEdgeJ(U.jetLength);
   let rJet = sqrt(U.jetLength * U.jetLength + fe * fe);
   let tc = clamp(-dot(p0, dvec) / dot(dvec, dvec), 0.0, 1.0);
   return length(p0 + dvec * tc) > rJet;
@@ -264,7 +265,7 @@ fn jetStep(s: State, sNew: State, dl: f32, accIn: JetOut) -> JetOut {
     let q = jetSample(s, p0, dvec, k, n);
     let f = f32(k) / f32(n);
     let tS = select(s.x.x + (sNew.x.x - s.x.x) * f, s.x.x, k == 0u);
-    let shape = jetShapeJ(q.x, q.y, emitTime(-tS - U.rObs), U.jetLength, U.jetKnots, U.jetGamma);
+    let shape = jetShapeJ(q.x, q.y, q.z, U.timeEpoch, emitRel(-tS - U.rObs), U.jetLength, U.fluxVar, U.jetGamma, U.a);
     if (shape > 0.0) {
       let D = plasmaShiftJ(q.x, q.y, mix(s.p, sNew.p, f), U.a, jetGammaAt(q.x * cos(q.y), U.jetGamma));
       if (D > 1e-6) {                                       // never divide by D -> 0
@@ -297,7 +298,7 @@ fn inJetEnvelope(r: f32, th: f32) -> bool {
   let z = r * cos(th);
   let az = abs(z);
   if (az < JET_ZBASE || az > U.jetLength) { return false; }
-  return r * sin(th) / funnelEdgeJ(z) <= 1.2;
+  return r * sin(th) / funnelEdgeJ(z) <= JET_ENV_Q;
 }
 
 // Pixel -> screen impact parameters (alpha, beta) in M with sub-pixel jitter. Shared by traceRay and

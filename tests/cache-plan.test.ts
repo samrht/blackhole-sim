@@ -25,7 +25,7 @@ describe("geometry key", () => {
     }
   });
   it("ignores shading-only inputs (time, exposure, jet strength, sky ...)", () => {
-    const withShading = { ...G, time: 99, exposure: 3, jetStrength: 0, jetGamma: 9, jetKnots: 0.1, skyStrength: 0.5, turbAmp: 0 } as GeometryInputs;
+    const withShading = { ...G, time: 99, exposure: 3, jetStrength: 0, jetGamma: 9, fluxVar: 0.1, skyStrength: 0.5, turbAmp: 0 } as GeometryInputs;
     expect(geometryKey(withShading)).toBe(geometryKey(G));
   });
 });

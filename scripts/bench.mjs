@@ -43,7 +43,7 @@ const out = await page.evaluate(async () => {
       resW: r.width, resH: r.height, outW: r.displayW ?? r.width, outH: r.displayH ?? r.height,
       a, incl: (72 * Math.PI) / 180, rObs: 1000, fovScale: 14, rIn, rOut: 40, Tpeak: 3e4, lumNorm: lumNormFor(3e4), lightDelay: 1, exposure: 1.6,
       time: f, frame: f, reset: f === 0 ? 1 : 0, maxSteps: 4800, blend: f === 0 ? 1 : 0.15, timeScale: 1,
-      turbAmp: 0.6, breatheAmp: 0, nSpots: 3, jetStrength: 1, jetGamma: 2, jetLength: 60, jetKnots: 0.7,
+      turbAmp: 0.6, breatheAmp: 0, nSpots: 3, jetStrength: 1, jetGamma: 2, jetLength: 60, fluxVar: 1,
       skyStrength: 0, jetB0: J.jetB0, jetQ0: J.jetQ0, rgCm: J.rgCm,
     });
     r.frame(u(0)); await r.device.queue.onSubmittedWorkDone(); // warm-up: pipeline compile

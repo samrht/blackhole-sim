@@ -85,7 +85,7 @@ structural ${res.structural ? "ok" : "FAILED"} — centred dark shadow=${res.has
   let geoKey = "", cachedFrame = 0, wasCached = false, liveScale = r.scale;
   let dtEma = 0, lastFpsShow = 0; // display rate (what the user sees): EMA of rAF deltas, shown <= 2x/s
 
-  const state = { a: 0.9, incl: 72, exposure: -1.0, timeScale: 1.0, flicker: FLICKER_DEFAULT, breatheAmp: 0.0, playing: true, flareScale: 0.0, jetOn: true, jetGamma: 2.0, jetEta: ETA_DEFAULT, jetLength: 60.0, jetKnots: 0.7, skyStrength: 1.0, maxSteps: 4800, massSun: CUSTOM_DEFAULT.massSun, lambda: CUSTOM_DEFAULT.lambda, lightDelay: true };
+  const state = { a: 0.9, incl: 72, exposure: -1.0, timeScale: 1.0, flicker: FLICKER_DEFAULT, breatheAmp: 0.0, playing: true, flareScale: 0.0, jetOn: true, jetGamma: 2.0, jetEta: ETA_DEFAULT, jetLength: 60.0, fluxVar: 1.0, skyStrength: 1.0, maxSteps: 4800, massSun: CUSTOM_DEFAULT.massSun, lambda: CUSTOM_DEFAULT.lambda, lightDelay: true };
   const SPEED = 20;        // coordinate-time M per real second at Motion 1 (Motion = playback speed)
   const EMA_BLEND = 0.15;  // trailing-window weight while animating
   let simTime = 0, lastNow = 0;
@@ -106,10 +106,10 @@ structural ${res.structural ? "ok" : "FAILED"} — centred dark shadow=${res.has
   let phys: Readouts = computeReadouts(state, SPEED);
   // The jet's field scale, energy-budget density scale and r_g (spec 2026-10-02); ~20 ms, so it is
   // recomputed only when one of its inputs changed (refreshPhysics also runs for the Motion slider).
-  let jetU = jetUniforms(state.massSun, state.a, state.lambda, state.jetEta, state.jetLength, state.jetGamma, state.jetKnots), jetKey = "";
+  let jetU = jetUniforms(state.massSun, state.a, state.lambda, state.jetEta, state.jetLength, state.jetGamma, state.fluxVar), jetKey = "";
   const refreshJet = () => {
-    const k = `${state.massSun}|${state.a}|${state.lambda}|${state.jetEta}|${state.jetLength}|${state.jetGamma}|${state.jetKnots}`;
-    if (k !== jetKey) { jetKey = k; jetU = jetUniforms(state.massSun, state.a, state.lambda, state.jetEta, state.jetLength, state.jetGamma, state.jetKnots); }
+    const k = `${state.massSun}|${state.a}|${state.lambda}|${state.jetEta}|${state.jetLength}|${state.jetGamma}|${state.fluxVar}`;
+    if (k !== jetKey) { jetKey = k; jetU = jetUniforms(state.massSun, state.a, state.lambda, state.jetEta, state.jetLength, state.jetGamma, state.fluxVar); }
   };
   const refreshPhysics = () => { phys = computeReadouts(state, SPEED); refreshJet(); };
 
@@ -170,7 +170,7 @@ structural ${res.structural ? "ok" : "FAILED"} — centred dark shadow=${res.has
     reset(); // clean restart (play) or fresh convergence to a still (pause)
   });
 
-  const jg = $("jg") as HTMLInputElement, jk = $("jk") as HTMLInputElement, jgv = $("jgv"), jkv = $("jkv");
+  const jg = $("jg") as HTMLInputElement, fv = $("fv") as HTMLInputElement, jgv = $("jgv"), fvv = $("fvv");
   // Jet on/off and its efficiency eta (cooled-jet spec): the fraction of the jet power its electrons radiate.
   const jeton = $("jeton") as HTMLInputElement, jeteff = $("jeteff") as HTMLInputElement, jeteffv = $("jeteffv");
   const showEff = () => { jeteffv.textContent = state.jetEta.toExponential(1); };
@@ -180,7 +180,8 @@ structural ${res.structural ? "ok" : "FAILED"} — centred dark shadow=${res.has
   showEff();
   // the energy budget depends on Gamma (its density in the zero-angular-momentum frame), so this is a physics change
   jg.addEventListener("input", () => { state.jetGamma = +jg.value; jgv.textContent = state.jetGamma.toFixed(1); physicsChanged(); });
-  jk.addEventListener("input", () => { state.jetKnots = +jk.value; jkv.textContent = state.jetKnots.toFixed(2); reset(); });
+  // physicsChanged, not reset: the energy budget q0 depends on the slider (time-averaged power, spec 2.4).
+  fv.addEventListener("input", () => { state.fluxVar = +fv.value; fvv.textContent = state.fluxVar.toFixed(2); physicsChanged(); });
 
   // --- Object presets, Mass and Accretion (spec 2026-10-01) ---------------------------------
   const presetSel = $("preset") as HTMLSelectElement, pcap = $("pcap");
@@ -301,7 +302,7 @@ structural ${res.structural ? "ok" : "FAILED"} — centred dark shadow=${res.has
       blend, timeScale: state.timeScale, turbAmp: sigmaForFlicker(state.flicker),
       breatheAmp: state.breatheAmp, nSpots: baseSpots.length,
       jetStrength: state.jetOn ? 1 : 0, jetGamma: state.jetGamma, jetB0: jetU.jetB0, jetQ0: jetU.jetQ0, rgCm: jetU.rgCm,
-      jetLength: state.jetLength, jetKnots: state.jetKnots,
+      jetLength: state.jetLength, fluxVar: state.fluxVar,
       skyStrength: skyReady ? state.skyStrength : 0, setIndex,
     };
     r.frame(u, {
