@@ -56,10 +56,13 @@ export function mixHash(n: number): number {
 export function hash4(ix: number, iy: number, gen: number, salt: number): number {
   return mixHash((Math.imul(ix >>> 0, 1973) + Math.imul(iy >>> 0, 9277) + Math.imul(gen >>> 0, 26699) + Math.imul(salt >>> 0, 59359)) >>> 0);
 }
+/** Box-Muller angle, shifted by pi into [-pi, pi]: cos(2 pi u2) = -cos(boxMullerAngle(u2)). WGSL guarantees
+ *  cos to 2^-11 absolute only on [-pi, pi], so both twins use this range (final review, 2026-10-03). */
+export function boxMullerAngle(u2: number): number { return Math.PI * (2 * u2 - 1); }
 /** Standard normal from two u32 hashes (Box-Muller); u1 is offset by half a step so it is never 0. */
 export function boxMuller(h1: number, h2: number): number {
   const u1 = ((h1 & 0xffffff) + 0.5) / 16777216, u2 = (h2 & 0xffffff) / 16777216;
-  return Math.sqrt(-2 * Math.log(u1)) * Math.cos(TWO_PI * u2);
+  return -Math.sqrt(-2 * Math.log(u1)) * Math.cos(boxMullerAngle(u2));
 }
 function gaussNode(ix: number, iy: number, gen: number, salt: number): number {
   const h1 = hash4(ix, iy, gen, salt);

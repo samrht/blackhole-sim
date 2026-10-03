@@ -36,7 +36,8 @@ fn gaussT(ix: i32, iy: u32, gen: i32, salt: u32) -> f32 {
   let h1 = hash4T(ix, iy, gen, salt); let h2 = mixT(h1 ^ 0x9e3779b9u);
   let u1 = (f32(h1 & 0xffffffu) + 0.5) / 16777216.0;  // f32 may round the top value to 1: log -> 0, finite
   let u2 = f32(h2 & 0xffffffu) / 16777216.0;
-  return sqrt(max(0.0, -2.0 * log(u1))) * cos(TWO_PI_E * u2);
+  // cos(2 pi u2) = -cos(pi (2 u2 - 1)): the argument stays in [-pi, pi], where WGSL bounds cos to 2^-11.
+  return -sqrt(max(0.0, -2.0 * log(u1))) * cos(0.5 * TWO_PI_E * (2.0 * u2 - 1.0));
 }
 fn turbOctaveT(r: f32, phi: f32, t0: f32, tRel: f32, a: f32, cellEta: f32, cellsPhi: u32, salt: u32) -> f32 {
   let x = log(r) / cellEta; let i0 = i32(floor(x)); let fx = smoothE(x - floor(x));

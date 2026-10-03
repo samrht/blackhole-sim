@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { turbulenceAt, boxMuller, TURB } from "../src/physics/emission";
+import { turbulenceAt, boxMuller, boxMullerAngle, TURB } from "../src/physics/emission";
 import { omegaKepler, iscoRadius } from "../src/physics/orbits";
 
 const TWO_PI = 2 * Math.PI, A = 0.9;
@@ -109,6 +109,13 @@ describe("MRI turbulence field (spec 2026-10-03)", () => {
     }
   });
 
+  it("Box-Muller's cosine argument stays in [-pi, pi], where WGSL guarantees cos to 2^-11 absolute", () => {
+    for (const u2 of [0, 0.25, 0.5, 0.75, 1 - 2 ** -24]) {
+      const t = boxMullerAngle(u2);
+      expect(t).toBeGreaterThanOrEqual(-Math.PI); expect(t).toBeLessThanOrEqual(Math.PI);
+      expect(-Math.cos(t)).toBeCloseTo(Math.cos(2 * Math.PI * u2), 12); // the same angle, shifted by pi
+    }
+  });
   it("structure sizes: variance spectra peak at lambda_phi = 25 deg and lambda_eta = 0.26 (de-sheared, SKH06)", () => {
     const rand = rng(3), N = 512, span = 6, eta0 = Math.log(6), slope = -0.9 * Math.PI;
     const Pphi = new Array(N / 2 + 1).fill(0), Peta = new Array(N / 2 + 1).fill(0);
