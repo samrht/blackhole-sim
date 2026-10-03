@@ -1,7 +1,7 @@
 # Horizon-flux statistics done right — design
 
 **Date:** 2026-10-03
-**Status:** design approved in conversation 2026-10-03; this document awaits review
+**Status:** approved 2026-10-03; implemented on feat/flux-statistics (plan `docs/plans/2026-10-03-flux-statistics.md`)
 **Follows:** `docs/specs/2026-10-03-jet-flux-knots-design.md` (follow-up 1 of 3: "spin-dependent flux statistics").
 
 ## 1. Why (two calibration errors in the shipped jet knots)
