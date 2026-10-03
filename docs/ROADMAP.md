@@ -49,8 +49,11 @@ this file is the queue. Each item gets its own spec (and plan) before code, as e
   replaced by the imprint of a MAD's horizon-flux history (eruptions every ~1500 M, 500 M drop e-folding, 20.9 %
   swing), launched at the base and carried by the plasma, plus filaments frozen into the moving, rotating plasma
   (README "Jet knots from horizon-flux variability"). Follow-ups: ~~spin-dependent flux statistics~~ done 2026-10-03 (absolute flux Φ, windowed
-  modulation index — spin-independent per the source — eruptions × fast flicker; README "Correction: horizon-flux statistics"); shell collisions (internal shocks proper) beyond the 60 M view; coupling the eruptions to
-  the disk (Ṁ drop, hot spots).
+  modulation index — spin-independent per the source — eruptions × fast flicker; README "Correction: horizon-flux statistics"); shell collisions (internal shocks proper) beyond the 60 M view; ~~coupling the eruptions
+  to the disk~~ SHELVED 2026-10-04: physically anchored eruption flares (flux tubes, Sgr A* NIR-flare energy) are
+  ~3e-4 of this app's thin-disk visible light for M87* and Sgr A* (invisible) and 100-200x too bright for X-ray
+  binaries; the observed flares belong to hot flows, which the app does not model (spec and code on the unmerged
+  branch feat/eruption-flares).
 
 ## Open questions from the presets work
 
