@@ -7,7 +7,9 @@ import { turbulenceAt } from "../physics/emission";
 import turbParityWGSL from "../render/turb-parity.wgsl?raw";
 import emissionSharedWGSL from "../render/emission-shared.wgsl?raw";
 import jetParityWGSL from "../render/jet-parity.wgsl?raw";
-import { jetShape } from "../physics/jet";
+import fluxParityWGSL from "../render/flux-parity.wgsl?raw";
+import { fluxRatio } from "../physics/flux-history";
+import { jetShape, launchDelay, comovingAzimuth, filaments } from "../physics/jet";
 import { plasmaShift, streamlineDir, gammaProfile, jetField, jetCoeffs, flowTime, slabStep, JET_BANDS_NM, C_CGS, LN_K0 } from "../physics/synchrotron";
 import { parseTable } from "../physics/cyclosynch";
 import { classify, criticalXiEta, photonShellRange } from "../physics/shadow";
@@ -21,7 +23,7 @@ import integratorParityWGSL from "../render/integrator-parity.wgsl?raw";
 
 /** Runs the WGSL metric/orbit/g-factor helpers on fixed inputs and returns the max relative
  *  error vs the TypeScript core. f32 GPU vs f64 CPU keeps this in the ~1e-6..1e-4 range. */
-export async function runParity(): Promise<{ maxErr: number; rows: number; jetLogErr: number; turbErr: number; turbWorst: string; turbRough: { gpu: number; old: number; cpu: number } }> {
+export async function runParity(): Promise<{ maxErr: number; rows: number; jetLogErr: number; turbErr: number; turbWorst: string; turbRough: { gpu: number; old: number; cpu: number }; fluxErr: number; fluxWorst: string }> {
   const cases = [
     { r: 8, th: Math.PI / 2, a: 0.0, xi: 3 }, { r: 6, th: 1.2, a: 0.5, xi: 2 },
     { r: 12, th: Math.PI / 2, a: 0.9, xi: -4 }, { r: 20, th: 0.9, a: 0.99, xi: 5 },
@@ -115,7 +117,8 @@ export async function runParity(): Promise<{ maxErr: number; rows: number; jetLo
   const synchTex = device.createTexture({ size: [T.nx, T.ns], format: "rg32float", usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
   device.queue.writeTexture({ texture: synchTex }, T.data, { bytesPerRow: T.nx * 8 }, [T.nx, T.ns]);
   const JETS = [{ b0: 632.39, rg: 9.5984e14, q0: 1.8049e-9 }, { b0: 3.7838e8, rg: 3.1305e6, q0: 0.86887 }]; // M87*, Cyg X-1 at ETA_DEFAULT
-  const J_LEN = 60, J_KNOTS = 0.7, T_EM = 1.7;
+  // The GPU gets the emission time as clock epoch + f32 remainder; the CPU uses the same f32-rounded remainder.
+  const J_LEN = 60, J_FLUX = 1, T_EM = Math.fround(1.7), J_EPOCH = 2048 * 3;
   type JCase = { s: Float64Array; a: number; g280: number; jet: number; ds: number };
   const jcases: JCase[] = [];
   const rays: [number, number, number, number, number, number][] = [ // alpha, beta, a, incl (rad), g280, jet
@@ -125,18 +128,18 @@ export async function runParity(): Promise<{ maxErr: number; rows: number; jetLo
   ];
   const planeCoeffs = (s: Float64Array, a: number, g280: number, jet: number, nm: number, D: number) => {
     const r = s[1], th = s[2], z = r * Math.cos(th), J = JETS[jet], B = jetField(r * Math.sin(th), z, a, J.b0);
-    const sc = Math.exp(LN_K0) * B * B * flowTime(z, g280, J.rg), shape = jetShape(r, th, T_EM, J_LEN, J_KNOTS, g280);
+    const sc = Math.exp(LN_K0) * B * B * flowTime(z, g280, J.rg), shape = jetShape(r, th, s[3], J_EPOCH + T_EM, J_LEN, J_FLUX, g280, a);
     return jetCoeffs(T, (C_CGS / (nm * 1e-7)) * D, B, sc, J.q0, shape);
   };
   for (const [al, be, a, inc, g280, jet] of rays) {
     let s = screenToState(al, be, a, inc, 1000);
     const rh = 1 + Math.sqrt(1 - a * a);
-    for (let k = 0; k < 20000 && jetShape(s[1], s[2], T_EM, J_LEN, J_KNOTS, g280) <= 0; k++) {
+    for (let k = 0; k < 20000 && jetShape(s[1], s[2], s[3], J_EPOCH + T_EM, J_LEN, J_FLUX, g280, a) <= 0; k++) {
       const out = stepGeodesic(s, a, stepSize(s, rh, 40), s[1] > 60 ? H_TOL_FAR : H_TOL);
       if (!out.ok || out.s[1] <= rh * 1.005 || out.s[1] > 1200) break;
       s = out.s;
     }
-    if (jetShape(s[1], s[2], T_EM, J_LEN, J_KNOTS, g280) <= 0) throw new Error(`jet parity: ray (${al}, ${be}) never entered the jet`);
+    if (jetShape(s[1], s[2], s[3], J_EPOCH + T_EM, J_LEN, J_FLUX, g280, a) <= 0) throw new Error(`jet parity: ray (${al}, ${be}) never entered the jet`);
     // ds from this sample's own 550 nm absorption: the two slab steps are genuinely thin (dtau = 0.01) or thick (20)
     const D0 = plasmaShift(s, a, gammaProfile(s[1] * Math.cos(s[2]), g280), ...streamlineDir(s[1], s[2]));
     const al0 = planeCoeffs(s, a, g280, jet, 550, D0)[1];
@@ -145,7 +148,7 @@ export async function runParity(): Promise<{ maxErr: number; rows: number; jetLo
   const J_IN = 16, J_OUT = 12;
   const jin = device.createBuffer({ size: jcases.length * J_IN * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
   const jarr = new Float32Array(jcases.length * J_IN);
-  jcases.forEach((c, i) => { const J = JETS[c.jet]; jarr.set([...c.s.slice(0, 8), c.a, c.g280, T_EM, c.ds, J.b0, J.q0, J.rg, 0], i * J_IN); });
+  jcases.forEach((c, i) => { const J = JETS[c.jet]; jarr.set([...c.s.slice(0, 8), c.a, c.g280, T_EM, c.ds, J.b0, J.q0, J.rg, J_EPOCH], i * J_IN); });
   device.queue.writeBuffer(jin, 0, jarr);
   const jout = device.createBuffer({ size: jcases.length * J_OUT * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
   const jread = device.createBuffer({ size: jcases.length * J_OUT * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
@@ -166,7 +169,7 @@ export async function runParity(): Promise<{ maxErr: number; rows: number; jetLo
     const s = Float64Array.from(jarr.subarray(i * J_IN, i * J_IN + 8)); // the same f32-rounded inputs the GPU got
     const r = s[1], th = s[2], z = r * Math.cos(th);
     const D = plasmaShift(s, c.a, gammaProfile(z, c.g280), ...streamlineDir(r, th));
-    const shape = jetShape(r, th, T_EM, J_LEN, J_KNOTS, c.g280);
+    const shape = jetShape(r, th, s[3], J_EPOCH + T_EM, J_LEN, J_FLUX, c.g280, c.a);
     const ja = JET_BANDS_NM.map((nm) => planeCoeffs(s, c.a, c.g280, c.jet, nm, D));
     const ds = jarr[i * J_IN + 11];
     const slab = (b: number) => { let I = 0, tau = 0; const j = ja[b][0] / D ** 3;
@@ -421,5 +424,40 @@ export async function runParity(): Promise<{ maxErr: number; rows: number; jetLo
     "cpu dl0", icases.map((c) => cpuStep(c).dl0.toPrecision(6)),
     "gpu dl0", icases.map((_, i) => igpu[i * OUT_F + 12].toPrecision(6)),
     "state relErr", icases.map((c, i) => { const { out } = cpuStep(c); let e = 0; for (let k = 0; k < c.nCmp; k++) e = Math.max(e, Math.abs(igpu[i * OUT_F + k] - out.s[k]) / (1 + Math.abs(out.s[k]))); return e.toExponential(2); }));
-  return { maxErr, rows: cases.length + tcases.length + jcases.length + scases.length + ccases.length + icases.length, jetLogErr, turbErr, turbWorst, turbRough };
+  // --- flux history / launch delay / co-moving azimuth / filaments (CPU flux-history.ts + jet.ts vs the SHIPPED
+  // emission-shared.wgsl). Epochs up to 2048 x 8000 (~16 M M: hours of play, Review Focus 1); rel spans eruption
+  // drops and refills and negative launch remainders; both lobes; spins 0, 0.9, 0.998.
+  const fcases: number[][] = [];
+  for (const epoch of [0, 2048 * 7, 2048 * 5000, 2048 * 8000])
+    for (const rel of [-900.5, 13.25, 377.75, 1024.5, 1999.875])
+      for (const [z, g, q, ph, a, s] of [[5, 2, 0.8, 0.3, 0.9, 1], [-40, 5, 1.1, -7.2, 0.998, 1.4], [59, 1.5, 0.2, 12.9, 0, 0.5]])
+        fcases.push([epoch, rel, z, g, q, ph, a, s]);
+  const farr = new Float32Array(fcases.length * 8);
+  fcases.forEach((c, i) => farr.set(c, i * 8));
+  const fin = device.createBuffer({ size: farr.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+  device.queue.writeBuffer(fin, 0, farr);
+  const fout = device.createBuffer({ size: fcases.length * 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
+  const fread = device.createBuffer({ size: fcases.length * 16, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+  const fmod = device.createShaderModule({ code: integratorSharedWGSL + emissionSharedWGSL + fluxParityWGSL });
+  const fpipe = device.createComputePipeline({ layout: "auto", compute: { module: fmod, entryPoint: "main" } });
+  const fbind = device.createBindGroup({ layout: fpipe.getBindGroupLayout(0), entries: [
+    { binding: 0, resource: { buffer: fin } }, { binding: 1, resource: { buffer: fout } }] });
+  const fenc = device.createCommandEncoder();
+  const fcp = fenc.beginComputePass(); fcp.setPipeline(fpipe); fcp.setBindGroup(0, fbind); fcp.dispatchWorkgroups(fcases.length); fcp.end();
+  fenc.copyBufferToBuffer(fout, 0, fread, 0, fcases.length * 16);
+  device.queue.submit([fenc.finish()]);
+  await fread.mapAsync(GPUMapMode.READ);
+  const fgpu = new Float32Array(fread.getMappedRange().slice(0));
+  let fluxErr = 0, fluxWorst = "";
+  fcases.forEach((_, i) => {
+    const [epoch, rel, z, g, q, ph, a, s] = Array.from(farr.subarray(i * 8, i * 8 + 8)); // f32-rounded, as the GPU got
+    const t = epoch + rel, tau = launchDelay(z, g);
+    // Errors: absolute on f and filaments (bounded ~0.2-1.6 and 0.65-1.35), relative on tau, absolute on the azimuth.
+    const want = [fluxRatio(t, s), tau, comovingAzimuth(ph, z, a, g), filaments(q, ph, t)];
+    const tol = [2e-3, 1e-4 * Math.max(1, tau), 2e-3, 2e-3];
+    for (let k = 0; k < 4; k++) { const e = Math.abs(fgpu[i * 4 + k] - want[k]) / tol[k];
+      if (e > fluxErr) { fluxErr = e; fluxWorst = `case ${i} out ${k}: gpu ${fgpu[i * 4 + k]} cpu ${want[k]}`; } }
+  });
+  console.log("flux parity worst (|err| / tol)", fluxErr.toExponential(2), fluxWorst);
+  return { maxErr, rows: cases.length + tcases.length + jcases.length + scases.length + ccases.length + icases.length + fcases.length, jetLogErr, turbErr, turbWorst, turbRough, fluxErr, fluxWorst };
 }

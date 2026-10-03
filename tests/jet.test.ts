@@ -1,7 +1,9 @@
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   JET, funnelEdge, wallProfile, lengthFalloff, jetShape, inJetEnvelope, FILAMENT, JET_ENV_Q, vnoise3, filaments,
-  launchDelay, fieldLineOmega, comovingAzimuth, gammaProfile,
+  launchDelay, fieldLineOmega, comovingAzimuth, gammaProfile, GL6,
 } from "../src/physics/jet";
 import { FLUX, fluxRatio } from "../src/physics/flux-history";
 
@@ -126,5 +128,23 @@ describe("plasma travel time and co-moving azimuth (spec 2.3, 2.5 + corrections)
     expect(fieldLineOmega(0)).toBe(0);
     expect(fieldLineOmega(0.9)).toBeCloseTo(0.9 / (4 * (1 + Math.sqrt(1 - 0.81))), 12);
     expect(comovingAzimuth(1.0, 30, 0, 2)).toBe(1.0);
+  });
+});
+
+const WGSL_E = readFileSync(join(__dirname, "../src/render/emission-shared.wgsl"), "utf8");
+const wconst = (name: string) => { const m = WGSL_E.match(new RegExp(`const ${name}\\s*=\\s*([^;]+);`)); if (!m) throw new Error(`no ${name}`); return m[1]; };
+describe("emission-shared.wgsl flux/filament constants match the CPU twins", () => {
+  it("flux generator, filaments, envelope, Gauss nodes", () => {
+    const pairs: [string, number][] = [["FLUX_T", FLUX.T], ["FLUX_JIT", FLUX.jitter], ["FLUX_TAUD", FLUX.tauD],
+      ["FLUX_SPREAD", FLUX.spread], ["FLUX_FLOOR", FLUX.floor], ["FLUX_DBAR", FLUX.dbar], ["FLUX_D1", FLUX.d1],
+      ["FLUX_SALT_T", FLUX.saltT], ["FLUX_SALT_D", FLUX.saltD], ["FIL_AMP", FILAMENT.amp], ["FIL_CELL_T", FILAMENT.cellT],
+      ["FIL_CELLS_PHI", FILAMENT.cellsPhi], ["FIL_CELLS_Q", FILAMENT.cellsQ], ["FIL_SALT", FILAMENT.salt], ["JET_ENV_Q", JET_ENV_Q]];
+    // Number() parses decimals and the hex salts (0x464c); WGSL's u suffix is stripped first.
+    for (const [n, v] of pairs) expect(Math.abs(Number(wconst(n).trim().replace(/u$/, "")) - v)).toBeLessThan(1e-7 * Math.max(1, Math.abs(v)));
+    const nodes = wconst("GL6_X").match(/-?\d+\.\d+/g)!.map(Number), wts = wconst("GL6_W").match(/-?\d+\.\d+/g)!.map(Number);
+    GL6.forEach(([x, w], i) => { expect(nodes[i]).toBeCloseTo(x, 7); expect(wts[i]).toBeCloseTo(w, 7); });
+  });
+  it("the old knot and churn noise is gone from the shared jet code", () => {
+    expect(WGSL_E).not.toMatch(/knotsJ|JET_KZ|JET_TURB|JET_SEED/);
   });
 });

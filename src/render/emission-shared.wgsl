@@ -4,21 +4,7 @@
 // no bindings; the jet code uses State/gUp and the turbulence omegaKep from integrator-shared.wgsl, which both
 // prepend too.
 
-// --- Value noise (the jet's knots and churn) -----------------------------------------------------------------
-fn ihashE(ix: i32, iy: i32) -> f32 {
-  var n = u32(ix) * 1973u + u32(iy) * 9277u;
-  n = (n ^ (n >> 15u)) * 2246822519u;
-  n = (n ^ (n >> 13u)) * 3266489917u;
-  return f32(n & 0xffffffu) / f32(0xffffffu);
-}
 fn smoothE(t: f32) -> f32 { return t * t * (3.0 - 2.0 * t); }
-fn vnoiseE(x: f32, y: f32) -> f32 {
-  let ix = i32(floor(x)); let iy = i32(floor(y));
-  let fx = smoothE(x - floor(x)); let fy = smoothE(y - floor(y));
-  let a00 = ihashE(ix, iy); let a10 = ihashE(ix + 1, iy);
-  let a01 = ihashE(ix, iy + 1); let a11 = ihashE(ix + 1, iy + 1);
-  return (a00 * (1.0 - fx) + a10 * fx) * (1.0 - fy) + (a01 * (1.0 - fx) + a11 * fx) * fy;
-}
 const TWO_PI_E = 6.283185307179586;
 // --- MRI turbulence (spec 2026-10-03; twin: turbulenceAt in src/physics/emission.ts) ------------------
 // Unit-Gaussian lattice field on (ln r, phi) in overlapping generations frozen into the Keplerian flow;
@@ -75,8 +61,7 @@ fn turbulenceFieldE(r: f32, phi: f32, t0: f32, tRel: f32, a: f32) -> f32 {
 // --- Tier 2B jet geometry -------------------------------------------------------------------
 const JET_QPEAK = 0.8;   const JET_WWALL = 0.22;
 const JET_RHO0  = 0.6;   const JET_SLOPE = 0.7;
-const JET_ZBASE = 2.0;   const JET_KZ    = 0.35;
-const JET_TURB  = 0.35;  const JET_SEED  = 17.0;
+const JET_ZBASE = 2.0;
 
 fn smoothstepJ(a: f32, b: f32, x: f32) -> f32 {
   let t = clamp((x - a) / (b - a), 0.0, 1.0);
@@ -96,12 +81,6 @@ fn lengthFalloffJ(z: f32, zMax: f32) -> f32 {
   let decay = JET_ZBASE / max(az, JET_ZBASE);
   return fadeIn * fadeOut * decay;
 }
-fn knotsJ(z: f32, t: f32, gamma: f32, knotAmp: f32) -> f32 {
-  // Knots move with the flow at beta(Gamma) < c (twin: knots in jet.ts); t is the emission time.
-  let beta = sqrt(max(0.0, 1.0 - 1.0 / (gamma * gamma)));
-  let phase = JET_KZ * (abs(z) - beta * t);
-  return 1.0 + knotAmp * (vnoiseE(phase, JET_SEED) - 0.5) * 2.0;
-}
 // --- Tier 2B synchrotron jet (specs 2026-10-02; twin: src/physics/synchrotron.ts): bands, colour, flow,
 // shift, density shape; tests/synchrotron.test.ts checks every literal against the CPU twin. ------------
 const JET_LNNU = vec3<f32>(34.13261924, 33.93194855, 33.76489446);   // ln nu at 450, 550, 650 nm
@@ -113,6 +92,80 @@ const GAMMA_REF_Z = 280.0; const GAMMA_SLOPE = 0.58;
 fn jetGammaAt(z: f32, g280: f32) -> f32 {
   let ub = sqrt(max(0.0, g280 * g280 - 1.0)) * pow(max(abs(z), 1e-6) / GAMMA_REF_Z, GAMMA_SLOPE);
   return sqrt(1.0 + ub * ub);
+}
+// --- Horizon-flux history and launch time (spec 2026-10-03 jet flux knots; twins: flux-history.ts, jet.ts) ----
+const FLUX_T = 1500.0; const FLUX_JIT = 0.33333334; const FLUX_TAUD = 500.0; const FLUX_SPREAD = 0.5;
+const FLUX_FLOOR = 0.05; const FLUX_DBAR = 0.5058; const FLUX_D1 = 0.262371;
+const FLUX_SALT_T = 0x464cu; const FLUX_SALT_D = 0x4458u;
+const JET_ENV_Q = 1.51;   // envelope bound on rho / rho_f: 1.2 x the widest flux-driven width (jet.ts JET_ENV_Q)
+// Absolute time epoch + rel as (whole periods k, remainder in [0, P)): the epoch is a multiple of 2048, so for
+// an integer P both epoch and kE P are exact f32 integers below 2^24 and the remainder keeps rel's precision.
+fn splitPeriodJ(epoch: f32, rel: f32, P: f32) -> vec2<f32> {
+  let kE = floor(epoch / P);
+  let x = (epoch - kE * P) + rel;
+  let kl = floor(x / P);
+  return vec2<f32>(kE + kl, x - kl * P);
+}
+fn fluxHashJ(k: i32, salt: u32) -> f32 { return f32(hash4T(k, 0x7a11u, 0, salt) & 0xffffffu) / 16777216.0 - 0.5; }
+fn fluxDeficitJ(kf: f32, loc: f32) -> f32 {
+  var k = i32(kf);
+  var dt = loc - FLUX_T * (0.5 + FLUX_JIT * fluxHashJ(k, FLUX_SALT_T));
+  if (dt < 0.0) { k = k - 1; dt = loc + FLUX_T - FLUX_T * (0.5 + FLUX_JIT * fluxHashJ(k, FLUX_SALT_T)); }
+  let gap = FLUX_T * (1.0 + FLUX_JIT * (fluxHashJ(k + 1, FLUX_SALT_T) - fluxHashJ(k, FLUX_SALT_T)));
+  let depth = FLUX_DBAR * (1.0 + FLUX_SPREAD * fluxHashJ(k, FLUX_SALT_D));
+  let D = -FLUX_TAUD * log(1.0 - depth);
+  if (dt < D) { return 1.0 - exp(-dt / FLUX_TAUD); }
+  return depth * (gap - dt) / (gap - D);
+}
+// f = phi / mean(phi) at absolute time epoch + rel for slider s (s = 0: exactly 1).
+fn fluxRatioJ(epoch: f32, rel: f32, s: f32) -> f32 {
+  if (s == 0.0) { return 1.0; }
+  let kl = splitPeriodJ(epoch, rel, FLUX_T);
+  return max(FLUX_FLOOR, 1.0 - s * fluxDeficitJ(kl.x, kl.y)) / (1.0 - s * FLUX_D1);
+}
+const GL6_X = array<f32, 6>(-0.9324695142031521, -0.6612093864662645, -0.2386191860831969, 0.2386191860831969, 0.6612093864662645, 0.9324695142031521);
+const GL6_W = array<f32, 6>(0.1713244923791704, 0.3607615730481386, 0.4679139345726910, 0.4679139345726910, 0.3607615730481386, 0.1713244923791704);
+// Coordinate time for plasma to climb from z_base to |z| (6-point Gauss in v = z^(1-p); twin: launchDelay).
+fn launchDelayJ(z: f32, g280: f32) -> f32 {
+  let az = abs(z);
+  if (az <= JET_ZBASE) { return 0.0; }
+  let A = sqrt(max(1e-12, g280 * g280 - 1.0)) / pow(GAMMA_REF_Z, GAMMA_SLOPE);
+  let e = 2.0 * GAMMA_SLOPE / (1.0 - GAMMA_SLOPE);
+  let v0 = pow(JET_ZBASE, 1.0 - GAMMA_SLOPE); let v1 = pow(az, 1.0 - GAMMA_SLOPE);
+  let h = 0.5 * (v1 - v0); let m = 0.5 * (v1 + v0);
+  // Function-scope copies: WGSL guarantees dynamic indexing for var arrays.
+  var xs = GL6_X; var ws = GL6_W;
+  var s = 0.0;
+  for (var i = 0; i < 6; i++) { s += ws[i] * sqrt(1.0 + A * A * pow(m + h * xs[i], e)); }
+  return s * h / (A * (1.0 - GAMMA_SLOPE));
+}
+fn fieldLineOmegaJ(a: f32) -> f32 { return a / (4.0 * (1.0 + sqrt(max(0.0, 1.0 - a * a)))); }
+fn comovingAzimuthJ(ph: f32, z: f32, a: f32, g280: f32) -> f32 {
+  let az = abs(z);
+  if (az <= JET_ZBASE) { return ph; }
+  return ph - fieldLineOmegaJ(a) * (launchDelayJ(z, g280) - (az - JET_ZBASE));
+}
+// --- Filaments frozen into the moving plasma (spec 2.5; twin: filaments in jet.ts) ---------------------------
+const FIL_AMP = 0.35; const FIL_CELL_T = 25.0; const FIL_CELLS_PHI = 8u; const FIL_CELLS_Q = 2.5; const FIL_SALT = 0x46494cu;
+fn node3J(ix: i32, iy: u32, iw: i32) -> f32 { return f32(hash4T(ix, iy, iw, FIL_SALT) & 0xffffffu) / 16777216.0; }
+// Value noise on (ix + fx, y periodic in FIL_CELLS_PHI, w); x is passed split (time cell index + fraction).
+fn vnoise3J(ix: i32, fx0: f32, y: f32, w: f32) -> f32 {
+  let iyf = floor(y); let iw = i32(floor(w));
+  let fx = smoothE(fx0); let fy = smoothE(y - iyf); let fw = smoothE(w - floor(w));
+  let y0 = u32(iyf) % FIL_CELLS_PHI; let y1 = (y0 + 1u) % FIL_CELLS_PHI;
+  var v = 0.0;
+  for (var c = 0u; c < 8u; c++) {
+    let dx = c & 1u; let dy = (c >> 1u) & 1u; let dw = (c >> 2u) & 1u;
+    let wt = select(1.0 - fx, fx, dx == 1u) * select(1.0 - fy, fy, dy == 1u) * select(1.0 - fw, fw, dw == 1u);
+    v += wt * node3J(ix + i32(dx), select(y0, y1, dy == 1u), iw + i32(dw));
+  }
+  return v;
+}
+fn filamentsJ(q: f32, phiC: f32, epoch: f32, relL: f32) -> f32 {
+  let kt = splitPeriodJ(epoch, relL, FIL_CELL_T);
+  let turns = phiC / TWO_PI_E;
+  let y = (turns - floor(turns)) * f32(FIL_CELLS_PHI);
+  return 1.0 + FIL_AMP * (vnoise3J(i32(kt.x), kt.y / FIL_CELL_T, y, q * FIL_CELLS_Q) - 0.5) * 2.0;
 }
 // Unit flow direction (n_r, n_theta): outward along the funnel family rho = q rho_f(z).
 fn streamlineDirJ(r: f32, th: f32) -> vec2<f32> {
@@ -131,15 +184,19 @@ fn plasmaShiftJ(r: f32, th: f32, p: vec4<f32>, a: f32, gamma: f32) -> f32 {
   let n = streamlineDirJ(r, th);
   return gamma * ((p.x + omega * p.w) / lapse + beta * (n.x * sqrt(g[2]) * p.y + n.y * sqrt(g[3]) * p.z));
 }
-// Density modulation (wall x length falloff x knots x turbulence); 0 outside the emitting jet.
-fn jetShapeJ(r: f32, th: f32, t: f32, jetLength: f32, knotAmp: f32, g280: f32) -> f32 {
+// Density modulation (spec 2026-10-03 jet flux knots 2.4; twin: jetShape in jet.ts): the plasma at height z left
+// the base at (epoch + rel) - tau(z) with flux ratio f; the funnel is sqrt(f) wider and f denser, times the
+// co-moving filaments. rel carries the per-pixel emission time (light delay); 0 outside the emitting jet.
+fn jetShapeJ(r: f32, th: f32, ph: f32, epoch: f32, rel: f32, jetLength: f32, fluxVar: f32, g280: f32, a: f32) -> f32 {
   let z = r * cos(th); let az = abs(z);
   if (az < JET_ZBASE || az > jetLength) { return 0.0; }
+  let relL = rel - launchDelayJ(z, g280);
+  let f = fluxRatioJ(epoch, relL, fluxVar); let sw = sqrt(f);
   let rho = r * sin(th);
-  let w = wallJ(rho, z);
+  let w = wallJ(rho / sw, z);
   if (w <= 0.0) { return 0.0; }
-  let turb = 1.0 + JET_TURB * (vnoiseE(log(1.0 + rho), JET_KZ * z) - 0.5) * 2.0;
-  return max(0.0, w * lengthFalloffJ(z, jetLength) * knotsJ(z, t, jetGammaAt(z, g280), knotAmp) * turb);
+  let q = rho / (sw * funnelEdgeJ(z));
+  return max(0.0, f * w * lengthFalloffJ(z, jetLength) * filamentsJ(q, comovingAzimuthJ(ph, z, a, g280), epoch, relL));
 }
 struct SynchOut { j: vec3<f32>, a: vec3<f32> };
 // --- Cooled synchrotron jet (spec 2026-10-02 cooled jet; twins: src/physics/synchrotron.ts, cyclosynch.ts) --
