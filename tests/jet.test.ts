@@ -148,3 +148,19 @@ describe("emission-shared.wgsl flux/filament constants match the CPU twins", () 
     expect(WGSL_E).not.toMatch(/knotsJ|JET_KZ|JET_TURB|JET_SEED/);
   });
 });
+
+describe("jet shape cost (final review: the live trace slowed ~30 % when launch time ran before the wall test)", () => {
+  it("jetShapeJ rejects samples outside the envelope before any launch-time / flux work", () => {
+    const body = WGSL_E.slice(WGSL_E.indexOf("fn jetShapeJ("), WGSL_E.indexOf("struct SynchOut"));
+    const reject = body.search(/r \* sin\(th\) > JET_ENV_Q \* funnelEdgeJ\(z\)\) \{ return 0\.0; \}/);
+    expect(reject).toBeGreaterThan(0);
+    expect(reject).toBeLessThan(body.indexOf("launchDelayJ("));
+    expect(reject).toBeLessThan(body.indexOf("fluxRatioJ("));
+  });
+  it("the CPU twin rejects the same region with the same result (zero there for any flux)", () => {
+    for (const s of [0, 1, FLUX.sMax]) for (const t of [0, 1777]) {
+      const z = 20, rho = JET_ENV_Q * funnelEdge(z) * 1.001, r = Math.hypot(rho, z), th = Math.atan2(rho, z);
+      expect(jetShape(r, th, 0.3, t, 60, s, 2, 0.9)).toBe(0);
+    }
+  });
+});

@@ -190,6 +190,9 @@ fn plasmaShiftJ(r: f32, th: f32, p: vec4<f32>, a: f32, gamma: f32) -> f32 {
 fn jetShapeJ(r: f32, th: f32, ph: f32, epoch: f32, rel: f32, jetLength: f32, fluxVar: f32, g280: f32, a: f32) -> f32 {
   let z = r * cos(th); let az = abs(z);
   if (az < JET_ZBASE || az > jetLength) { return 0.0; }
+  // Exact early-out before the launch-time / flux work: beyond the widest flux-driven wall the shape is 0
+  // for any f (final review: running launchDelayJ first slowed the live trace ~30 %).
+  if (r * sin(th) > JET_ENV_Q * funnelEdgeJ(z)) { return 0.0; }
   let relL = rel - launchDelayJ(z, g280);
   let f = fluxRatioJ(epoch, relL, fluxVar); let sw = sqrt(f);
   let rho = r * sin(th);

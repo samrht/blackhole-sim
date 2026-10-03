@@ -117,8 +117,10 @@ export function filaments(q: number, phiC: number, tLaunch: number): number {
 export function jetShape(r: number, th: number, ph: number, t: number, jetLength: number, fluxVar: number, g280: number, a: number): number {
   const z = r * Math.cos(th), az = Math.abs(z);
   if (az < JET.zBase || az > jetLength) return 0;
+  const rho = r * Math.sin(th);
+  if (rho > JET_ENV_Q * funnelEdge(z)) return 0; // exact: beyond the widest wall for any f (twin's early-out)
   const tl = t - launchDelay(z, g280), f = fluxRatio(tl, fluxVar), sw = Math.sqrt(f);
-  const rho = r * Math.sin(th), w = wallProfile(rho / sw, z);
+  const w = wallProfile(rho / sw, z);
   if (w <= 0) return 0;
   const q = rho / (sw * funnelEdge(z));
   return Math.max(0, f * w * lengthFalloff(z, jetLength) * filaments(q, comovingAzimuth(ph, z, a, g280), tl));
