@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   JET, funnelEdge, wallProfile, lengthFalloff, knots, jetShape, inJetEnvelope,
+  launchDelay, fieldLineOmega, comovingAzimuth, gammaProfile,
 } from "../src/physics/jet";
 import { vnoise } from "../src/physics/emission";
 
@@ -76,5 +77,41 @@ describe("jet envelope (geodesic-cache bookmark region)", () => {
   });
   it("does not depend on jet strength (it takes none)", () => {
     expect(inJetEnvelope.length).toBe(3);
+  });
+});
+
+describe("plasma travel time and co-moving azimuth (spec 2.3, 2.5 + corrections)", () => {
+  // 20 000-point midpoint reference in v = z^(1-p): tau = Int sqrt(1 + A^2 v^(2p/(1-p))) dv / (A (1-p)).
+  const tauRef = (z: number, g: number) => {
+    const p = 0.58, A = Math.sqrt(g * g - 1) / Math.pow(280, p), e = (2 * p) / (1 - p);
+    const v0 = Math.pow(2, 1 - p), v1 = Math.pow(Math.abs(z), 1 - p), N = 20000; let s = 0;
+    for (let i = 0; i < N; i++) { const v = v0 + ((i + 0.5) / N) * (v1 - v0); s += Math.sqrt(1 + A * A * Math.pow(v, e)); }
+    return (s * (v1 - v0)) / N / (A * (1 - p));
+  };
+  it("6-point Gauss quadrature matches the reference to 1e-4 (G280 1.5-8, z to 1000 M)", () => {
+    for (const g of [1.5, 2, 3, 5, 8]) for (const z of [2.5, 5, 10, 30, 60, 200, 1000]) {
+      expect(Math.abs(launchDelay(z, g) / tauRef(z, g) - 1)).toBeLessThan(1e-4);
+      expect(launchDelay(-z, g)).toBe(launchDelay(z, g)); // counter-jet uses |z| (Review Focus 4)
+    }
+    expect(launchDelay(1.5, 2)).toBe(0);                  // below the base
+    expect(launchDelay(60, 2)).toBeCloseTo(166, 0);       // spec 2.3
+  });
+  it("a parcel integrated along the flow keeps its launch time and co-moving azimuth", () => {
+    const g = 2, a = 0.9, OmF = fieldLineOmega(a);
+    let z = 2, ph = 0.3, t = 1000; const dt = 0.01;
+    const beta = (zz: number) => { const G = gammaProfile(zz, g); return Math.sqrt(1 - 1 / (G * G)); };
+    for (let k = 0; k < 20000; k++) {
+      const b1 = beta(z), b2 = beta(z + 0.5 * dt * b1), b3 = beta(z + 0.5 * dt * b2), b4 = beta(z + dt * b3);
+      const dz = (dt / 6) * (b1 + 2 * b2 + 2 * b3 + b4);
+      ph += OmF * (dt - dz); z += dz; t += dt;   // dphi/dt = Omega_F (1 - beta)
+    }
+    expect(z).toBeGreaterThan(30);
+    expect(t - launchDelay(z, g)).toBeCloseTo(1000, 2);
+    expect(comovingAzimuth(ph, z, a, g)).toBeCloseTo(0.3, 3);
+  });
+  it("field-line rotation is half the horizon's: a / (4 r+), zero at spin 0 (Review Focus 5)", () => {
+    expect(fieldLineOmega(0)).toBe(0);
+    expect(fieldLineOmega(0.9)).toBeCloseTo(0.9 / (4 * (1 + Math.sqrt(1 - 0.81))), 12);
+    expect(comovingAzimuth(1.0, 30, 0, 2)).toBe(1.0);
   });
 });

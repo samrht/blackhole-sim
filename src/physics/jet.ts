@@ -3,6 +3,7 @@
 // and the ?parity route).
 // Reuses the Tier 2A value-noise basis (emission.vnoise) so there is one shared noise impl.
 import { vnoise } from "./emission";
+import { horizonOuter } from "./kerr";
 
 /** Shared design constants.
  *
@@ -55,6 +56,34 @@ export const gammaProfile = (z: number, g280: number) => {
   const ub = Math.sqrt(Math.max(0, g280 * g280 - 1)) * Math.pow(Math.abs(z) / GAMMA_REF_Z, GAMMA_SLOPE);
   return Math.sqrt(1 + ub * ub);
 };
+
+/** Gauss-Legendre 6-point nodes and weights on [-1, 1] (twin: GL6 constants in emission-shared.wgsl). */
+export const GL6: readonly [number, number][] = [
+  [-0.9324695142031521, 0.1713244923791704], [-0.6612093864662645, 0.3607615730481386],
+  [-0.2386191860831969, 0.4679139345726910], [0.2386191860831969, 0.4679139345726910],
+  [0.6612093864662645, 0.3607615730481386], [0.9324695142031521, 0.1713244923791704],
+];
+/** Coordinate time (M) for plasma to climb from the jet base z_base to |z| at the flow law Gamma beta = A z^p
+ *  (spec 2026-10-03 jet flux knots, corrections 1): with v = z^(1-p), tau = Int sqrt(1 + A^2 v^(2p/(1-p))) dv
+ *  / (A (1-p)) -- smooth in v, so 6-point Gauss is accurate to 3e-5. Twin: launchDelayJ. */
+export function launchDelay(z: number, g280: number): number {
+  const az = Math.abs(z);
+  if (az <= JET.zBase) return 0;
+  const p = GAMMA_SLOPE, A = Math.sqrt(Math.max(1e-12, g280 * g280 - 1)) / Math.pow(GAMMA_REF_Z, p), e = (2 * p) / (1 - p);
+  const v0 = Math.pow(JET.zBase, 1 - p), v1 = Math.pow(az, 1 - p), h = 0.5 * (v1 - v0), m = 0.5 * (v1 + v0);
+  let s = 0;
+  for (const [x, w] of GL6) s += w * Math.sqrt(1 + A * A * Math.pow(m + h * x, e));
+  return (s * h) / (A * (1 - p));
+}
+/** Blandford-Znajek field-line angular velocity Omega_F = Omega_H / 2 = a / (4 r+) (twin: fieldLineOmegaJ). */
+export function fieldLineOmega(a: number): number { return a / (4 * horizonOuter(a)); }
+/** Azimuth a plasma parcel had at launch: the parcel turns at Omega = Omega_F (1 - beta) (v_phi = Omega_F rho +
+ *  v_p B_phi / B_p, B_phi / B_p = -Omega_F rho / c), so Int Omega dt = Omega_F (tau - (|z| - z_base)). */
+export function comovingAzimuth(ph: number, z: number, a: number, g280: number): number {
+  const az = Math.abs(z);
+  if (az <= JET.zBase) return ph;
+  return ph - fieldLineOmega(a) * (launchDelay(z, g280) - (az - JET.zBase));
+}
 
 /** Traveling-wave knots: blobs of brightness marching outward as t advances. */
 /** Knots are blobs carried by the jet plasma, so the pattern moves outward at the flow speed
