@@ -41,8 +41,9 @@ this file is the queue. Each item gets its own spec (and plan) before code, as e
 - [x] **Cooled jet** (2026-10-02): full-spectrum energy budget — electrons given η × P_BZ, cooled exactly by
   their own radiation, exact cyclo-synchrotron coefficients from a precomputed table, η fixed by M87's
   optical nucleus; the X-ray-binary jets now conserve energy (README "Cooled jet").
-- [ ] **Evolving alpha-disk** (surface-density diffusion) in place of static Novikov-Thorne plus
-  decorative turbulence.
+- [x] **MRI disk turbulence** (2026-10-03): measured sizes, lifetime, spirals and lognormal statistics; amplitude
+  from the observed 2 % flicker (README "MRI disk turbulence"). Replaces "Evolving alpha-disk": the viscous
+  evolution is static on screen (t_visc ≈ 3e6 M at 10 M).
 - [x] **Light-travel delay** (2026-10-01) (the model has none: disk and jet are seen at one coordinate time).
 
 ## Open questions from the presets work
