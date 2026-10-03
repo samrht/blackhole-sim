@@ -1,7 +1,7 @@
 # Jet knots from horizon-flux variability — design
 
 **Date:** 2026-10-03
-**Status:** approved 2026-10-03; §2.3, §2.4, §2.5 corrected while planning (see "Corrections from planning")
+**Status:** approved 2026-10-03; §2.3, §2.4, §2.5 corrected while planning (see "Corrections from planning"); implemented on feat/jet-flux-knots (plan `docs/plans/2026-10-03-jet-flux-knots.md`)
 **Roadmap:** `docs/ROADMAP.md` queue item #3, "the jet's own churn and knots". Both are decorative value noise
 today: the knots are 1-D noise sliding outward at the local flow speed, and the cross-funnel "churn" is a noise
 pattern frozen in space (it never moves at all).
