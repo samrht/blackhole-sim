@@ -81,6 +81,12 @@ describe("full-spectrum energy budget (spec 2.4)", () => {
     const L = nuLnuAt(T, C_CGS / 550e-7, m.a, U.jetB0, U.rgCm, 60, 2, U.jetQ0);
     expect(Math.abs(L / 1e41 - 1)).toBeLessThan(0.01);
   });
+  it("M87's anchor also holds at the default Flux variability (1x), averaged over the flux distribution (review minor)", () => {
+    const m = PRESETS.find((p) => p.id === "m87")!, U = jetUniforms(m.massSun, m.a, m.lambda, ETA_DEFAULT, 60, 2, 1);
+    const fq = fluxQuantiles(1, m.a);
+    const L = fq.reduce((acc, f) => acc + nuLnuAt(T, C_CGS / 550e-7, m.a, U.jetB0, U.rgCm, 60, 2, U.jetQ0, f), 0) / fq.length;
+    expect(Math.abs(L / 1e41 - 1)).toBeLessThan(0.01);
+  });
   it("flow time is the integral of dz / (Gamma beta c)", () => {
     const rg = 1e15, z = 37; let s = 0; const N = 20000;
     for (let i = 0; i < N; i++) { const zz = 2 + (z - 2) * (i + 0.5) / N, G = gammaProfile(zz, 2.5); s += (z - 2) / N / Math.sqrt(G * G - 1); }
@@ -119,24 +125,32 @@ describe("mean injected power with the flux-driven jet (spec 2.4 + corrections 2
       expect(Math.abs(meanInjection(0.9, E.b0, E.rgCm, 60, 2, s) / (m / n) - 1)).toBeLessThan(1e-2);
     }
   });
-  it("time-averaged injected power equals eta P_BZ at every slider value (spec 5 energy test)", () => {
-    for (const s of [0, 0.5, 1, 1.4]) {
-      const U = jetUniforms(6.5e9, 0.9, 1e-5, 2e-3, 60, 2, s);
-      expect((U.jetQ0 * meanInjection(0.9, U.jetB0, U.rgCm, 60, 2, s)) / (2e-3 * U.pBZ)).toBeCloseTo(1, 9);
-      expect(Number.isFinite(U.jetQ0)).toBe(true);
+  it("time-averaged injected power: a direct average of injUnit over the flux distribution equals meanInjection within 1 %", () => {
+    // Non-circular replacement of the q0 x meanInjection = eta P_BZ checks (true by construction; review minors).
+    for (const a of [0.3, 0.9]) {
+      const Ea = jetEnergetics(6.5e9, a, 1e-5);
+      for (const s of [1, 1.4]) {
+        const fq = fluxQuantiles(s, a);
+        const direct = fq.reduce((acc, f) => acc + injUnit(a, Ea.b0, Ea.rgCm, 60, 2, f), 0) / fq.length;
+        expect(Math.abs(meanInjection(a, Ea.b0, Ea.rgCm, 60, 2, s) / direct - 1)).toBeLessThan(0.01);
+      }
     }
   });
-  it("q0 x <P> = eta P_BZ at spins 0.3 and 0.9 (flux statistics Review Focus 4)", () => {
-    for (const a of [0.3, 0.9]) for (const s of [1, 1.4]) {
-      const U = jetUniforms(6.5e9, a, 1e-5, 2e-3, 60, 2, s);
-      expect((U.jetQ0 * meanInjection(a, U.jetB0, U.rgCm, 60, 2, s)) / (2e-3 * U.pBZ)).toBeCloseTo(1, 9);
-    }
+  it("q0 stays finite at every slider value", () => {
+    for (const s of [0, 0.5, 1, 1.4]) expect(Number.isFinite(jetUniforms(6.5e9, 0.9, 1e-5, 2e-3, 60, 2, s).jetQ0)).toBe(true);
   });
   it("spin 0: no BZ power, q0 = 0, no NaN at any slider value (Review Focus 5)", () => {
     for (const s of [0, 1, 1.4]) expect(jetUniforms(10, 0, 0.1, 2e-3, 60, 2, s).jetQ0).toBe(0);
   });
 });
 
+/** 64 equal-count bin means of f = Phi/<Phi> over the generator's 1e6 M window (quadrature of the f distribution). */
+function fluxQuantiles(s: number, a: number): number[] {
+  const v: number[] = []; for (let t = 2.5; t < 1e6; t += 5) v.push(fluxRatio(t, s, a));
+  v.sort((x, y) => x - y); const n = 64, out: number[] = [];
+  for (let i = 0; i < n; i++) { const lo = Math.floor((i * v.length) / n), hi = Math.floor(((i + 1) * v.length) / n); let m = 0; for (let j = lo; j < hi; j++) m += v[j]; out.push(m / (hi - lo)); }
+  return out;
+}
 const WGSL = readFileSync(join(__dirname, "../src/render/emission-shared.wgsl"), "utf8");
 const rawConst = (name: string) => { const m = WGSL.match(new RegExp(`const ${name}\\s*=\\s*([^;]+);`)); if (!m) throw new Error(`no ${name}`); return m[1]; };
 const constOf = (name: string) => +rawConst(name);

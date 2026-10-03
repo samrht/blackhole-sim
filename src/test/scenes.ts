@@ -15,7 +15,7 @@ export const SCENES: Scene[] = [
   { name: "jet-off", a: 0.5, inclDeg: 30, time: 0, frame: 0, jetStrength: 0, skyStrength: 0 },
   { name: "edge-on", a: 0.99, inclDeg: 85, time: 100, frame: 2, jetStrength: 1, skyStrength: 0 },
   { name: "face-on-jet", a: 0.9, inclDeg: 8, time: 12, frame: 1, jetStrength: 1, skyStrength: 0 },
-  // The app's default path: light-travel delay on (disk pattern, breathing, jet knots per sample).
+  // The app's default path: light-travel delay on (disk pattern, breathing, jet emission per sample).
   { name: "delay", a: 0.9, inclDeg: 72, time: 37, frame: 5, jetStrength: 1, skyStrength: 0, lightDelay: 1 },
 ];
 const SPOTS = new Float32Array([8, 0, 1.2, 1.8, 12, 2.1, 1.6, 1.2, 16, 4.3, 2.0, 0.9]);

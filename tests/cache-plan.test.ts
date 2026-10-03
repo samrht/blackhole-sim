@@ -30,6 +30,13 @@ describe("geometry key", () => {
   });
 });
 
+describe("bookmark headroom (jet-knots review: the envelope widened to q <= 1.51)", () => {
+  it("BOOKMARK_FRAC keeps a 1.5x margin over the measured face-on bookmark fraction, 18.2 %", () => {
+    expect(BOOKMARK_FRAC).toBeGreaterThanOrEqual(1.5 * 0.182);
+    expect(BOOKMARK_FRAC).toBeLessThanOrEqual(0.3);
+  });
+});
+
 describe("planCache", () => {
   it("uses 4 sets at 1080p on a 128 MB binding", () => {
     const p = planCache(1920, 1080, 128 * MB);

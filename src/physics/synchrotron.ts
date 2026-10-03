@@ -104,13 +104,15 @@ export function jetCoeffs(t: SynchTable, nuP: number, B: number, s: number, q0: 
   const base = Math.log(q0) + Math.log(shape);
   return [Math.exp(LN_CJ + base + lnB + lJ), Math.exp(LN_CA + base - lnB - 2 * lnx + lA)];
 }
-/** Comoving, optically thin nu L_nu (energy at infinity) of the rendered jet at q0. */
-export function nuLnuAt(t: SynchTable, nu: number, a: number, b0: number, rgCm: number, jetLength: number, g280: number, q0: number): number {
+/** Comoving, optically thin nu L_nu (energy at infinity) of the rendered jet at q0, with the whole jet at flux
+ *  ratio f (wall sqrt(f) wider, density x f, as injUnit; f = 1 is the steady jet). */
+export function nuLnuAt(t: SynchTable, nu: number, a: number, b0: number, rgCm: number, jetLength: number, g280: number, q0: number, f = 1): number {
+  const sw = Math.sqrt(f);
   return 4 * Math.PI * nu * rgCm ** 3 * regionSum(a, jetLength, g280, (rho, z) => {
-    const sh = wallProfile(rho, z) * lengthFalloff(z, jetLength); if (sh <= 0) return 0;
+    const sh = f * wallProfile(rho / sw, z) * lengthFalloff(z, jetLength); if (sh <= 0) return 0;
     const B = jetField(rho, z, a, b0), s = Math.exp(LN_K0) * B * B * flowTime(z, g280, rgCm);
     return jetCoeffs(t, nu, B, s, q0, sh)[0];
-  });
+  }, 1.2 * sw);
 }
 /** Default eta: M87*'s nu L_nu(550 nm) = 1e41 erg/s (spec 2.4; the anchor test re-derives it). */
 export const ETA_DEFAULT = 0.05527;

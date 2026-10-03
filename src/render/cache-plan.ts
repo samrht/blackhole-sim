@@ -9,7 +9,7 @@ export const BUILD_SLICES = 16;
 export const SETTLE_FRAMES = 3;
 /** Share of (pixels x sets) given a jet bookmark slot. 1.5x the largest share measured by
  *  tests/sweep-jetenvelope.test.ts (plan 2026-10-01 Task 1). Overflow falls back to LIVE pixels. */
-export const BOOKMARK_FRAC = 0.21; // measured 2026-10-01: max 13.6 % (face-on) x 1.5
+export const BOOKMARK_FRAC = 0.28; // 1.5 x the face-on maximum: 13.6 % (2026-10-01), 18.2 % after the jet envelope widened to q <= 1.51 (2026-10-03)
 export const ENTRY_BYTES = 16, BOOKMARK_BYTES = 48;
 export const CACHE_BUDGET_BYTES = 512 * 2 ** 20;
 /** Entry word = kind (2 bits) | bookmark index << 2; this index means "no bookmark". */

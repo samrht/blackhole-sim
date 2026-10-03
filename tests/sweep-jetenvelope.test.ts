@@ -19,7 +19,8 @@ import { inJetEnvelope } from "../src/physics/jet";
  *   edge-on a=0.99 i=85    bookmarked 10.7 %  mean nJet 34.6  replay share 0.8 % of all steps  (mean steps 473.4)
  *   face-on a=0.9 i=8      bookmarked 13.6 %  mean nJet 71.7  replay share 3.2 % of all steps  (mean steps 309.1)
  * Gate (plan Task 1 Step 7): default replay share 0.7 % <= 25 % -> proceed.
- * BOOKMARK_FRAC = max(0.05, ceil(1.5 x 13.6) / 100) = 0.21.
+ * BOOKMARK_FRAC = max(0.05, ceil(1.5 x 13.6) / 100) = 0.21; re-derived 2026-10-04 after the jet envelope widened to
+ * q <= 1.51 (face-on 18.2 %): ceil(1.5 x 18.2) / 100 = 0.28.
  */
 const RUN = process.env.SWEEP === "1";
 const ROBS = 1000, ROUT = 40, FOV = 14, MAX_STEPS = 4800, JET_LEN = 60, NX = 64, NY = 36;
