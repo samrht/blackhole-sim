@@ -5,9 +5,9 @@ import { turbulenceAt, lognormalFactor } from "./emission";
 import { iscoRadius } from "./orbits";
 import { pageThorneFluxShape } from "./disk";
 
-export interface FlickerGrid { ne: number; np: number; ns: number; dt: number; a: number; rOut: number; }
-/** ne log-spaced radii from the ISCO to rOut, np azimuths, ns snapshots dt apart (M). */
-export const FULL_GRID: FlickerGrid = { ne: 160, np: 256, ns: 1500, dt: 397, a: 0.9, rOut: 40 };
+export interface FlickerGrid { ne: number; np: number; ns: number; dt: number; t0: number; a: number; rOut: number; }
+/** ne log-spaced radii from the ISCO to rOut, np azimuths, ns snapshots dt apart (M) from t0. */
+export const FULL_GRID: FlickerGrid = { ne: 160, np: 256, ns: 1500, dt: 397, t0: 1000, a: 0.9, rOut: 40 };
 
 export function diskFlickerRms(sigmas: number[], g: FlickerGrid): number[] {
   const ri = iscoRadius(g.a), l0 = Math.log(ri), l1 = Math.log(g.rOut);
@@ -20,7 +20,7 @@ export function diskFlickerRms(sigmas: number[], g: FlickerGrid): number[] {
   }
   const L = sigmas.map(() => [] as number[]);
   for (let s = 0; s < g.ns; s++) {
-    const t = 1000 + s * g.dt, sums = sigmas.map(() => 0);
+    const t = g.t0 + s * g.dt, sums = sigmas.map(() => 0);
     for (let i = 0; i < g.ne; i++) for (let j = 0; j < g.np; j++) {
       const gv = turbulenceAt(rs[i], (2 * Math.PI * j) / g.np, t, g.a);
       for (let q = 0; q < sigmas.length; q++) sums[q] += w[i] * lognormalFactor(gv, sigmas[q]);

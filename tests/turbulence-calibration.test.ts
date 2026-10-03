@@ -24,8 +24,16 @@ describe("flicker calibration (spec 2026-10-03 §2.2)", () => {
     const [s, r] = FLICKER_TABLE[1];
     expect(r / s).toBeGreaterThan(0.031); expect(r / s).toBeLessThan(0.038);
   });
+  it("snapshots start at the grid's t0, so a re-measurement can use its own time window", () => {
+    const g = { ...FULL_GRID, ne: 4, np: 8, ns: 3 };
+    const [a] = diskFlickerRms([0.5], { ...g, t0: 1000 }), [b] = diskFlickerRms([0.5], { ...g, t0: 7e5 });
+    expect(a).not.toBe(b);
+  });
   it("the default slider gives 2.0 % +- 0.2 % intrinsic rms, re-measured on an independent coarse grid", () => {
-    const [rms] = diskFlickerRms([sigmaForFlicker(FLICKER_DEFAULT)], { ...FULL_GRID, ne: 80, np: 128, ns: 300 });
+    // Own time window: FULL_GRID's 1500 snapshots end at t = 1000 + 1500 x 397 = 596,500 M; these start at 7e5.
+    const coarse = { ...FULL_GRID, ne: 80, np: 128, ns: 300, t0: 7e5 };
+    expect(coarse.t0).toBeGreaterThan(FULL_GRID.t0 + FULL_GRID.ns * FULL_GRID.dt);
+    const [rms] = diskFlickerRms([sigmaForFlicker(FLICKER_DEFAULT)], coarse);
     expect(rms).toBeGreaterThan(0.018); expect(rms).toBeLessThan(0.022);
   }, 120000);
 });
