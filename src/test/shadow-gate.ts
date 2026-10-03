@@ -30,12 +30,13 @@ export interface ShadowGate {
   unresolved: number;        // rays that ran out of steps (excluded from the comparison)
   unresolvedOffBand: number; // ... of them away from the curve (gated: 0)
   other: number;             // any kind but shadow/sky (gated: 0; the audit scene has no emitter)
-  areaRatio: number;         // traced shadow area / analytic shadow area (gated: within areaTol)
+  areaRatio: number;         // traced shadow area / analytic shadow area (gated: within areaTol, 0.1 %: a spin error of
+                             // 0.01 at a = 0.9 shifts it by 0.26 %; the traced image matches to 0 px)
   pass: boolean;
 }
 
 /** A pixel is "on the curve" when the analytic class changes anywhere in its 3x3 neighbourhood. */
-export function compareShadow(words: Uint32Array, analytic: Uint8Array, w: number, h: number, areaTol = 0.005): ShadowGate {
+export function compareShadow(words: Uint32Array, analytic: Uint8Array, w: number, h: number, areaTol = 0.001): ShadowGate {
   let offBand = 0, inBand = 0, unresolved = 0, unresolvedOffBand = 0, other = 0, gpuCap = 0, anCap = 0;
   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
     const i = y * w + x, c = analytic[i];

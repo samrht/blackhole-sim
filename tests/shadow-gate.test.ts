@@ -6,7 +6,7 @@ const SHADOW = 0, DISK = 1, SKY = 2;
 const wordsFrom = (an: Uint8Array) => Uint32Array.from(an, (c) => (c ? SHADOW : SKY));
 
 describe("critical-curve gate (?shadow)", () => {
-  const w = 160, h = 90, fov = 14;
+  const w = 480, h = 270, fov = 14; // one pixel ~0.01 % of the shadow, as at the route's resolution
   const an = analyticClassImage(w, h, fov, 0, Math.PI / 18, [-0.125, -0.375]);
 
   it("analytic image at a = 0 is the sqrt(27) disk: centre captured, corners escaped, area pi 27", () => {
@@ -43,7 +43,14 @@ describe("critical-curve gate (?shadow)", () => {
     const words = wordsFrom(an); words[5] = DISK;
     expect(compareShadow(words, an, w, h)).toMatchObject({ other: 1, pass: false });
   });
-  it("a uniformly larger traced shadow fails the 0.5 % area gate even when every flip sits on the curve", () => {
+  it("the area gate is 0.1 %: a traced shadow 0.26 % small (a spin error of 0.01 at a = 0.9, measured) fails", () => {
+    const words = wordsFrom(an); let flipped = 0; const target = Math.round(an.reduce((s, c) => s + c, 0) * 0.0026);
+    for (let i = 0; i < w * h && flipped < target; i++) { const x = i % w, y = (i / w) | 0;
+      if (an[i] === 1 && [[1,0],[-1,0],[0,1],[0,-1]].some(([dx,dy]) => an[(y+dy)*w + x+dx] === 0)) { words[i] = SKY; flipped++; } }
+    const g = compareShadow(words, an, w, h);
+    expect(g.offBand).toBe(0); expect(g.areaRatio).toBeLessThan(0.999); expect(g.pass).toBe(false);
+  });
+  it("a uniformly larger traced shadow fails the area gate even when every flip sits on the curve", () => {
     const words = wordsFrom(an);
     for (let i = 0; i < w * h; i++) { const x = i % w, y = (i / w) | 0;
       if (an[i] === 0 && [[1,0],[-1,0],[0,1],[0,-1]].some(([dx,dy]) => an[(y+dy)*w + x+dx] === 1)) words[i] = SHADOW; }

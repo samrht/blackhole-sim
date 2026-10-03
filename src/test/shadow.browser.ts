@@ -3,8 +3,10 @@ import { buildVisibleLUT, lumNormFor } from "../physics/lookups";
 import { photonOrbit } from "../physics/orbits";
 import type { UniformValues } from "../render/uniforms";
 import { classify } from "../physics/shadow";
+import { analyticClassImage, compareShadow, type ShadowGate } from "./shadow-gate";
+import { JITTER } from "../render/cache-plan";
 
-/** Structural smoke test for the Schwarzschild (a=0) shadow, plus a regression-gated radius.
+/** Critical-curve gate (three spins/inclinations) plus the structural Schwarzschild (a=0) smoke test.
  *
  *  We light a flat emitter from the photon orbit outward and view nearly face-on (10°, clear of
  *  the camera's pole-on degeneracy), so the image is a bright disk wrapping a centred dark capture
@@ -25,8 +27,8 @@ import { classify } from "../physics/shadow";
  *  hid the far-side crossings of the xi = 0 rays on this very column; with the axis handled
  *  physically the number moved to 0.749 and is self-consistent. (0.749 -> 0.761 with exact metric
  *  derivatives: a lit axis pixel inside the shadow had stopped this column's scan ~3 px early.)
- *  A true critical-curve gate (an emitter that stops outside the capture region, or a (xi, eta)
- *  classification image) is a tracked follow-up. The field names are kept for the gate's stability.
+ *  The true critical-curve gate (2026-10-03) is the (xi, eta) classification image below
+ *  (shadow-gate.ts); this structural check is kept alongside it. The field names are kept for stability.
  *  The rigorous numerical gate for the ported math is the ?parity test. */
 export async function measureShadow(canvas: HTMLCanvasElement, maxStepsOverride = 8000) {
   const r = new Renderer(); await r.init(canvas);
@@ -63,9 +65,20 @@ export async function measureShadow(canvas: HTMLCanvasElement, maxStepsOverride 
   const hasShadow = shadowPx > 4;
   const hasDisk = brightOnColumn > h * 0.1;
   const plausible = shadowRadiusM > 1.0 && shadowRadiusM < bCrit * 1.6;
-  const ok = hasShadow && hasDisk && plausible;
+  const structural = hasShadow && hasDisk && plausible;
+  // Critical-curve gate: the same renderer traces every pixel with the disk removed (rIn beyond rOut, so the
+  // step controller still sees the usual rOut) and the jet off; each ray ends captured or escaped, and the
+  // image must match the exact classification of the same rays (shadow-gate.ts).
+  const gates: { name: string; a: number; inclDeg: number; g: ShadowGate }[] = [];
+  for (const [name, ga, gi] of [["schwarzschild", 0, 10], ["default", 0.9, 72], ["edge-on", 0.998, 85]] as const) {
+    const incl = (gi * Math.PI) / 180;
+    const words = await r.auditKinds({ ...u, a: ga, incl, rIn: 1e9, rOut, setIndex: 0 });
+    const g = compareShadow(words, analyticClassImage(r.width, r.height, fovScale, ga, incl, JITTER[0]), r.width, r.height);
+    gates.push({ name, a: ga, inclDeg: gi, g });
+  }
+  const ok = structural && gates.every((x) => x.g.pass);
   return {
-    ok, shadowPx, hasShadow, hasDisk,
+    ok, structural, gates, shadowPx, hasShadow, hasDisk,
     shadowRadiusM: +shadowRadiusM.toFixed(2),
     bCritM: +bCrit.toFixed(2),
     analyticRadiusM: +analyticRadiusM.toFixed(3),

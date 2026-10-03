@@ -21,9 +21,9 @@ this file is the queue. Each item gets its own spec (and plan) before code, as e
 
 ## Correctness and gates (follow-ups recorded in the README)
 
-- [ ] **A true critical-curve gate for `?shadow`**: the route measures the emitter's lensed inner
-  edge, not the critical curve (an emitter that stops outside the capture region, or a (xi, eta)
-  classification image).
+- [x] **A true critical-curve gate for `?shadow`** (2026-10-03): a (xi, eta) classification image — every
+  pixel traced with no emitter must match the analytic capture test (a = 0, 0.9, 0.998); 0 mismatches,
+  area ratio 1.0000 (README `?shadow`).
 - [x] **Shared-fragment parity for the jet and turbulence cases** (2026-10-02): `emission-shared.wgsl`
   is the sole copy, prepended by the renderer and ?parity; golden bit-identical; a changed jet
   constant now fails ?parity (2.0e-3); `tests/shader-twins.test.ts` guards against new copies.

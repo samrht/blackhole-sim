@@ -26,7 +26,7 @@ export class Renderer {
   brightHPipe!: GPUComputePipeline; blurVPipe!: GPUComputePipeline;
   presentBind!: GPUBindGroup;
   computeLayout!: GPUBindGroupLayout;
-  buildPipe!: GPUComputePipeline; shadePipe!: GPUComputePipeline;
+  buildPipe!: GPUComputePipeline; shadePipe!: GPUComputePipeline; auditPipe!: GPUComputePipeline;
   buildUniformBuf!: GPUBuffer;
   entryBufs: GPUBuffer[] = []; bookmarkBuf!: GPUBuffer; bmCountBuf!: GPUBuffer;
   computeBinds: GPUBindGroup[] = []; buildBinds: GPUBindGroup[] = [];
@@ -211,6 +211,7 @@ export class Renderer {
     this.computePipe = this.device.createComputePipeline({ layout, compute: { module: cMod, entryPoint: "main" } });
     this.buildPipe = this.device.createComputePipeline({ layout, compute: { module: cMod, entryPoint: "build" } });
     this.shadePipe = this.device.createComputePipeline({ layout, compute: { module: cMod, entryPoint: "shade" } });
+    this.auditPipe = this.device.createComputePipeline({ layout, compute: { module: cMod, entryPoint: "audit" } });
     this.brightHPipe = this.device.createComputePipeline({ layout: "auto", compute: { module: bMod, entryPoint: "bright_h" } });
     this.blurVPipe = this.device.createComputePipeline({ layout: "auto", compute: { module: bMod, entryPoint: "blur_v" } });
     this.presentPipe = this.device.createRenderPipeline({
@@ -339,6 +340,19 @@ export class Renderer {
   /** Raw accum (internal width x height vec4<f32>) after the last submitted frame. */
   async readbackAccum(): Promise<Float32Array> {
     return new Float32Array(await this.readback(this.accumBuf, this.width * this.height * 16));
+  }
+  /** ?shadow's critical-curve gate: trace every pixel of jitter set u.setIndex once and return one word per
+   *  pixel (kind | 4 if the ray ran out of steps). Uses entry buffer 0; validation routes only (scale 1). */
+  async auditKinds(u: UniformValues): Promise<Uint32Array> {
+    if (this.scale !== 1) throw new Error("auditKinds requires scale 1 (validation routes run at full resolution)");
+    this.device.queue.writeBuffer(this.uniformBuf, 0, packUniforms(u));
+    const enc = this.device.createCommandEncoder(), cp = enc.beginComputePass();
+    cp.setPipeline(this.auditPipe); cp.setBindGroup(0, this.computeBinds[0]);
+    cp.dispatchWorkgroups(Math.ceil(this.width / 8), Math.ceil(this.height / 8)); cp.end();
+    this.device.queue.submit([enc.finish()]);
+    const e = await this.readbackEntries(0), words = new Uint32Array(this.width * this.height);
+    for (let i = 0; i < words.length; i++) words[i] = e[i * 4];
+    return words;
   }
   async readbackEntries(set: number): Promise<Uint32Array> {
     return new Uint32Array(await this.readback(this.entryBufs[set], this.displayW * this.displayH * 16));

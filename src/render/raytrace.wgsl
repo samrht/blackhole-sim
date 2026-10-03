@@ -312,11 +312,12 @@ struct TraceOut {
   color: vec3<f32>, jet: JetOut,
   kind: u32, payload: vec3<f32>,   // DISK: (rHit, phiHit, delay); SKY: asymptotic direction; else 0
   hasBm: bool, bm: State, nJet: u32, // record only: first state inside the jet envelope, steps through the last
+  resolved: bool,                    // false: the step budget ran out (kind then comes from the classifier)
 };
 
 fn traceRay(pix: vec2<u32>, jit: vec2<f32>, record: bool) -> TraceOut {
   var out: TraceOut;
-  out.kind = KIND_SHADOW; out.payload = vec3<f32>(0.0); out.hasBm = false; out.nJet = 0u;
+  out.kind = KIND_SHADOW; out.payload = vec3<f32>(0.0); out.hasBm = false; out.nJet = 0u; out.resolved = true;
   let a = U.a; let i = U.incl;
 
   // pixel -> impact parameters (alpha,beta) in units of M, with sub-pixel jitter for AA
@@ -400,6 +401,7 @@ fn traceRay(pix: vec2<u32>, jit: vec2<f32>, record: bool) -> TraceOut {
   // rendered as shadow -- a step-budget artifact that swallowed the n=1 photon subring. Classify
   // them from their conserved (xi, eta) instead: the sign of p_r at an arbitrary cutoff is
   // effectively random for a winding ray and would produce salt-and-pepper noise.
+  out.resolved = resolved;
   if (!resolved) {
     let th = s.x.z; let ph = s.x.w;
     // RK4 can diverge for rays near the critical impact parameter, leaving s.x non-finite when the
@@ -479,6 +481,15 @@ fn replayJet(bm: State, nJet: u32) -> JetOut {
     }
   }
   entries[idx] = Entry(word, t.payload.x, t.payload.y, t.payload.z);
+}
+
+// ?shadow's critical-curve gate (src/test/shadow-gate.ts): every pixel's termination for jitter set setIndex,
+// word = kind | 4 when the step budget ran out -- the renderer then takes the kind from the analytic
+// classifier, which the gate compares against, so those rays must be visible to it. Validation only.
+@compute @workgroup_size(8,8) fn audit(@builtin(global_invocation_id) gid: vec3<u32>) {
+  if (gid.x >= u32(U.res.x) || gid.y >= u32(U.res.y)) { return; }
+  let t = traceRay(gid.xy, fixedJitter(U.setIndex), false);
+  entries[gid.y * u32(U.res.x) + gid.x] = Entry(t.kind | select(4u, 0u, t.resolved), 0.0, 0.0, 0.0);
 }
 
 // Cached frame: re-colour from the record of jitter set setIndex; replay the jet stretch.

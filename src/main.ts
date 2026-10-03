@@ -24,14 +24,13 @@ if (location.search.includes("parity")) {
 PARITY ${ok ? "PASS" : "FAIL"} — maxRelErr=${res.maxErr.toExponential(3)} over ${res.rows} cases; jet max |d ln| ${res.jetLogErr.toExponential(2)}; turb worst ${res.turbErr.toFixed(2)} of tolerance (${res.turbWorst}); turb roughness at t 1.8e6 ${res.turbRough.gpu.toFixed(3)} (exact ${res.turbRough.cpu.toFixed(3)}, old f32(t - delay) ${res.turbRough.old.toFixed(3)})</pre>`;
   console.log("parity", res);
 } else if (location.search.includes("shadow")) {
-  // Validation entry: Schwarzschild shadow-radius check (a=0, pole-on).
+  // Validation entry: critical-curve gate (three spins/inclinations) + the structural shadow check.
   const { measureShadow } = await import("./test/shadow.browser");
   const stepsParam = new URLSearchParams(location.search).get("steps");
   const res = await measureShadow(canvas, stepsParam ? +stepsParam : 8000);
   document.body.innerHTML = `<pre style="color:${res.ok ? "#6f6" : "#f66"};font-size:18px;padding:20px">
-SHADOW ${res.ok ? "PASS" : "FAIL"} (structural) — centred dark shadow=${res.hasShadow}, ringed by disk=${res.hasDisk}
-apparent radius ≈ ${res.shadowRadiusM} M; analytic critical curve = ${res.analyticRadiusM} M
-ratio to analytic critical curve = ${res.calibration} (NOT a calibration — the route measures the emitter's lensed inner edge, not the critical curve; see README)</pre>`;
+SHADOW ${res.ok ? "PASS" : "FAIL"} — critical curve: ${res.gates.map((x) => `${x.name} (a ${x.a}, ${x.inclDeg}°) ${x.g.pass ? "ok" : "FAILED"}: off-curve mismatches ${x.g.offBand}, on-curve ${x.g.inBand}, unresolved ${x.g.unresolved} (off-curve ${x.g.unresolvedOffBand}), other ${x.g.other}, area ratio ${x.g.areaRatio.toFixed(4)}`).join("; ")}
+structural ${res.structural ? "ok" : "FAILED"} — centred dark shadow=${res.hasShadow}, ringed by disk=${res.hasDisk}; apparent radius ≈ ${res.shadowRadiusM} M against the analytic critical curve ${res.analyticRadiusM} M = ${res.calibration} (the disk-lit image shows the emitter's lensed inner edge, not the critical curve; see README)</pre>`;
   console.log("shadow", res);
 } else if (location.search.includes("cachecheck")) {
   // Validation entry: cached frames equal live frames (spec 2026-10-01 3.6).
