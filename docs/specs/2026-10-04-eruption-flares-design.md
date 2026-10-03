@@ -102,3 +102,22 @@ radiated energy (∫ over time of the column-integrated luminosity, all bands of
 surroundings during a tube's life.
 
 **Visual:** Sgr A* frames across a tube's life (spiral, orbit, fade) and the light-delay echo pair.
+
+## Corrections from planning (2026-10-03)
+
+1. **Tube field by flux conservation (§2.3).** The tube carries the ejected flux δ_k s Φ through its cross-section:
+   B_k = δ_k s Φ / (π R_k² r_g²) — instead of the released horizon energy spread over the tube volume. The tube's own
+   magnetic energy is E_k = B_k² V / 8π = (δ_k s)² Φ² / (4π² R_k r_g) (V = 2π R_k³ r_g³), and the tube **radiates
+   ζ E_k f** (ζ: fraction of its field energy radiated).
+2. **ζ from the anchor in closed form.** Over tubes, ⟨(1 + 0.5 v)²⟩ = 1 + 1/48 and ⟨1/r_c⟩ = ln 6 / 25 (uniform r_c on
+   [5, 30]), so ⟨E_k⟩ = δ̄² (1 + 1/48) Φ² (ln 6 / 25) / (0.8 π² r_g); ζ = 10³⁸ erg / ⟨E_k⟩ at the default Sgr A* preset
+   (s = 1) = **1.06 × 10⁻²** — about 1 % of the tube's field energy, Ripperda et al. 2022's own order-of-magnitude
+   estimate for the radiated fraction of reconnection power. Computed at run time from the preset (`flareZeta()`).
+3. **The anchor is on injected energy.** Measured with the synchrotron table (Sgr A*): radiated/injected = 1.00 at
+   r_c = 5 (B ≈ 630 G), 0.80–0.93 at 17.5 (52 G, ages 300–1000 M), 0.44–0.65 at 30 (18 G): outer tubes are not fully
+   fast-cooling within their life. The docs report this; the anchor test checks the injected energy, a second test
+   bounds radiated/injected ≥ 0.4.
+4. **Tube energies vs Porth et al.** Sgr A* tubes here hold 4 × 10³⁹ – 2.6 × 10⁴⁰ erg of field, 10–100× Porth's
+   simulated tubes (≤ 3 × 10³⁸ erg); mostly this app's larger Sgr A* flux (Ṁ = 10⁻⁸ M☉/yr). Stated in the docs.
+5. **Uniforms.** Slot 18 (`nSpots`, u32) becomes `flareStrength` (f32, f); new `flarePhi` (Φ, G cm²) and
+   `flareZeta` (ζ) at floats 36–37; the block becomes 160 bytes.
