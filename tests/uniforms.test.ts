@@ -2,22 +2,22 @@ import { describe, it, expect } from "vitest";
 import { packUniforms, UNIFORM_SIZE, type UniformValues } from "../src/render/uniforms";
 
 describe("uniforms packing", () => {
-  it("is 144 bytes and packs all fields (incl. display size) at the expected offsets", () => {
-    expect(UNIFORM_SIZE).toBe(144);
+  it("is 160 bytes and packs all fields (incl. display size) at the expected offsets", () => {
+    expect(UNIFORM_SIZE).toBe(160);
     const u: UniformValues = {
       resW: 100, resH: 50, a: 0.9, incl: 1.2, rObs: 1000, fovScale: 14, rIn: 5, rOut: 40,
       Tpeak: 3e4, exposure: 1.6, time: 7, frame: 3, reset: 0, maxSteps: 1200,
-      blend: 0.15, timeScale: 2, turbAmp: 0.6, breatheAmp: 0.1, nSpots: 4,
+      blend: 0.15, timeScale: 2, turbAmp: 0.6, breatheAmp: 0.1, flareStrength: 1.5,
       jetStrength: 1.0, jetGamma: 5.0, jetLength: 60.0, fluxVar: 0.7,
       skyStrength: 0.6, outW: 200, outH: 100, lumNorm: 2.5, lightDelay: 1,
-      jetB0: 632.4, jetQ0: 0.1465, rgCm: 9.6e14,
+      jetB0: 632.4, jetQ0: 0.1465, rgCm: 9.6e14, flarePhi: 4.364e27, flareZeta: 0.0106,
     };
     const dv = new DataView(packUniforms(u));
     expect(dv.getFloat32(0, true)).toBeCloseTo(100);   // resW
     expect(dv.getFloat32(40, true)).toBeCloseTo(7);     // time (index 10)
     expect(dv.getUint32(44, true)).toBe(3);             // frame (index 11)
     expect(dv.getFloat32(56, true)).toBeCloseTo(0.15);  // blend (index 14)
-    expect(dv.getUint32(72, true)).toBe(4);             // nSpots (index 18)
+    expect(dv.getFloat32(72, true)).toBeCloseTo(1.5);   // flareStrength (index 18)
     expect(dv.getFloat32(76, true)).toBeCloseTo(1.0);   // jetStrength (index 19)
     expect(dv.getFloat32(80, true)).toBeCloseTo(5.0);   // jetGamma (index 20)
     expect(dv.getFloat32(84, true)).toBeCloseTo(60.0);  // jetLength (index 21)
@@ -32,13 +32,15 @@ describe("uniforms packing", () => {
     expect(dv.getFloat32(136, true) / 9.6e14).toBeCloseTo(1, 6);            // rgCm (index 34)
     expect(dv.getFloat32(140, true)).toBe(0);                               // timeEpoch (index 35) defaults to 0
     expect(new DataView(packUniforms({ ...u, timeEpoch: 1835008 })).getFloat32(140, true)).toBe(1835008);
+    expect(dv.getFloat32(144, true) / 4.364e27).toBeCloseTo(1, 6);         // flarePhi (index 36)
+    expect(dv.getFloat32(148, true)).toBeCloseTo(0.0106, 6);               // flareZeta (index 37)
   });
   it("packs the geodesic-cache fields after outW/outH and defaults them to 0", () => {
     const base: UniformValues = {
       resW: 1, resH: 1, a: 0, incl: 0, rObs: 1000, fovScale: 14, rIn: 6, rOut: 40, Tpeak: 3e4, exposure: 1,
-      time: 0, frame: 0, reset: 0, maxSteps: 1, blend: 1, timeScale: 1, turbAmp: 0, breatheAmp: 0, nSpots: 0,
+      time: 0, frame: 0, reset: 0, maxSteps: 1, blend: 1, timeScale: 1, turbAmp: 0, breatheAmp: 0, flareStrength: 0,
       jetStrength: 0, jetGamma: 5, jetLength: 60, fluxVar: 0, skyStrength: 0, outW: 1, outH: 1, lumNorm: 1, lightDelay: 0,
-      jetB0: 0, jetQ0: 0, rgCm: 0,
+      jetB0: 0, jetQ0: 0, rgCm: 0, flarePhi: 0, flareZeta: 0,
     };
     const d0 = new DataView(packUniforms(base));
     for (const off of [104, 108, 112, 116]) expect(d0.getUint32(off, true)).toBe(0);

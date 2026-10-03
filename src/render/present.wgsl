@@ -1,7 +1,7 @@
 struct Uniforms {
   res: vec2<f32>, a: f32, incl: f32, rObs: f32, fovScale: f32, rIn: f32, rOut: f32,
   Tpeak: f32, exposure: f32, time: f32, frame: u32, reset: u32, maxSteps: u32,
-  blend: f32, timeScale: f32, turbAmp: f32, breatheAmp: f32, nSpots: u32,
+  blend: f32, timeScale: f32, turbAmp: f32, breatheAmp: f32, flareStrength: f32,
   jetStrength: f32, jetGamma: f32, jetLength: f32, fluxVar: f32,
   skyStrength: f32, outW: f32, outH: f32,
 };

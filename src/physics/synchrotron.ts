@@ -117,7 +117,7 @@ export const ETA_DEFAULT = 0.05527;
 /** The jet's uniforms: q0 = eta P_BZ / (time-averaged injected power at q0 = 1); 0 at spin 0 (no BZ power). */
 export function jetUniforms(mSun: number, a: number, lambda: number, eta: number, jetLength: number, g280: number, fluxVar: number) {
   const E = jetEnergetics(mSun, a, lambda);
-  return { jetB0: E.b0, jetQ0: E.pBZ > 0 ? (eta * E.pBZ) / meanInjection(a, E.b0, E.rgCm, jetLength, g280, fluxVar) : 0, rgCm: E.rgCm, pBZ: E.pBZ };
+  return { jetB0: E.b0, jetQ0: E.pBZ > 0 ? (eta * E.pBZ) / meanInjection(a, E.b0, E.rgCm, jetLength, g280, fluxVar) : 0, rgCm: E.rgCm, pBZ: E.pBZ, phi: E.phi };
 }
 /** One band of one jet sample: exact solution across a uniform slab of path ds (cm) behind optical depth
  *  tau already accumulated from the camera. Twin of jetSlabJ in emission-shared.wgsl. */

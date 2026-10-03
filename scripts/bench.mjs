@@ -38,12 +38,12 @@ const out = await page.evaluate(async () => {
     const { CUSTOM_DEFAULT } = await import("/src/physics/presets.ts");
     const J = jetUniforms(CUSTOM_DEFAULT.massSun, a, CUSTOM_DEFAULT.lambda, ETA_DEFAULT, 60, 2, 1);
     r.uploadLUTs(buildTempLUT(a, true, rIn, 40, 512), buildVisibleLUT()); r.rebind();
-    r.uploadHotSpots(new Float32Array([8, 0, 1.2, 1.8, 12, 2.1, 1.6, 1.2, 16, 4.3, 2.0, 0.9])); r.rebind();
+    const { flareZeta } = await import("/src/physics/eruption-spots.ts");
     const u = (f) => ({
       resW: r.width, resH: r.height, outW: r.displayW ?? r.width, outH: r.displayH ?? r.height,
       a, incl: (72 * Math.PI) / 180, rObs: 1000, fovScale: 14, rIn, rOut: 40, Tpeak: 3e4, lumNorm: lumNormFor(3e4), lightDelay: 1, exposure: 1.6,
       time: f, frame: f, reset: f === 0 ? 1 : 0, maxSteps: 4800, blend: f === 0 ? 1 : 0.15, timeScale: 1,
-      turbAmp: 0.6, breatheAmp: 0, nSpots: 3, jetStrength: 1, jetGamma: 2, jetLength: 60, fluxVar: 1,
+      turbAmp: 0.6, breatheAmp: 0, flareStrength: 1, flarePhi: J.phi, flareZeta: flareZeta(), jetStrength: 1, jetGamma: 2, jetLength: 60, fluxVar: 1,
       skyStrength: 0, jetB0: J.jetB0, jetQ0: J.jetQ0, rgCm: J.rgCm,
     });
     r.frame(u(0)); await r.device.queue.onSubmittedWorkDone(); // warm-up: pipeline compile

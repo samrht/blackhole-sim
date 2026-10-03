@@ -1,7 +1,7 @@
 struct Uniforms {
   res: vec2<f32>, a: f32, incl: f32, rObs: f32, fovScale: f32, rIn: f32, rOut: f32,
   Tpeak: f32, exposure: f32, time: f32, frame: u32, reset: u32, maxSteps: u32,
-  blend: f32, timeScale: f32, turbAmp: f32, breatheAmp: f32, nSpots: u32,
+  blend: f32, timeScale: f32, turbAmp: f32, breatheAmp: f32, flareStrength: f32,
   jetStrength: f32, jetGamma: f32, jetLength: f32, fluxVar: f32,
   skyStrength: f32, outW: f32, outH: f32,
   jitterMode: u32, setIndex: u32, rowStart: u32, rowEnd: u32,
@@ -9,12 +9,12 @@ struct Uniforms {
   lightDelay: f32,
   jetB0: f32, jetQ0: f32, rgCm: f32,   // synchrotron jet (CPU: jetUniforms in synchrotron.ts)
   timeEpoch: f32,                      // clock epoch: absolute time = timeEpoch + time (sim-clock.ts)
+  flarePhi: f32, flareZeta: f32,         // eruption flares (spec 2026-10-04)
 };
 @group(0) @binding(0) var<uniform> U: Uniforms;
 @group(0) @binding(1) var<storage, read_write> accum: array<vec4<f32>>;
 @group(0) @binding(2) var<storage, read> tempLUT: array<f32>;       // normalized T(r) in [0,1]
 @group(0) @binding(3) var<storage, read> colorLUT: array<vec4<f32>>; // visible-band blackbody radiance (log T)
-@group(0) @binding(4) var<storage, read> hotspots: array<vec4<f32>>; // (r, psi, sigma, amp)
 @group(0) @binding(5) var skyTex: texture_2d<f32>;
 @group(0) @binding(6) var skySamp: sampler;
 // Geodesic cache (spec 2026-10-01). One Entry per pixel per jitter set; bookmarks are sparse.
@@ -119,18 +119,6 @@ fn skySample(dir: vec3<f32>) -> vec3<f32> {
 }
 
 // --- Tier 2A emission field (WGSL twin of src/physics/emission.ts) -----------------------------
-fn hotspotFieldE(rHit: f32, psi: f32) -> f32 {
-  var s = 0.0;
-  for (var k = 0u; k < U.nSpots; k++) {
-    let sp = hotspots[k];
-    let dr = rHit - sp.x;
-    var dpsi = psi - sp.y;
-    dpsi = dpsi - 2.0 * PI * round(dpsi / (2.0 * PI));
-    let arc = sp.x * dpsi;
-    s += sp.w * exp(-(dr * dr + arc * arc) / (2.0 * sp.z * sp.z));
-  }
-  return s;
-}
 // How the disk is shaded (twin: diskShadeFactors in src/physics/emission.ts). MRI turbulence modulates
 // the local flux F = exp(sigma g - sigma^2 / 2) (sigma = U.turbAmp; mean 1, so the bolometric light is
 // conserved), which an optically thick disk radiates as a blackbody at T x F^(1/4): x = temperature scale.
@@ -141,7 +129,7 @@ fn diskShadeFactorsE(rHit: f32, phiHit: f32, psi: f32, tEmit: f32, tRel: f32, a:
   var tempScale = 1.0;
   if (s > 0.0) { tempScale = exp(0.25 * (s * turbulenceFieldE(rHit, phiHit, U.timeEpoch, tRel, a) - 0.5 * s * s)); }
   let breathe = 1.0 + U.breatheAmp * sin(2.0 * PI * tEmit / 2000.0);
-  return vec2<f32>(tempScale, max(0.0, breathe + hotspotFieldE(rHit, psi)));
+  return vec2<f32>(tempScale, max(0.0, breathe));
 }
 
 // --- Tier 2B synchrotron jet ----------------------------------------------------------------
@@ -205,7 +193,9 @@ fn shadeDisk(rHit: f32, phiHit: f32, g: f32, a: f32, tRel: f32) -> vec3<f32> {
   // Visible-band radiance of a blackbody at T_obs (I_nu / nu^3 is invariant, so a shifted blackbody
   // is a blackbody at g T): colour AND brightness a camera records, normalised so the disk's
   // rest-frame peak has luminance 1 (spec 2026-10-01 §2.3). Was the bolometric (g Tn)^4 law.
-  return sampleColor(Tobs) * U.lumNorm * E.y;
+  // Eruption flares (spec 2026-10-04): optically thin synchrotron of the flux tubes on the disk, in the disk's units.
+  let tube = tubeLightJ(rHit, phiHit, g, U.timeEpoch, tRel, a, U.fluxVar, U.flareStrength, U.flarePhi, U.flareZeta, U.rgCm);
+  return sampleColor(Tobs) * U.lumNorm * E.y + U.lumNorm * max(JET_BAND_M * tube, vec3<f32>(0.0));
 }
 
 // Light-travel delay (spec 2026-10-01): the backward ray starts at t = 0 and t decreases, so an

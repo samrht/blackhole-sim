@@ -1,7 +1,7 @@
 # Eruption flares: flux tubes on the disk — design
 
 **Date:** 2026-10-04 (session of 2026-10-03)
-**Status:** design approved in conversation; this document awaits review
+**Status:** SHELVED 2026-10-04 (see "Why shelved" at the end); branch feat/eruption-flares kept for reference, not merged
 **Follows:** jet-knots follow-up 2 ("coupling eruptions to the disk"); builds on
 `docs/specs/2026-10-03-flux-statistics-design.md` (the eruption history it reuses).
 
@@ -121,3 +121,14 @@ surroundings during a tube's life.
    simulated tubes (≤ 3 × 10³⁸ erg); mostly this app's larger Sgr A* flux (Ṁ = 10⁻⁸ M☉/yr). Stated in the docs.
 5. **Uniforms.** Slot 18 (`nSpots`, u32) becomes `flareStrength` (f32, f); new `flarePhi` (Φ, G cm²) and
    `flareZeta` (ζ) at floats 36–37; the block becomes 160 bytes.
+
+## Why shelved (2026-10-04)
+
+Implemented through the renderer (CPU model, WGSL twin, `?parity` 108 cases at 2.5e-5 in ln I, mutation-checked), then
+measured: the brightest tube's visible luminance relative to the disk's peak, per preset — M87* 3.2e-4, Sgr A* 3.2e-4,
+Gargantua 2.1e-3 (invisible), Cygnus X-1 225×, GRS 1915+105 167× (implausibly bright: the Sgr A* anchor scaled as
+Φ²/r_g to ~10⁷ K disks that emit little visible light). The observed flare phenomenon (NIR flares 3–4× the quiescent
+hot-flow emission of Sgr A*) belongs to hot, radiatively inefficient flows; this app's thin Novikov–Thorne disk is
+orders of magnitude brighter in the visible than Sgr A*'s real flow, so physically anchored flares cannot be seen
+against it. Coupling eruptions to the disk needs a hot-flow (RIAF) emission model first. The user chose to shelve;
+main keeps the illustrative Flares.

@@ -18,7 +18,6 @@ export class Renderer {
   device!: GPUDevice; ctx!: GPUCanvasContext; format!: GPUTextureFormat;
   uniformBuf!: GPUBuffer; accumBuf!: GPUBuffer;
   tempBuf!: GPUBuffer; colorBuf!: GPUBuffer;
-  spotBuf!: GPUBuffer;   // hot-spot params: array of vec4 (r, psi, sigma, amp)
   synchTex!: GPUTexture; // cooled-jet coefficient table (rg32float: ln J^, ln A^); 1x1 placeholder until loaded
   skyTex!: GPUTexture; skySampler!: GPUSampler;
   bloomA!: GPUBuffer; bloomB!: GPUBuffer;       // half-res ping/pong glow buffers
@@ -69,7 +68,6 @@ export class Renderer {
     // Placeholder LUT buffers so the first bind group is valid; replaced by uploadLUTs().
     this.tempBuf = this.device.createBuffer({ size: 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
     this.colorBuf = this.device.createBuffer({ size: 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
-    this.spotBuf = this.device.createBuffer({ size: 8 * 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
     // 1x1 placeholder sky texture so the first bind group is valid; replaced by uploadSky().
     this.skyTex = this.device.createTexture({ size: [1, 1], format: "rgba8unorm-srgb",
       usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT });
@@ -155,13 +153,6 @@ export class Renderer {
   }
   private colorSrc: Float32Array | null = null;
 
-  /** Upload packed hot-spot params (Float32Array of (r,psi,sigma,amp) per spot). Capped at the
-   *  8-vec4 buffer capacity created in init(); extra spots would overflow the storage buffer. */
-  uploadHotSpots(spots: Float32Array) {
-    const clamped = spots.length > 8 * 4 ? spots.subarray(0, 8 * 4) : spots;
-    this.device.queue.writeBuffer(this.spotBuf, 0, clamped as Float32Array<ArrayBuffer>);
-  }
-
   /** Upload the equirectangular sky panorama as an sRGB texture with a full mip chain. Mips are
    *  generated on the CPU via canvas downscales (WebGPU has no built-in generateMipmaps), which
    *  keeps the lensed/minified sky from aliasing. Caller must call rebind() afterward. */
@@ -200,7 +191,6 @@ export class Renderer {
       { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: st("storage") },
       { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: st("read-only-storage") },
       { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: st("read-only-storage") },
-      { binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: st("read-only-storage") },
       { binding: 5, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: "float" } },
       { binding: 6, visibility: GPUShaderStage.COMPUTE, sampler: { type: "filtering" } },
       { binding: 7, visibility: GPUShaderStage.COMPUTE, buffer: st("storage") },
@@ -234,7 +224,6 @@ export class Renderer {
       { binding: 1, resource: { buffer: this.accumBuf } },
       { binding: 2, resource: { buffer: this.tempBuf } },
       { binding: 3, resource: { buffer: this.colorBuf } },
-      { binding: 4, resource: { buffer: this.spotBuf } },
       { binding: 5, resource: this.skyTex.createView() },
       { binding: 6, resource: this.skySampler },
       { binding: 7, resource: { buffer: entryBuf } },

@@ -1,6 +1,7 @@
 // Layout MUST match the `Uniforms` struct in raytrace.wgsl (4-byte scalars, vec2 first).
 // floats: resW,resH,a,incl,rObs,fovScale,rIn,rOut,Tpeak,exposure,time (11)
 //         + blend,timeScale,turbAmp (lognormal sigma of the MRI turbulence),breatheAmp (4) -> 15
+//         + flareStrength (1, index 18: eruption flares, spec 2026-10-04; was the u32 nSpots)
 //         + jetStrength,jetGamma,jetLength,fluxVar (4)                -> 19
 //         + skyStrength (1)                                             -> 20 floats
 //         + outW,outH (2)                                               -> 22 floats
@@ -8,13 +9,16 @@
 //         + lightDelay (1, 0/1 light-travel delay)                      -> 24 floats
 //         + jetB0, jetQ0, rgCm (3, synchrotron jet)                     -> 27 floats
 //         + timeEpoch (1; `time` is then the remainder: t = timeEpoch + time) -> 28 floats
-// uint:   frame,reset,maxSteps (3) + nSpots (1)                        -> 4 uints
-//         + jitterMode,setIndex,rowStart,rowEnd (4, geodesic cache)    -> 8 uints
+//         + flarePhi, flareZeta (2, indices 36-37: horizon flux Phi (G cm^2), radiated fraction zeta) -> 30 floats
+// uint:   frame,reset,maxSteps (3)                                     -> 3 uints
+//         + jitterMode,setIndex,rowStart,rowEnd (4, geodesic cache)    -> 7 uints
 export interface UniformValues {
   resW: number; resH: number; a: number; incl: number; rObs: number; fovScale: number;
   rIn: number; rOut: number; Tpeak: number; exposure: number; time: number;
   frame: number; reset: number; maxSteps: number;
-  blend: number; timeScale: number; turbAmp: number; breatheAmp: number; nSpots: number;
+  blend: number; timeScale: number; turbAmp: number; breatheAmp: number;
+  /** Eruption flares (spec 2026-10-04): slider f (0 = off), horizon flux Phi (G cm^2), radiated fraction zeta. */
+  flareStrength: number; flarePhi: number; flareZeta: number;
   jetStrength: number; jetGamma: number; jetLength: number; fluxVar: number;
   skyStrength: number;
   outW: number; outH: number;
@@ -32,8 +36,8 @@ export interface UniformValues {
   /** Build pass row slice [rowStart, rowEnd). */
   rowStart?: number; rowEnd?: number;
 }
-export const UNIFORM_FLOATS = 28, UNIFORM_UINTS = 8;
-export const UNIFORM_SIZE = Math.ceil((UNIFORM_FLOATS + UNIFORM_UINTS) / 4) * 16; // -> 144 bytes
+export const UNIFORM_FLOATS = 31, UNIFORM_UINTS = 7;
+export const UNIFORM_SIZE = Math.ceil((UNIFORM_FLOATS + UNIFORM_UINTS) / 4) * 16; // -> 160 bytes
 
 export function packUniforms(u: UniformValues): ArrayBuffer {
   const buf = new ArrayBuffer(UNIFORM_SIZE);
@@ -43,7 +47,7 @@ export function packUniforms(u: UniformValues): ArrayBuffer {
   f[8] = u.Tpeak; f[9] = u.exposure; f[10] = u.time;
   i[11] = u.frame; i[12] = u.reset; i[13] = u.maxSteps;
   f[14] = u.blend; f[15] = u.timeScale; f[16] = u.turbAmp; f[17] = u.breatheAmp;
-  i[18] = u.nSpots;
+  f[18] = u.flareStrength;
   f[19] = u.jetStrength; f[20] = u.jetGamma; f[21] = u.jetLength; f[22] = u.fluxVar;
   f[23] = u.skyStrength;
   f[24] = u.outW; f[25] = u.outH;
@@ -52,5 +56,6 @@ export function packUniforms(u: UniformValues): ArrayBuffer {
   f[31] = u.lightDelay;
   f[32] = u.jetB0; f[33] = u.jetQ0; f[34] = u.rgCm;
   f[35] = u.timeEpoch ?? 0;
+  f[36] = u.flarePhi; f[37] = u.flareZeta;
   return buf;
 }

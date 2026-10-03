@@ -5,7 +5,6 @@ import { omegaKepler } from "./orbits";
 const TWO_PI = 2 * Math.PI;
 export const T_BREATHE = 2000; // coordinate-time period (in M) of the optional slow "breathing"
 
-export interface HotSpot { r: number; psi: number; sigma: number; amp: number; }
 
 /** Co-rotating pattern phase. Matter at (r, phi) orbits at Omega(r), so a feature fixed in the
  *  co-rotating frame appears at psi = phi - Omega(r) * t * timeScale in the static observer frame. */
@@ -102,19 +101,6 @@ export function lognormalFactor(g: number, sigma: number): number {
   return Math.exp(sigma * g - 0.5 * sigma * sigma);
 }
 
-/** Sum of orbiting Gaussian hot-spots, each fixed in the co-rotating (r, psi) frame. */
-export function hotspotField(rHit: number, psi: number, spots: HotSpot[]): number {
-  let s = 0;
-  for (const sp of spots) {
-    const dr = rHit - sp.r;
-    let dpsi = psi - sp.psi;
-    dpsi -= TWO_PI * Math.round(dpsi / TWO_PI); // shortest angular separation
-    const arc = sp.r * dpsi;                    // arc length along the ring
-    s += sp.amp * Math.exp(-(dr * dr + arc * arc) / (2 * sp.sigma * sp.sigma));
-  }
-  return s;
-}
-
 /** Intrinsic flicker of the disk's integrated light (fractional rms, face-on, before beaming) against the
  *  lognormal sigma, measured by scripts/calibrate-turbulence.ts at a = 0.9, r_in = ISCO .. 40 M, 1500
  *  snapshots. The 2 % default sits inside the observed thermal state (whole source < 7.5 % rms at 0.1-10 Hz,
@@ -135,12 +121,13 @@ export function sigmaForFlicker(rms: number): number {
 /** How the disk is shaded at (r, phi, t) (final review, 2026-10-03). MRI turbulence changes the local
  *  dissipation, i.e. the emitted flux F = lognormal (mean 1, so the bolometric light is conserved); an
  *  optically thick disk radiates that as a blackbody at T x F^(1/4), which the renderer shades through its
- *  colour table (tempScale). The illustrative breathing and hot spots stay a grey brightness factor. */
+ *  colour table (tempScale). The illustrative breathing stays a grey brightness factor (the hot spots became the
+ *  eruption flares, spec 2026-10-04, shaded on the GPU from eruption-spots.ts). */
 export function diskShadeFactors(
   r: number, phi: number, t: number, a: number,
-  sigma: number, breatheAmp: number, spots: HotSpot[],
+  sigma: number, breatheAmp: number,
 ): { tempScale: number; grey: number } {
   const tempScale = sigma > 0 ? Math.pow(lognormalFactor(turbulenceAt(r, phi, t, a), sigma), 0.25) : 1;
   const breathe = 1 + breatheAmp * Math.sin(TWO_PI * t / T_BREATHE);
-  return { tempScale, grey: Math.max(0, breathe + hotspotField(r, patternPhase(r, phi, t, 1, a), spots)) };
+  return { tempScale, grey: Math.max(0, breathe) };
 }
