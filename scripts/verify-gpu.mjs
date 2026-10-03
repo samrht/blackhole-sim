@@ -121,6 +121,40 @@ cacheOk = step(`lit ${lit1.toFixed(1)}`, lit1 > 5) && cacheOk;
 const appDiag = diagSince(dApp);
 console.log(`${cacheOk && !appDiag ? "✓ PASS" : "✗ FAIL"}  cache in the app: ${steps.join(", ")}${appDiag}`);
 if (!cacheOk || appDiag) failed = true;
+// Screenshot export (2026-10-03): pause, click Save PNG, catch the download. The PNG must be the canvas's
+// full internal size and show what the canvas shows (mean brightness right of the panel within 10 % of the screen).
+{
+  const dShot = diags.length;
+  await page.click("#playpause"); await page.waitForTimeout(1500);
+  const [dl] = await Promise.all([page.waitForEvent("download", { timeout: 20000 }), page.click("#saveshot")]);
+  const name = dl.suggestedFilename();
+  const png = (await import("node:fs")).readFileSync(await dl.path()).toString("base64");
+  // Compare the region right of the control panel (the panel is drawn over the canvas, not into it).
+  const clip = await page.evaluate(() => { const p = document.getElementById("panel").getBoundingClientRect();
+    const c = document.querySelector("canvas").getBoundingClientRect();
+    return { x: Math.ceil(p.right) + 10, y: c.top + 10, width: Math.floor(c.right - p.right) - 20, height: c.height - 20 }; });
+  const screenB64 = (await page.screenshot({ clip })).toString("base64");
+  const r = await page.evaluate(async ([a, b, cl]) => {
+    const load = async (data) => { const img = new Image(); img.src = "data:image/png;base64," + data; await img.decode(); return img; };
+    const mean = (img, sx, sy, sw, sh) => { const c = document.createElement("canvas"); c.width = sw; c.height = sh;
+      const g = c.getContext("2d"); g.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
+      const d = g.getImageData(0, 0, sw, sh).data; let s = 0;
+      for (let k = 0; k < d.length; k += 4) s += d[k] + d[k + 1] + d[k + 2];
+      return s / (d.length / 4) / 3; };
+    const cv = document.querySelector("canvas"), k = cv.width / cv.clientWidth; // CSS px -> canvas px
+    const file = await load(a), shot = await load(b);
+    return { w: file.width, h: file.height, cw: cv.width, ch: cv.height,
+      fileMean: mean(file, cl.x * k, cl.y * k, cl.width * k, cl.height * k), screenMean: mean(shot, 0, 0, shot.width, shot.height) };
+  }, [png, screenB64, clip]);
+  await page.click("#playpause");
+  const sizeOk = r.w === r.cw && r.h === r.ch;
+  const litOk = r.fileMean > 5 && Math.abs(r.fileMean / r.screenMean - 1) < 0.1;
+  const nameOk = /^blackhole-[a-z0-9]+-a-?\d\.\d\d-i\d+-\d{4}-\d\d-\d\dT\d\d-\d\d-\d\d\.png$/.test(name);
+  const shotDiag = diagSince(dShot);
+  const ok = sizeOk && litOk && nameOk && !shotDiag;
+  console.log(`${ok ? "✓ PASS" : "✗ FAIL"}  screenshot export: ${name} ${r.w}x${r.h} (canvas ${r.cw}x${r.ch}), mean right of the panel ${r.fileMean.toFixed(1)} vs screen ${r.screenMean.toFixed(1)}${shotDiag}`);
+  if (!ok) failed = true;
+}
 // Presets (spec 2026-10-01): each one must leave the app lit, back in `cached` mode, warning-free.
 // Spin/inclination changes rebuild the cache; mass/accretion are shading-only (Review Focus 1).
 const dPre = diags.length;

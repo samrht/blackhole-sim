@@ -326,6 +326,27 @@ export class Renderer {
     buf.unmap();
     return { data, w: this.displayW, h: this.displayH };
   }
+  /** Re-run only the present pass (accumulation + the last frame's bloom, no new trace or sample) into an
+   *  offscreen texture and read it back: exactly what the canvas shows, at the display size. Tightly packed
+   *  pixels in `format` (the canvas format). Screenshot export (src/render/screenshot.ts). */
+  async readbackDisplay(): Promise<{ data: Uint8Array; w: number; h: number; format: GPUTextureFormat }> {
+    const w = this.displayW, h = this.displayH;
+    const tex = this.device.createTexture({ size: [w, h], format: this.format,
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC });
+    const enc = this.device.createCommandEncoder();
+    const rp = enc.beginRenderPass({ colorAttachments: [{ view: tex.createView(), clearValue: { r: 0, g: 0, b: 0, a: 1 }, loadOp: "clear", storeOp: "store" }] });
+    rp.setPipeline(this.presentPipe); rp.setBindGroup(0, this.presentBind); rp.draw(3); rp.end();
+    const bpr = Math.ceil(w * 4 / 256) * 256; // bytesPerRow must be a multiple of 256
+    const buf = this.device.createBuffer({ size: bpr * h, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+    enc.copyTextureToBuffer({ texture: tex }, { buffer: buf, bytesPerRow: bpr }, [w, h]);
+    this.device.queue.submit([enc.finish()]);
+    await buf.mapAsync(GPUMapMode.READ);
+    const padded = new Uint8Array(buf.getMappedRange().slice(0));
+    const data = new Uint8Array(w * h * 4);
+    for (let y = 0; y < h; y++) data.set(padded.subarray(y * bpr, y * bpr + w * 4), y * w * 4);
+    buf.unmap(); buf.destroy(); tex.destroy();
+    return { data, w, h, format: this.format };
+  }
   /** Copy `bytes` from the start of a COPY_SRC buffer to the CPU. Validation harnesses only. */
   private async readback(src: GPUBuffer, bytes: number): Promise<ArrayBuffer> {
     const buf = this.device.createBuffer({ size: bytes, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });

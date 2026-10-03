@@ -1,4 +1,5 @@
 import { Renderer } from "./render/gpu";
+import { toRGBA, screenshotName, savePNG } from "./render/screenshot";
 import type { UniformValues } from "./render/uniforms";
 import { ScaleController } from "./render/scale";
 import { geometryKey, BuildScheduler, chooseMode } from "./render/cache-plan";
@@ -192,6 +193,16 @@ structural ${res.structural ? "ok" : "FAILED"} — centred dark shadow=${res.has
   /** Any change to spin, inclination, mass or accretion (drag-tilt included) leaves the preset (or
    *  the Default view) for "Custom", a disabled option that only ever shows the state. */
   function markCustom() { if (presetSel.value !== "custom") { presetSel.value = "custom"; pcap.hidden = true; } }
+  // Screenshot export: exactly the presented frame at the canvas's full internal resolution.
+  const shotBtn = $("saveshot") as HTMLButtonElement;
+  shotBtn.addEventListener("click", async () => {
+    shotBtn.disabled = true;
+    try {
+      const img = await r.readbackDisplay();
+      await savePNG(toRGBA(img.data, img.format), img.w, img.h, screenshotName(presetSel.value, state.a, state.incl, new Date()));
+    } catch (e) { console.error("screenshot export failed", e); }
+    finally { shotBtn.disabled = false; }
+  });
   function physicsChanged() { refreshPhysics(); refreshReadouts(); reset(); }
 
   mass.addEventListener("input", () => { state.massSun = 10 ** +mass.value; showMass(); markCustom(); physicsChanged(); });
