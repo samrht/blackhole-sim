@@ -1,7 +1,7 @@
 # Jet knots from horizon-flux variability — design
 
 **Date:** 2026-10-03
-**Status:** design approved in conversation 2026-10-03; this document awaits review
+**Status:** approved 2026-10-03; §2.3, §2.4, §2.5 corrected while planning (see "Corrections from planning")
 **Roadmap:** `docs/ROADMAP.md` queue item #3, "the jet's own churn and knots". Both are decorative value noise
 today: the knots are 1-D noise sliding outward at the local flow speed, and the cross-funnel "churn" is a noise
 pattern frozen in space (it never moves at all).
@@ -151,3 +151,23 @@ jet in ~8 s, followed by slow re-brightening and re-widening; filaments stream o
 
 **Visual check:** headless frame capture across one eruption at the default view and M87*; frames attached to
 the report.
+
+## Corrections from planning (2026-10-03)
+
+1. **τ(z) by quadrature, not a table (§2.3).** τ(z) = ∫_{z_base}^{z} dz'/β(z') — measured from the jet base
+   z_base = 2 M where emission starts (as `flowTime` already does), not from 0, where the flow law's β → 0 adds an
+   unphysical ~48 M. Substituting v = z^{1−p}: τ = [A (1 − p)]⁻¹ ∫ √(1 + A² v^{2p/(1−p)}) dv over
+   [z_base^{1−p}, |z|^{1−p}], integrand smooth; **6-point Gauss–Legendre** on that interval agrees with the exact
+   integral to 2.9 × 10⁻⁵ (G₂₈₀ 1.5–8, z ≤ 1000 M), 35× better than the planned 128-entry table (2.8 × 10⁻⁴) and with
+   no constant array. CPU twin: the same quadrature; the test compares both with a 20 000-point reference.
+   τ(60 M) = 166 M at G₂₈₀ = 2.
+2. **Mean-power normalisation (§2.4).** The toroidal field B_φ = B_p ρ Ω_F grows with radius, so a widened jet
+   (field lines at larger ρ) injects slightly more than f² per unit length: injected power is
+   P(f) ∝ f² (A + C f) (B_p unchanged, B_φ² ∝ f at fixed field-line label). `jetQ0` is therefore
+   η·P_BZ / ⟨P(f)⟩: P is evaluated at f = 0.5, 1, 1.5, 2 (the existing volume sum with the wall scaled by √f), the
+   exact cubic through them is averaged with the generator's moments ⟨f²⟩, ⟨f³⟩ (constants ⟨d⟩, ⟨d²⟩, ⟨d³⟩). The
+   §5 energy test is unchanged: the time average equals the steady value within 1 %.
+3. **Filament twist (§2.5).** With τ measured from z_base, φ_c = φ − Ω_F (τ(|z|) − (|z| − z_base)).
+4. **Files (§3).** The generator lives in a new `src/physics/flux-history.ts` (jet.ts imports it); its WGSL twin is
+   in `emission-shared.wgsl` as specified. Filament noise is a 3-D value noise built on the turbulence's integer
+   hash (`hash4` / `hash4T`), periodic in azimuth.
