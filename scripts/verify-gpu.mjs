@@ -166,6 +166,23 @@ for (let k = 0; k < 20; k++) { await page.waitForTimeout(75); if (!(await page.e
 await page.evaluate(() => { const c = document.getElementById("ldelay"); c.checked = !c.checked; c.dispatchEvent(new Event("change", { bubbles: true })); });
 preSteps.push(`delay toggle ${!delayLeft ? "ok" : "FAILED"} (stayed cached ${!delayLeft})`);
 if (delayLeft) failed = true;
+// Turbulence (spec 2026-10-03): the flicker slider reads in percent with the observed 2 % default, flares
+// start off, and nudging the flicker is shading-only (stays cached).
+const panel = await page.evaluate(() => ({
+  turb: document.getElementById("turb").value, turbMax: document.getElementById("turb").max,
+  turbv: document.getElementById("turbv").textContent, flare: document.getElementById("flare").value,
+  label: document.getElementById("turb").closest(".ctrl").textContent,
+}));
+const panelOk = panel.turb === "2" && panel.turbMax === "10" && panel.turbv === "2.0" && panel.flare === "0"
+  && /flicker/i.test(panel.label);
+preSteps.push(`flicker panel ${panelOk ? "ok" : "FAILED"} (${JSON.stringify(panel)})`);
+if (!panelOk) failed = true;
+let turbLeft = false;
+await page.evaluate(() => { const t = document.getElementById("turb"); t.value = "5"; t.dispatchEvent(new Event("input", { bubbles: true })); });
+for (let k = 0; k < 20; k++) { await page.waitForTimeout(75); if (!(await page.evaluate(() => document.getElementById("cmode").textContent)).startsWith("cached")) turbLeft = true; }
+await page.evaluate(() => { const t = document.getElementById("turb"); t.value = "2"; t.dispatchEvent(new Event("input", { bubbles: true })); });
+preSteps.push(`flicker nudge ${!turbLeft ? "ok" : "FAILED"} (stayed cached ${!turbLeft})`);
+if (turbLeft) failed = true;
 // Motion is playback speed: at 0 the scene freezes (Review Focus 2).
 await page.evaluate(() => { const m = document.getElementById("ts"); m.value = "0"; m.dispatchEvent(new Event("input", { bubbles: true })); });
 await page.waitForTimeout(1500);

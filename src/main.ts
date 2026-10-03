@@ -85,7 +85,7 @@ ratio to analytic critical curve = ${res.calibration} (NOT a calibration — the
   let geoKey = "", cachedFrame = 0, wasCached = false, liveScale = r.scale;
   let dtEma = 0, lastFpsShow = 0; // display rate (what the user sees): EMA of rAF deltas, shown <= 2x/s
 
-  const state = { a: 0.9, incl: 72, exposure: -1.0, timeScale: 1.0, flicker: FLICKER_DEFAULT, breatheAmp: 0.0, playing: true, flareScale: 1.0, jetOn: true, jetGamma: 2.0, jetEta: ETA_DEFAULT, jetLength: 60.0, jetKnots: 0.7, skyStrength: 1.0, maxSteps: 4800, massSun: CUSTOM_DEFAULT.massSun, lambda: CUSTOM_DEFAULT.lambda, lightDelay: true };
+  const state = { a: 0.9, incl: 72, exposure: -1.0, timeScale: 1.0, flicker: FLICKER_DEFAULT, breatheAmp: 0.0, playing: true, flareScale: 0.0, jetOn: true, jetGamma: 2.0, jetEta: ETA_DEFAULT, jetLength: 60.0, jetKnots: 0.7, skyStrength: 1.0, maxSteps: 4800, massSun: CUSTOM_DEFAULT.massSun, lambda: CUSTOM_DEFAULT.lambda, lightDelay: true };
   const SPEED = 20;        // coordinate-time M per real second at Motion 1 (Motion = playback speed)
   const EMA_BLEND = 0.15;  // trailing-window weight while animating
   let simTime = 0, lastNow = 0;
