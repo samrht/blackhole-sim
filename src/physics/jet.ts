@@ -87,7 +87,8 @@ export function comovingAzimuth(ph: number, z: number, a: number, g280: number):
  *  label). Strength is illustrative (no measurement fixes it); the motion is physical. Twin: filamentsJ. */
 export const FILAMENT = { amp: 0.35, cellT: 25, cellsPhi: 8, cellsQ: 2.5, salt: 0x46494c } as const;
 /** Envelope bound on q = rho / rho_f: 1.2 (the wall's cut) times the widest width factor the slider allows,
- *  sqrt(1 / (1 - sMax d1)) = 1.2572, rounded up. Twin: JET_ENV_Q in emission-shared.wgsl. */
+ *  sqrt((1 + sMax eps clip) / (1 - sMax <d>)) = sqrt(1.4798) = 1.2165, i.e. 1.460 (flux statistics); 1.51 is kept
+ *  from the first calibration so the cache geometry is unchanged. Twin: JET_ENV_Q in emission-shared.wgsl. */
 export const JET_ENV_Q = 1.51;
 
 const smooth = (t: number) => t * t * (3 - 2 * t);

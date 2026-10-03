@@ -1,7 +1,7 @@
 # Horizon-flux statistics done right — design
 
 **Date:** 2026-10-03
-**Status:** approved 2026-10-03; implemented on feat/flux-statistics (plan `docs/plans/2026-10-03-flux-statistics.md`)
+**Status:** approved 2026-10-03; §2.1/§2.2 corrected by the final review (see the last section); implemented on feat/flux-statistics (plan `docs/plans/2026-10-03-flux-statistics.md`)
 **Follows:** `docs/specs/2026-10-03-jet-flux-knots-design.md` (follow-up 1 of 3: "spin-dependent flux statistics").
 
 ## 1. Why (two calibration errors in the shipped jet knots)
@@ -95,3 +95,14 @@ mutation of the flicker cell (50 → 51) and of one table entry must fail; `?gol
 known jet-free-kernel check); `?cachecheck` 0.00e+0; app checks pass.
 
 **Visual:** frames across an eruption at the default view; knot spacing measured along the jet.
+
+## Correction from the final review (2026-10-03)
+
+**No prograde spin trend.** §2.1 took Narayan et al. 2022 Fig. 9's dashed line (0.067 at a = 0 → 0.098 at a = 0.9) as
+"the authors' trend line". The caption says the dashed lines only *connect* the a = 0 points to a = ±0.9 "to highlight
+the trends", and §3.3 says Φ's variability is "largely independent of prograde spin"; the five prograde points (0.067,
+0.079, 0.098, 0.081, 0.098) scatter around a flat value. The target is therefore flat: their mean, **0.0846**, at every
+prograde spin; the per-spin table collapses to one calibration: δ̄ = 0.1842, ε = 0.06844, ⟨d⟩ = 0.092856,
+⟨d²⟩ = 0.011715, ⟨d³⟩ = 0.001693 (M₅₀₀/M₁₀₀₀/M₂₀₀₀ = 0.0729/0.0846/0.0890). `fluxParams(a)` / `fluxParamsJ(a)` keep
+their spin argument and return these constants. The widest jet is now 1.460 of the funnel (envelope 1.51 kept).
+The δφ = 2σ_φ rule is the eruption paper's ansatz for φ_BH, carried over to Φ as a relative rms (noted in the docs).

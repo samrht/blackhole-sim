@@ -96,10 +96,10 @@ fn jetGammaAt(z: f32, g280: f32) -> f32 {
 // --- Horizon-flux history and launch time (spec 2026-10-03 jet flux knots; twins: flux-history.ts, jet.ts) ----
 const FLUX_T = 1500.0; const FLUX_JIT = 0.33333334; const FLUX_TAUD = 500.0; const FLUX_SPREAD = 0.5;
 const FLUX_FLOOR = 0.05;
-// Flicker (spec 2026-10-03 flux statistics) and the per-spin table rows a = 0, 0.3, 0.6, 0.9 of (dbar, eps, <d>)
-// (twin: FLUX, FLUX_SPIN in flux-history.ts).
+// Flicker and the calibration (spec 2026-10-03 flux statistics; spin-independent per Narayan et al. 2022 S3.3)
+// (twin: FLUX in flux-history.ts).
 const FLUX_CELL_N = 50.0; const FLUX_CLIP = 3.0; const FLUX_SALT_N = 0x464eu;
-const FLUX_TAB = array<f32, 12>(0.1455, 0.05499, 0.073273, 0.1682, 0.06295, 0.084751, 0.191, 0.07072, 0.096304, 0.2138, 0.0783, 0.107885);
+const FLUX_DBAR = 0.1842; const FLUX_EPS = 0.06844; const FLUX_D1 = 0.092856;
 const FLUX_SALT_T = 0x464cu; const FLUX_SALT_D = 0x4458u;
 const JET_ENV_Q = 1.51;   // envelope bound on rho / rho_f: 1.2 x the widest flux-driven width (jet.ts JET_ENV_Q)
 // Absolute time epoch + rel as (whole periods k, remainder in [0, P)): the epoch is a multiple of 2048, so for
@@ -129,14 +129,8 @@ fn fluxFlickerJ(epoch: f32, rel: f32) -> f32 {
   let n = (w0 * gaussT(i, 0x0f1cu, 0, FLUX_SALT_N) + w1 * gaussT(i + 1, 0x0f1cu, 0, FLUX_SALT_N)) / sqrt(w0 * w0 + w1 * w1);
   return clamp(n, -FLUX_CLIP, FLUX_CLIP);
 }
-// (dbar, eps, <d>) at spin a: linear in clamp(a, 0, 0.9) between the table rows (twin: fluxParams).
-fn fluxParamsJ(a: f32) -> vec3<f32> {
-  var tab = FLUX_TAB; // function-scope copy: dynamic indexing
-  let x = clamp(a, 0.0, 0.9) / 0.3; let i = min(u32(floor(x)), 2u); let w = x - f32(i);
-  let lo = vec3<f32>(tab[3u * i], tab[3u * i + 1u], tab[3u * i + 2u]);
-  let hi = vec3<f32>(tab[3u * i + 3u], tab[3u * i + 4u], tab[3u * i + 5u]);
-  return mix(lo, hi, w);
-}
+// (dbar, eps, <d>): spin-independent (twin: fluxParams).
+fn fluxParamsJ(a: f32) -> vec3<f32> { return vec3<f32>(FLUX_DBAR, FLUX_EPS, FLUX_D1); }
 // f = Phi / <Phi> at absolute time epoch + rel, slider s, spin a (s = 0: exactly 1; twin: fluxRatio).
 fn fluxRatioJ(epoch: f32, rel: f32, s: f32, a: f32) -> f32 {
   if (s == 0.0) { return 1.0; }

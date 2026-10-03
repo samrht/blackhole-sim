@@ -1,33 +1,25 @@
 // Horizon magnetic-flux history Phi(t) of a magnetically arrested disk (specs 2026-10-03 jet flux knots and flux
 // statistics). Phi / Phi_sat = (1 - d(t)) (1 + eps n(t)): d is the eruption sawtooth (recurrence ~1500 M,
 // arXiv 2510.25842; exponential drop with the converged 500 M e-folding, Ripperda et al. 2022; linear refill),
-// n is fast red-noise flicker (Gaussian lattice, 50 M cells, clipped at +-3). Per spin, (dbar, eps) make the rms
-// within 1000 M windows (Narayan et al. 2022 eq. 13) equal their absolute-flux Phi trend line (Fig. 9) and the
-// eruptions 2 sigma deep (2510.25842 SIV.3). WGSL twin: fluxRatioJ in emission-shared.wgsl.
+// n is fast red-noise flicker (Gaussian lattice, 50 M cells, clipped at +-3). (dbar, eps) make the rms
+// within 1000 M windows (Narayan et al. 2022 eq. 13) equal their absolute-flux Phi value (Fig. 9, S3.3: flat in prograde
+// spin) and the eruptions 2 sigma deep (2510.25842 SIV.3's ansatz delta-phi = 2 sigma-phi, carried over to Phi). WGSL twin: fluxRatioJ in emission-shared.wgsl.
 import { hash4, gaussNode } from "./emission";
 
 export const FLUX = {
   T: 1500, jitter: 1 / 3, tauD: 500, spread: 0.5, floor: 0.05, sMax: 1.4,
   flickerCell: 50, flickerClip: 3, c2: 0.995007, // E[clip(n)^2] for a standard normal clipped at 3
   saltT: 0x464c, saltD: 0x4458, saltN: 0x464e,
+  // scripts/calibrate-flux.ts: dbar = 2 sigma/mu of the series, eps sets the 1000 M modulation index to fluxTarget()
+  dbar: 0.1842, eps: 0.06844, d1: 0.092856, d2: 0.011715, d3: 0.001693,
 } as const;
-/** (dbar, eps) and the eruption moments <d^k> at s = 1 per spin (scripts/calibrate-flux.ts). */
-export const FLUX_SPIN = [
-  { a: 0, dbar: 0.1455, eps: 0.05499, d1: 0.073273, d2: 0.007298, d3: 0.000833 },
-  { a: 0.3, dbar: 0.1682, eps: 0.06295, d1: 0.084751, d2: 0.009761, d3: 0.001288 },
-  { a: 0.6, dbar: 0.191, eps: 0.07072, d1: 0.096304, d2: 0.0126, d3: 0.001889 },
-  { a: 0.9, dbar: 0.2138, eps: 0.0783, d1: 0.107885, d2: 0.015808, d3: 0.002653 },
-] as const;
-/** Narayan et al. 2022 Fig. 9 Phi trend line, 1000 t_g modulation index (prograde; a > 0.9 uses 0.9). */
-export function fluxTarget(a: number): number { return 0.067 + (0.031 * Math.min(0.9, Math.max(0, a))) / 0.9; }
-export function fluxParams(a: number) {
-  const x = Math.min(0.9, Math.max(0, a));
-  let i = 0; while (i < FLUX_SPIN.length - 2 && x > FLUX_SPIN[i + 1].a) i++;
-  const lo = FLUX_SPIN[i], hi = FLUX_SPIN[i + 1], w = (x - lo.a) / (hi.a - lo.a);
-  if (w === 0) return { dbar: lo.dbar, eps: lo.eps, d1: lo.d1, d2: lo.d2, d3: lo.d3 };
-  if (w === 1) return { dbar: hi.dbar, eps: hi.eps, d1: hi.d1, d2: hi.d2, d3: hi.d3 };
-  const L = (p: number, q: number) => p + (q - p) * w;
-  return { dbar: L(lo.dbar, hi.dbar), eps: L(lo.eps, hi.eps), d1: L(lo.d1, hi.d1), d2: L(lo.d2, hi.d2), d3: L(lo.d3, hi.d3) };
+/** Narayan et al. 2022's absolute-flux (Phi) modulation index, 1000 t_g windows: flat in prograde spin. Their S3.3:
+ *  Phi variability is "largely independent of prograde spin"; the Fig. 9 dashed lines only connect a = 0 to 0.9.
+ *  The value is the mean of the five prograde points 0.067, 0.079, 0.098, 0.081, 0.098 (final review). */
+export function fluxTarget(_a = 0): number { return 0.0846; }
+/** Calibration (dbar, eps, <d^k>); spin-independent, so the same for every a (twin: fluxParamsJ). */
+export function fluxParams(_a: number) {
+  return { dbar: FLUX.dbar, eps: FLUX.eps, d1: FLUX.d1, d2: FLUX.d2, d3: FLUX.d3 };
 }
 
 export function fluxHash(k: number, salt: number): number { return (hash4(k, 0x7a11, 0, salt) & 0xffffff) / 16777216 - 0.5; }

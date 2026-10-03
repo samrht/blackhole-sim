@@ -49,7 +49,7 @@ this file is the queue. Each item gets its own spec (and plan) before code, as e
   replaced by the imprint of a MAD's horizon-flux history (eruptions every ~1500 M, 500 M drop e-folding, 20.9 %
   swing), launched at the base and carried by the plasma, plus filaments frozen into the moving, rotating plasma
   (README "Jet knots from horizon-flux variability"). Follow-ups: ~~spin-dependent flux statistics~~ done 2026-10-03 (absolute flux Φ, windowed
-  modulation index per spin, eruptions × fast flicker; README "Correction: horizon-flux statistics"); shell collisions (internal shocks proper) beyond the 60 M view; coupling the eruptions to
+  modulation index — spin-independent per the source — eruptions × fast flicker; README "Correction: horizon-flux statistics"); shell collisions (internal shocks proper) beyond the 60 M view; coupling the eruptions to
   the disk (Ṁ drop, hot spots).
 
 ## Open questions from the presets work

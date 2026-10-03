@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { FLUX, FLUX_SPIN, fluxHash, eruptionTime, eruptionDepth, fluxDeficit, fluxFlicker, fluxParams, fluxTarget,
+import { FLUX, fluxHash, eruptionTime, eruptionDepth, fluxDeficit, fluxFlicker, fluxParams, fluxTarget,
   fluxRatio, fluxMoment, fluxSeries, modulationIndex, seriesSigma } from "../src/physics/flux-history";
 
 describe("flux history v2: eruptions x flicker, per spin (spec 2026-10-03 flux statistics)", () => {
@@ -29,28 +29,22 @@ describe("flux history v2: eruptions x flicker, per spin (spec 2026-10-03 flux s
     let num = 0; for (let i = 0; i + 20 < xs.length; i++) num += xs[i] * xs[i + 20];
     expect(Math.abs(num / v)).toBeLessThan(0.05); // lag 100 M
   });
-  it("each table row reproduces Narayan+2022's windowed Phi index, window insensitivity and the 2-sigma depth", () => {
-    for (const row of FLUX_SPIN) {
-      const s = fluxSeries(row.dbar, row.eps);
-      expect(Math.abs(modulationIndex(s, 1000) - fluxTarget(row.a))).toBeLessThan(0.002);
-      expect(modulationIndex(s, 500) / modulationIndex(s, 2000)).toBeGreaterThanOrEqual(0.8);
-      expect(Math.abs(2 * seriesSigma(s) / row.dbar - 1)).toBeLessThan(0.01);
-      let d1 = 0, d2 = 0, d3 = 0, n = 0;
-      for (let t = 0.5; t < 1e6; t += 1) { const d = fluxDeficit(t, row.dbar); d1 += d; d2 += d * d; d3 += d * d * d; n++; }
-      // the table prints 6 decimals: compare at that precision (d3 ~ 8e-4 makes a relative check meaningless)
-      expect(Math.abs(d1 / n - row.d1)).toBeLessThan(1e-6);
-      expect(Math.abs(d2 / n - row.d2)).toBeLessThan(1e-6);
-      expect(Math.abs(d3 / n - row.d3)).toBeLessThan(1e-6);
-    }
+  it("Phi's 1000 M modulation index is flat in prograde spin at 0.0846 (Narayan+2022 S3.3; final review)", () => {
+    // Their Fig. 9 dashed lines only connect a = 0 to 0.9; the text: Phi variability "largely independent of
+    // prograde spin". Target = mean of the five prograde points 0.067, 0.079, 0.098, 0.081, 0.098.
+    for (const a of [0, 0.3, 0.45, 0.9, 0.998]) { expect(fluxTarget(a)).toBe(0.0846); expect(fluxParams(a)).toEqual(fluxParams(0)); }
   });
-  it("spin interpolation: table rows exact, linear between, clamped outside [0, 0.9] (Review Focus 1, 5)", () => {
-    for (const row of FLUX_SPIN) expect(fluxParams(row.a).eps).toBe(row.eps);
-    const mid = fluxParams(0.45), lo = FLUX_SPIN[1], hi = FLUX_SPIN[2];
-    expect(mid.dbar).toBeCloseTo(0.5 * (lo.dbar + hi.dbar), 12);
-    expect(mid.d2).toBeCloseTo(0.5 * (lo.d2 + hi.d2), 12);
-    expect(fluxParams(0.998)).toEqual(fluxParams(0.9));
-    expect(fluxParams(-0.2)).toEqual(fluxParams(0));
-    expect(fluxTarget(0)).toBeCloseTo(0.067, 12); expect(fluxTarget(0.998)).toBeCloseTo(0.098, 12);
+  it("the calibration reproduces the windowed index, window insensitivity and the 2-sigma depth", () => {
+    const s = fluxSeries(FLUX.dbar, FLUX.eps);
+    expect(Math.abs(modulationIndex(s, 1000) - 0.0846)).toBeLessThan(0.002);
+    expect(modulationIndex(s, 500) / modulationIndex(s, 2000)).toBeGreaterThanOrEqual(0.8);
+    expect(Math.abs(2 * seriesSigma(s) / FLUX.dbar - 1)).toBeLessThan(0.01);
+    let d1 = 0, d2 = 0, d3 = 0, n = 0;
+    for (let t = 0.5; t < 1e6; t += 1) { const d = fluxDeficit(t, FLUX.dbar); d1 += d; d2 += d * d; d3 += d * d * d; n++; }
+    // the constants print 6 decimals: compare at that precision
+    expect(Math.abs(d1 / n - FLUX.d1)).toBeLessThan(1e-6);
+    expect(Math.abs(d2 / n - FLUX.d2)).toBeLessThan(1e-6);
+    expect(Math.abs(d3 / n - FLUX.d3)).toBeLessThan(1e-6);
   });
   it("s = 0 is a steady jet; s <= sMax never reaches the floor at any spin (Review Focus 3)", () => {
     for (const t of [0, 123.4, 9e5]) expect(fluxRatio(t, 0, 0.9)).toBe(1);
@@ -68,5 +62,16 @@ describe("flux history v2: eruptions x flicker, per spin (spec 2026-10-03 flux s
       expect(Math.abs(m2 / n / fluxMoment(2, s, a) - 1)).toBeLessThan(3e-3);
       expect(Math.abs(m3 / n / fluxMoment(3, s, a) - 1)).toBeLessThan(5e-3);
     }
+  });
+});
+
+describe("Flux variability tooltip (final review: it still advertised the old phi_BH 21 %)", () => {
+  it("describes the absolute-flux calibration, not 21 %", async () => {
+    const { readFileSync } = await import("node:fs");
+    const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
+    const tip = html.match(/<div class="ctrl" title="([^"]*)">\s*<div class="row"><label>Flux variability/)![1];
+    expect(tip).not.toMatch(/21 %/);
+    expect(tip).toMatch(/8\.5 %/);
+    expect(tip).toMatch(/Φ/);
   });
 });
