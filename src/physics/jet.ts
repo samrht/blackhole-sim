@@ -119,7 +119,7 @@ export function jetShape(r: number, th: number, ph: number, t: number, jetLength
   if (az < JET.zBase || az > jetLength) return 0;
   const rho = r * Math.sin(th);
   if (rho > JET_ENV_Q * funnelEdge(z)) return 0; // exact: beyond the widest wall for any f (twin's early-out)
-  const tl = t - launchDelay(z, g280), f = fluxRatio(tl, fluxVar), sw = Math.sqrt(f);
+  const tl = t - launchDelay(z, g280), f = fluxRatio(tl, fluxVar, a), sw = Math.sqrt(f);
   const w = wallProfile(rho / sw, z);
   if (w <= 0) return 0;
   const q = rho / (sw * funnelEdge(z));

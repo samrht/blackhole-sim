@@ -64,7 +64,7 @@ export function boxMuller(h1: number, h2: number): number {
   const u1 = ((h1 & 0xffffff) + 0.5) / 16777216, u2 = (h2 & 0xffffff) / 16777216;
   return -Math.sqrt(-2 * Math.log(u1)) * Math.cos(boxMullerAngle(u2));
 }
-function gaussNode(ix: number, iy: number, gen: number, salt: number): number {
+export function gaussNode(ix: number, iy: number, gen: number, salt: number): number {
   const h1 = hash4(ix, iy, gen, salt);
   return boxMuller(h1, mixHash((h1 ^ 0x9e3779b9) >>> 0));
 }

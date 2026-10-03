@@ -5,7 +5,7 @@ import {
   JET, funnelEdge, wallProfile, lengthFalloff, jetShape, inJetEnvelope, FILAMENT, JET_ENV_Q, vnoise3, filaments,
   launchDelay, fieldLineOmega, comovingAzimuth, gammaProfile, GL6,
 } from "../src/physics/jet";
-import { FLUX, fluxRatio } from "../src/physics/flux-history";
+import { FLUX, FLUX_SPIN, fluxRatio } from "../src/physics/flux-history";
 
 describe("jet geometry", () => {
   it("funnel widens with height (parabolic)", () => {
@@ -37,7 +37,7 @@ describe("flux-driven jet shape (spec 2.4, 2.5)", () => {
   it("density x f and width x sqrt(f) at the plasma's launch time", () => {
     const r = 30, th = thWall(30), z = r * Math.cos(th), rho = r * Math.sin(th);
     for (const t of [500, 2100, 7777]) {
-      const tl = t - launchDelay(z, 2), f = fluxRatio(tl, 1), sw = Math.sqrt(f);
+      const tl = t - launchDelay(z, 2), f = fluxRatio(tl, 1, 0.9), sw = Math.sqrt(f);
       const q = rho / (sw * funnelEdge(z));
       const want = f * wallProfile(rho / sw, z) * lengthFalloff(z, 60) * filaments(q, comovingAzimuth(0.4, z, 0.9, 2), tl);
       expect(jetShape(r, th, 0.4, t, 60, 1, 2, 0.9)).toBeCloseTo(want, 12);
@@ -49,7 +49,7 @@ describe("flux-driven jet shape (spec 2.4, 2.5)", () => {
     for (const z of [10, 40]) {
       const tl = t0, t = tl + launchDelay(z, g), ph = ph0 + fieldLineOmega(a) * (launchDelay(z, g) - (z - JET.zBase));
       expect(comovingAzimuth(ph, z, a, g)).toBeCloseTo(ph0, 10);
-      expect(fluxRatio(t - launchDelay(z, g), 1)).toBeCloseTo(fluxRatio(tl, 1), 12);
+      expect(fluxRatio(t - launchDelay(z, g), 1, 0.9)).toBeCloseTo(fluxRatio(tl, 1, 0.9), 12);
     }
   });
   it("s = 0 gives the steady jet: wall x falloff x filaments, no width change (Review Focus 3)", () => {
@@ -74,14 +74,17 @@ describe("flux-driven jet shape (spec 2.4, 2.5)", () => {
 });
 
 describe("jet envelope (geodesic-cache bookmark region), widened for the flux-driven width", () => {
-  it("JET_ENV_Q covers the widest jet the slider allows", () => {
-    expect(JET_ENV_Q).toBeGreaterThanOrEqual(1.2 * Math.sqrt(1 / (1 - FLUX.sMax * FLUX.d1)));
+  it("JET_ENV_Q covers the widest jet the slider allows at every spin", () => {
+    for (const row of FLUX_SPIN) {
+      const fMax = (1 + FLUX.sMax * row.eps * FLUX.flickerClip) / (1 - FLUX.sMax * row.d1);
+      expect(JET_ENV_Q).toBeGreaterThanOrEqual(1.2 * Math.sqrt(fMax));
+    }
   });
   it("contains every point where the jet can emit, at any flux and slider value (Review Focus 2)", () => {
     for (let r = 1.2; r < 80; r *= 1.07)
       for (let th = 0.001; th < Math.PI; th += 0.013)
-        for (const t of [0, 333, 1777, 2950]) for (const s of [0, 1, FLUX.sMax])
-          if (jetShape(r, th, 0.5, t, 60, s, 2, 0.9) > 0) expect(inJetEnvelope(r, th, 60)).toBe(true);
+        for (const t of [0, 333, 1777, 2950]) for (const s of [0, 1, FLUX.sMax]) for (const a of [0.3, 0.9, 0.998])
+          if (jetShape(r, th, 0.5, t, 60, s, 2, a) > 0) expect(inJetEnvelope(r, th, 60)).toBe(true);
   });
   it("excludes below the launch height, beyond the length, and outside the wall", () => {
     expect(inJetEnvelope(1.5, 0.01, 60)).toBe(false);
@@ -136,13 +139,15 @@ const wconst = (name: string) => { const m = WGSL_E.match(new RegExp(`const ${na
 describe("emission-shared.wgsl flux/filament constants match the CPU twins", () => {
   it("flux generator, filaments, envelope, Gauss nodes", () => {
     const pairs: [string, number][] = [["FLUX_T", FLUX.T], ["FLUX_JIT", FLUX.jitter], ["FLUX_TAUD", FLUX.tauD],
-      ["FLUX_SPREAD", FLUX.spread], ["FLUX_FLOOR", FLUX.floor], ["FLUX_DBAR", FLUX.dbar], ["FLUX_D1", FLUX.d1],
+      ["FLUX_SPREAD", FLUX.spread], ["FLUX_FLOOR", FLUX.floor], ["FLUX_CELL_N", FLUX.flickerCell], ["FLUX_CLIP", FLUX.flickerClip], ["FLUX_SALT_N", FLUX.saltN],
       ["FLUX_SALT_T", FLUX.saltT], ["FLUX_SALT_D", FLUX.saltD], ["FIL_AMP", FILAMENT.amp], ["FIL_CELL_T", FILAMENT.cellT],
       ["FIL_CELLS_PHI", FILAMENT.cellsPhi], ["FIL_CELLS_Q", FILAMENT.cellsQ], ["FIL_SALT", FILAMENT.salt], ["JET_ENV_Q", JET_ENV_Q]];
     // Number() parses decimals and the hex salts (0x464c); WGSL's u suffix is stripped first.
     for (const [n, v] of pairs) expect(Math.abs(Number(wconst(n).trim().replace(/u$/, "")) - v)).toBeLessThan(1e-7 * Math.max(1, Math.abs(v)));
     const nodes = wconst("GL6_X").match(/-?\d+\.\d+/g)!.map(Number), wts = wconst("GL6_W").match(/-?\d+\.\d+/g)!.map(Number);
     GL6.forEach(([x, w], i) => { expect(nodes[i]).toBeCloseTo(x, 7); expect(wts[i]).toBeCloseTo(w, 7); });
+    const tab = wconst("FLUX_TAB").match(/-?\d+\.\d+(e-?\d+)?/g)!.map(Number); // 4 rows x (dbar, eps, d1)
+    FLUX_SPIN.forEach((r, i) => { expect(tab[3 * i]).toBeCloseTo(r.dbar, 7); expect(tab[3 * i + 1]).toBeCloseTo(r.eps, 7); expect(tab[3 * i + 2]).toBeCloseTo(r.d1, 7); });
   });
   it("the old knot and churn noise is gone from the shared jet code", () => {
     expect(WGSL_E).not.toMatch(/knotsJ|JET_KZ|JET_TURB|JET_SEED/);

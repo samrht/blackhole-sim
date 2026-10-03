@@ -89,7 +89,7 @@ export function meanInjection(a: number, b0: number, rgCm: number, jetLength: nu
   }
   const co = [0, 0, 0, 0];
   for (let r = 3; r >= 0; r--) { let s = M[r][4]; for (let j = r + 1; j < 4; j++) s -= M[r][j] * co[j]; co[r] = s / M[r][r]; }
-  return co[0] + co[1] + co[2] * fluxMoment(2, fluxVar) + co[3] * fluxMoment(3, fluxVar);
+  return co[0] + co[1] + co[2] * fluxMoment(2, fluxVar, a) + co[3] * fluxMoment(3, fluxVar, a);
 }
 // j' = C_J q0 shape B J^(x, s), alpha' = C_A q0 shape J^... (spec 2.3): logs of the prefactors, nu_B / B, k / B^2,
 // and of the flow-time constant 280^0.58 / (0.42 c).

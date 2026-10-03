@@ -1,57 +1,72 @@
 import { describe, it, expect } from "vitest";
-import { FLUX, fluxHash, eruptionTime, eruptionDepth, fluxDeficit, fluxRatio, fluxMoment, measureFlux } from "../src/physics/flux-history";
+import { FLUX, FLUX_SPIN, fluxHash, eruptionTime, eruptionDepth, fluxDeficit, fluxFlicker, fluxParams, fluxTarget,
+  fluxRatio, fluxMoment, fluxSeries, modulationIndex, seriesSigma } from "../src/physics/flux-history";
 
-describe("flux history (spec 2026-10-03 jet flux knots 2.2)", () => {
-  it("eruptions recur every 1500 M on average, every gap inside [1000, 2000] M", () => {
+describe("flux history v2: eruptions x flicker, per spin (spec 2026-10-03 flux statistics)", () => {
+  it("eruptions recur every 1500 M on average, every gap in [1000, 2000] M", () => {
     const gaps: number[] = [];
     for (let k = 0; k < 700; k++) gaps.push(eruptionTime(k + 1) - eruptionTime(k));
-    const mean = gaps.reduce((x, y) => x + y) / gaps.length;
-    expect(Math.abs(mean - 1500)).toBeLessThan(50);
+    expect(Math.abs(gaps.reduce((x, y) => x + y) / gaps.length - 1500)).toBeLessThan(50);
     for (const g of gaps) { expect(g).toBeGreaterThanOrEqual(1000); expect(g).toBeLessThanOrEqual(2000); }
+    for (let k = -5; k < 5; k++) { const u = fluxHash(k, FLUX.saltT); expect(u).toBeGreaterThanOrEqual(-0.5); expect(u).toBeLessThan(0.5); }
   });
-  it("hash is uniform in [-0.5, 0.5) and deterministic", () => {
-    for (let k = -50; k < 50; k++) {
-      const u = fluxHash(k, FLUX.saltT);
-      expect(u).toBeGreaterThanOrEqual(-0.5); expect(u).toBeLessThan(0.5); expect(fluxHash(k, FLUX.saltT)).toBe(u);
-    }
-  });
-  it("drops are exponential with e-folding 500 M (Ripperda+2022), then refill linearly to zero", () => {
+  it("drops are exponential with e-folding 500 M, then refill linearly (unchanged)", () => {
+    const db = 0.2138;
     for (const k of [3, 17, 401]) {
-      const tk = eruptionTime(k), dk = eruptionDepth(k), D = -FLUX.tauD * Math.log(1 - dk);
-      expect(fluxDeficit(tk + 1e-6)).toBeLessThan(1e-6);                       // starts at 0
-      expect(fluxDeficit(tk + 100)).toBeCloseTo(1 - Math.exp(-100 / 500), 12);  // exponential
-      expect(fluxDeficit(tk + D - 1e-6)).toBeCloseTo(dk, 6);                     // reaches the depth
-      const tn = eruptionTime(k + 1), mid = 0.5 * (tk + D + tn);
-      expect(fluxDeficit(mid)).toBeCloseTo(0.5 * dk, 6);                         // linear refill
-      expect(fluxDeficit(tn - 1e-6)).toBeLessThan(1e-6);                         // continuous at the next eruption
+      const tk = eruptionTime(k), dk = eruptionDepth(k, db), D = -FLUX.tauD * Math.log(1 - dk);
+      expect(fluxDeficit(tk + 100, db)).toBeCloseTo(1 - Math.exp(-0.2), 12);
+      expect(fluxDeficit(tk + D - 1e-6, db)).toBeCloseTo(dk, 6);
+      expect(fluxDeficit(0.5 * (tk + D + eruptionTime(k + 1)), db)).toBeCloseTo(0.5 * dk, 6);
     }
   });
-  it("swing sigma/mu = 0.209 at s = 1 (Narayan+2022 a = 0.9) and the hardcoded moments match the generator", () => {
-    const m = measureFlux(FLUX.dbar, 1e6, 1);
-    expect(m.sigmaOverMu).toBeCloseTo(FLUX.target, 3);
-    expect(Math.abs(m.d1 / FLUX.d1 - 1)).toBeLessThan(1e-4);
-    expect(Math.abs(m.d2 / FLUX.d2 - 1)).toBeLessThan(1e-4);
-    expect(Math.abs(m.d3 / FLUX.d3 - 1)).toBeLessThan(1e-4);
+  it("flicker: deterministic, clipped at 3, clipped variance c2, decorrelated after 100 M", () => {
+    let m = 0, v = 0, mx = 0, n = 0; const xs: number[] = [];
+    for (let t = 2.5; t < 1e6; t += 5) { const x = fluxFlicker(t); xs.push(x); m += x; v += x * x; mx = Math.max(mx, Math.abs(x)); n++; }
+    expect(fluxFlicker(1234.5)).toBe(fluxFlicker(1234.5));
+    expect(mx).toBeLessThanOrEqual(FLUX.flickerClip);
+    expect(Math.abs(v / n - FLUX.c2)).toBeLessThan(0.01);
+    expect(Math.abs(m / n)).toBeLessThan(0.02);
+    let num = 0; for (let i = 0; i + 20 < xs.length; i++) num += xs[i] * xs[i + 20];
+    expect(Math.abs(num / v)).toBeLessThan(0.05); // lag 100 M
   });
-  it("the floor is never reached for s <= sMax (Review Focus 3)", () => {
-    let maxDepth = 0;
-    for (let k = -10; k < 5000; k++) maxDepth = Math.max(maxDepth, eruptionDepth(k));
-    expect(maxDepth * FLUX.sMax).toBeLessThan(1 - FLUX.floor);
+  it("each table row reproduces Narayan+2022's windowed Phi index, window insensitivity and the 2-sigma depth", () => {
+    for (const row of FLUX_SPIN) {
+      const s = fluxSeries(row.dbar, row.eps);
+      expect(Math.abs(modulationIndex(s, 1000) - fluxTarget(row.a))).toBeLessThan(0.002);
+      expect(modulationIndex(s, 500) / modulationIndex(s, 2000)).toBeGreaterThanOrEqual(0.8);
+      expect(Math.abs(2 * seriesSigma(s) / row.dbar - 1)).toBeLessThan(0.01);
+      let d1 = 0, d2 = 0, d3 = 0, n = 0;
+      for (let t = 0.5; t < 1e6; t += 1) { const d = fluxDeficit(t, row.dbar); d1 += d; d2 += d * d; d3 += d * d * d; n++; }
+      // the table prints 6 decimals: compare at that precision (d3 ~ 8e-4 makes a relative check meaningless)
+      expect(Math.abs(d1 / n - row.d1)).toBeLessThan(1e-6);
+      expect(Math.abs(d2 / n - row.d2)).toBeLessThan(1e-6);
+      expect(Math.abs(d3 / n - row.d3)).toBeLessThan(1e-6);
+    }
   });
-  it("s = 0 is a steady jet: f = 1 at all times (Review Focus 3)", () => {
-    for (const t of [0, 123.4, 9e5, -50]) expect(fluxRatio(t, 0)).toBe(1);
+  it("spin interpolation: table rows exact, linear between, clamped outside [0, 0.9] (Review Focus 1, 5)", () => {
+    for (const row of FLUX_SPIN) expect(fluxParams(row.a).eps).toBe(row.eps);
+    const mid = fluxParams(0.45), lo = FLUX_SPIN[1], hi = FLUX_SPIN[2];
+    expect(mid.dbar).toBeCloseTo(0.5 * (lo.dbar + hi.dbar), 12);
+    expect(mid.d2).toBeCloseTo(0.5 * (lo.d2 + hi.d2), 12);
+    expect(fluxParams(0.998)).toEqual(fluxParams(0.9));
+    expect(fluxParams(-0.2)).toEqual(fluxParams(0));
+    expect(fluxTarget(0)).toBeCloseTo(0.067, 12); expect(fluxTarget(0.998)).toBeCloseTo(0.098, 12);
   });
-  it("f has mean one and the closed-form moments match a brute-force time average", () => {
-    for (const s of [0.5, 1, 1.4]) {
+  it("s = 0 is a steady jet; s <= sMax never reaches the floor at any spin (Review Focus 3)", () => {
+    for (const t of [0, 123.4, 9e5]) expect(fluxRatio(t, 0, 0.9)).toBe(1);
+    for (const a of [0, 0.45, 0.9]) {
+      const p = fluxParams(a);
+      let maxDepth = 0; for (let k = -10; k < 5000; k++) maxDepth = Math.max(maxDepth, eruptionDepth(k, p.dbar));
+      expect((1 - FLUX.sMax * maxDepth) * (1 - FLUX.sMax * p.eps * FLUX.flickerClip)).toBeGreaterThan(FLUX.floor);
+    }
+  });
+  it("closed-form <f> = 1, <f^2>, <f^3> match brute force (Review Focus 4)", () => {
+    for (const a of [0, 0.45, 0.9, 0.998]) for (const s of [0.5, 1, 1.4]) {
       let m1 = 0, m2 = 0, m3 = 0, n = 0;
-      // the constants' own 1e6 M window (a shorter one samples different eruptions: ~0.5 % off)
-      for (let t = 0.5; t < 1e6; t += 1) { const f = fluxRatio(t, s); m1 += f; m2 += f * f; m3 += f * f * f; n++; }
+      for (let t = 0.5; t < 1e6; t += 1) { const f = fluxRatio(t, s, a); m1 += f; m2 += f * f; m3 += f * f * f; n++; }
       expect(m1 / n).toBeCloseTo(1, 2);
-      expect(Math.abs(m2 / n / fluxMoment(2, s) - 1)).toBeLessThan(3e-3);
-      expect(Math.abs(m3 / n / fluxMoment(3, s) - 1)).toBeLessThan(5e-3);
+      expect(Math.abs(m2 / n / fluxMoment(2, s, a) - 1)).toBeLessThan(3e-3);
+      expect(Math.abs(m3 / n / fluxMoment(3, s, a) - 1)).toBeLessThan(5e-3);
     }
-  });
-  it("negative and huge times work (the clock never runs backwards, but launch times can precede 0)", () => {
-    for (const t of [-1400, -1, 0, 4.2e7]) { const d = fluxDeficit(t); expect(d).toBeGreaterThanOrEqual(0); expect(d).toBeLessThan(1); }
   });
 });

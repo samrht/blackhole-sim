@@ -115,7 +115,7 @@ describe("mean injected power with the flux-driven jet (spec 2.4 + corrections 2
     const lag = lagrange(F.map(P));
     for (const s of [0.5, 1, 1.4]) {
       // over the moments' own 1e6 M window (2e5 M samples different eruptions: <f> = 0.986)
-      let m = 0, n = 0; for (let t = 0.5; t < 1e6; t += 3) { m += lag(fluxRatio(t, s)); n++; }
+      let m = 0, n = 0; for (let t = 0.5; t < 1e6; t += 3) { m += lag(fluxRatio(t, s, 0.9)); n++; }
       expect(Math.abs(meanInjection(0.9, E.b0, E.rgCm, 60, 2, s) / (m / n) - 1)).toBeLessThan(1e-2);
     }
   });
@@ -124,6 +124,12 @@ describe("mean injected power with the flux-driven jet (spec 2.4 + corrections 2
       const U = jetUniforms(6.5e9, 0.9, 1e-5, 2e-3, 60, 2, s);
       expect((U.jetQ0 * meanInjection(0.9, U.jetB0, U.rgCm, 60, 2, s)) / (2e-3 * U.pBZ)).toBeCloseTo(1, 9);
       expect(Number.isFinite(U.jetQ0)).toBe(true);
+    }
+  });
+  it("q0 x <P> = eta P_BZ at spins 0.3 and 0.9 (flux statistics Review Focus 4)", () => {
+    for (const a of [0.3, 0.9]) for (const s of [1, 1.4]) {
+      const U = jetUniforms(6.5e9, a, 1e-5, 2e-3, 60, 2, s);
+      expect((U.jetQ0 * meanInjection(a, U.jetB0, U.rgCm, 60, 2, s)) / (2e-3 * U.pBZ)).toBeCloseTo(1, 9);
     }
   });
   it("spin 0: no BZ power, q0 = 0, no NaN at any slider value (Review Focus 5)", () => {
