@@ -8,9 +8,12 @@ import turbParityWGSL from "../render/turb-parity.wgsl?raw";
 import emissionSharedWGSL from "../render/emission-shared.wgsl?raw";
 import jetParityWGSL from "../render/jet-parity.wgsl?raw";
 import fluxParityWGSL from "../render/flux-parity.wgsl?raw";
+import flareParityWGSL from "../render/flare-parity.wgsl?raw";
+import { tubeOf, tubeAt, tubeLight, flareZeta } from "../physics/eruption-spots";
+import { PRESETS } from "../physics/presets";
 import { fluxRatio } from "../physics/flux-history";
 import { jetShape, launchDelay, comovingAzimuth, filaments } from "../physics/jet";
-import { plasmaShift, streamlineDir, gammaProfile, jetField, jetCoeffs, flowTime, slabStep, JET_BANDS_NM, C_CGS, LN_K0 } from "../physics/synchrotron";
+import { jetEnergetics, plasmaShift, streamlineDir, gammaProfile, jetField, jetCoeffs, flowTime, slabStep, JET_BANDS_NM, C_CGS, LN_K0 } from "../physics/synchrotron";
 import { parseTable } from "../physics/cyclosynch";
 import { classify, criticalXiEta, photonShellRange } from "../physics/shadow";
 import shadowSharedWGSL from "../render/shadow-shared.wgsl?raw";
@@ -23,7 +26,7 @@ import integratorParityWGSL from "../render/integrator-parity.wgsl?raw";
 
 /** Runs the WGSL metric/orbit/g-factor helpers on fixed inputs and returns the max relative
  *  error vs the TypeScript core. f32 GPU vs f64 CPU keeps this in the ~1e-6..1e-4 range. */
-export async function runParity(): Promise<{ maxErr: number; rows: number; jetLogErr: number; turbErr: number; turbWorst: string; turbRough: { gpu: number; old: number; cpu: number }; fluxErr: number; fluxWorst: string }> {
+export async function runParity(): Promise<{ maxErr: number; rows: number; jetLogErr: number; turbErr: number; turbWorst: string; turbRough: { gpu: number; old: number; cpu: number }; fluxErr: number; fluxWorst: string; flareErr: number; flareWorst: string }> {
   const cases = [
     { r: 8, th: Math.PI / 2, a: 0.0, xi: 3 }, { r: 6, th: 1.2, a: 0.5, xi: 2 },
     { r: 12, th: Math.PI / 2, a: 0.9, xi: -4 }, { r: 20, th: 0.9, a: 0.99, xi: 5 },
@@ -459,5 +462,41 @@ export async function runParity(): Promise<{ maxErr: number; rows: number; jetLo
       if (e > fluxErr) { fluxErr = e; fluxWorst = `case ${i} out ${k}: gpu ${fgpu[i * 4 + k]} cpu ${want[k]}`; } }
   });
   console.log("flux parity worst (|err| / tol)", fluxErr.toExponential(2), fluxWorst);
-  return { maxErr, rows: cases.length + tcases.length + jcases.length + scases.length + ccases.length + icases.length + fcases.length, jetLogErr, turbErr, turbWorst, turbRough, fluxErr, fluxWorst };
+  // --- eruption flares (CPU eruption-spots.ts vs the SHIPPED emission-shared.wgsl tubeLightJ). Sgr A* energetics;
+  // epochs to 2048 x 8000 (Review Focus 1); spins 0.3 / 0.94; tubes in their spiral, orbit and fade; hit points at
+  // the tube centre (g 0.7) and one radius out (g 1.3). Absolute error on ln I per band, gated at 2e-3.
+  const sgP = PRESETS.find((q) => q.id === "sgra")!, SE = jetEnergetics(sgP.massSun, sgP.a, sgP.lambda), ZF = flareZeta();
+  const flc: number[][] = [];
+  for (const epoch of [0, 2048 * 7, 2048 * 8000]) for (const a of [0.3, 0.94]) for (const dk of [1, 2, 3]) {
+    const tb = tubeOf(Math.floor(epoch / 1500) + dk, a), Porb = 2 * Math.PI * (tb.rc ** 1.5 + a);
+    for (const tau of [0.5 * tb.D, tb.D + 0.3 * Porb, tb.D + 1.6 * Porb]) for (const [off, g] of [[0, 0.7], [1, 1.3]]) {
+      const time = tb.t0 + tau, at = tubeAt(tb, time, a);
+      flc.push([epoch, time - epoch, at.r + off * tb.R, at.phi, g, a, 1, 1, SE.phi, ZF, SE.rgCm, 0]);
+    }
+  }
+  const flarr = new Float32Array(flc.length * 12);
+  flc.forEach((c, i) => flarr.set(c, i * 12));
+  const flin = device.createBuffer({ size: flarr.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+  device.queue.writeBuffer(flin, 0, flarr);
+  const flout = device.createBuffer({ size: flc.length * 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
+  const flread = device.createBuffer({ size: flc.length * 16, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+  const flmod = device.createShaderModule({ code: integratorSharedWGSL + emissionSharedWGSL + flareParityWGSL });
+  const flpipe = device.createComputePipeline({ layout: "auto", compute: { module: flmod, entryPoint: "main" } });
+  const flbind = device.createBindGroup({ layout: flpipe.getBindGroupLayout(0), entries: [
+    { binding: 0, resource: { buffer: flin } }, { binding: 1, resource: { buffer: flout } }, { binding: 10, resource: synchTex.createView() }] });
+  const flenc = device.createCommandEncoder();
+  const flcp = flenc.beginComputePass(); flcp.setPipeline(flpipe); flcp.setBindGroup(0, flbind); flcp.dispatchWorkgroups(flc.length); flcp.end();
+  flenc.copyBufferToBuffer(flout, 0, flread, 0, flc.length * 16);
+  device.queue.submit([flenc.finish()]);
+  await flread.mapAsync(GPUMapMode.READ);
+  const flgpu = new Float32Array(flread.getMappedRange().slice(0));
+  let flareErr = 0, flareWorst = "";
+  flc.forEach((_, i) => {
+    const [epoch, rel, rHit, phiHit, g, a, s, f, Phi, zeta, rgCm] = Array.from(flarr.subarray(i * 12, i * 12 + 11));
+    const I = tubeLight(T, rHit, phiHit, g, epoch + rel, a, s, f, Phi, zeta, rgCm);
+    for (let b = 0; b < 3; b++) { const e = Math.abs(flgpu[i * 4 + b] - Math.log(Math.max(I[b], 1e-38)));
+      if (e > flareErr) { flareErr = e; flareWorst = `case ${i} band ${b}: gpu ${flgpu[i * 4 + b]} cpu ${Math.log(Math.max(I[b], 1e-38))}`; } }
+  });
+  console.log("flare parity worst |d ln I|", flareErr.toExponential(2), flareWorst);
+  return { maxErr, rows: cases.length + tcases.length + jcases.length + scases.length + ccases.length + icases.length + fcases.length + flc.length, jetLogErr, turbErr, turbWorst, turbRough, fluxErr, fluxWorst, flareErr, flareWorst };
 }

@@ -272,14 +272,17 @@ fn synchSampleJ(r: f32, th: f32, D: f32, a: f32, b0: f32, q0: f32, shape: f32, g
   let U0 = sqrt(max(g280 * g280 - 1.0, 1e-12));
   let dz = max(pow(abs(z), 0.42) - pow(JET_ZBASE, 0.42), 1e-6);
   let lns = max(SYN_LNK0 + 2.0 * lnB + log(rgCm) + SYN_LNT0 - log(U0) + log(dz), -30.0);
-  let base = log(q0) + log(shape);
-  let lnD = log(D);
+  return synchCoeffsJ(lnB, lns, log(q0) + log(shape), log(D));
+}
+// Per band: j = (nu/nu')^3 j'(nu') and alpha'(nu') of the cooled population at nu' = D nu, field e^lnB, cooling
+// depth e^lns, injection e^lnq (shared by the jet and the eruption flares; twin: jetCoeffs).
+fn synchCoeffsJ(lnB: f32, lns: f32, lnq: f32, lnD: f32) -> SynchOut {
   var o: SynchOut;
   for (var b = 0; b < 3; b++) {
     let lnx = JET_LNNU[b] + lnD - SYN_LNNUB0 - lnB;
     let t = synchLookupJ(lnx, lns);
-    o.j[b] = exp(SYN_LNCJ + base + lnB + t.x - 3.0 * lnD);
-    o.a[b] = exp(SYN_LNCA + base - lnB - 2.0 * lnx + t.y);
+    o.j[b] = exp(SYN_LNCJ + lnq + lnB + t.x - 3.0 * lnD);
+    o.a[b] = exp(SYN_LNCA + lnq - lnB - 2.0 * lnx + t.y);
   }
   return o;
 }
@@ -294,4 +297,62 @@ fn jetSlabJ(acc: JetOut, j: vec3<f32>, alpha: vec3<f32>, ds: f32) -> JetOut {
   o.I = acc.I + j * ds * fac * exp(-acc.tau);
   o.tau = min(acc.tau + dt, vec3<f32>(1e30));
   return o;
+}
+// --- Eruption flares (spec 2026-10-04; twin: src/physics/eruption-spots.ts) ------------------------------------
+const FLARE_RMIN = 5.0; const FLARE_RMAX = 30.0; const FLARE_SIZE = 0.2; const FLARE_CA = 0.48452046;
+const FLARE_SALT_R = 0x5243u; const FLARE_SALT_PHI = 0x5048u;
+// Prograde ISCO (Bardeen, Press & Teukolsky; twin: iscoRadius in orbits.ts).
+fn iscoJ(a: f32) -> f32 {
+  let z1 = 1.0 + pow(1.0 - a * a, 1.0 / 3.0) * (pow(1.0 + a, 1.0 / 3.0) + pow(max(1.0 - a, 0.0), 1.0 / 3.0));
+  let z2 = sqrt(3.0 * a * a + z1 * z1);
+  return 3.0 + z2 - sqrt(max((3.0 - z1) * (3.0 + z1 + 2.0 * z2), 0.0));
+}
+// Tube k (k relative to the clock's whole flux periods kE: k = kE + dk). Returns (r, phi, A, tau since birth).
+fn tubeAtJ(kE: f32, dk: i32, loc: f32, a: f32) -> vec4<f32> {
+  let k = i32(kE) + dk;
+  let tau = loc - FLUX_T * (f32(dk) + 0.5 + FLUX_JIT * fluxHashJ(k, FLUX_SALT_T));   // time since birth
+  let depth = FLUX_DBAR * (1.0 + FLUX_SPREAD * fluxHashJ(k, FLUX_SALT_D));
+  let D = -FLUX_TAUD * log(1.0 - depth);
+  let rin = iscoJ(a);
+  let rc = max(FLARE_RMIN + (FLARE_RMAX - FLARE_RMIN) * (fluxHashJ(k, FLARE_SALT_R) + 0.5), rin / (1.0 - 2.0 * FLARE_SIZE));
+  let phi0 = TWO_PI_E * (fluxHashJ(k, FLARE_SALT_PHI) + 0.5);
+  let P = TWO_PI_E / omegaKep(rc, a);
+  if (tau < 0.0 || tau >= D + 2.0 * P) { return vec4<f32>(rc, phi0, 0.0, tau); }
+  let r = select(rc, rin + (rc - rin) * tau / D, tau < D);
+  // spiral phase to r (GL6 on [rin, r]), plus the circular phase after D
+  let h = 0.5 * (r - rin); let m = 0.5 * (r + rin); var xs = GL6_X; var ws = GL6_W; var sp = 0.0;
+  for (var i = 0; i < 6; i++) { sp += ws[i] * omegaKep(m + h * xs[i], a); }
+  sp = sp * h * D / (rc - rin);
+  let tc = max(tau - D, 0.0);
+  let A = select(exp(-2.0 * tc / P) * (1.0 - smoothstepJ(1.5, 2.0, tc / P)), tau / D, tau < D);
+  return vec4<f32>(r, phi0 + sp + omegaKep(rc, a) * tc, A, tau);
+}
+fn tubeLightJ(rHit: f32, phiHit: f32, g: f32, epoch: f32, rel: f32, a: f32, s: f32, f: f32, Phi: f32, zeta: f32, rgCm: f32) -> vec3<f32> {
+  var I = vec3<f32>(0.0);
+  if (f == 0.0 || s == 0.0) { return I; }
+  let kl = splitPeriodJ(epoch, rel, FLUX_T);
+  for (var dk = -2; dk <= 0; dk++) {
+    let p = tubeAtJ(kl.x, dk, kl.y, a);
+    if (p.z <= 0.0) { continue; }
+    let k = i32(kl.x) + dk;
+    let depth = FLUX_DBAR * (1.0 + FLUX_SPREAD * fluxHashJ(k, FLUX_SALT_D));
+    let rc = max(FLARE_RMIN + (FLARE_RMAX - FLARE_RMIN) * (fluxHashJ(k, FLARE_SALT_R) + 0.5), iscoJ(a) / (1.0 - 2.0 * FLARE_SIZE));
+    let R = FLARE_SIZE * rc; let D = -FLUX_TAUD * log(1.0 - depth); let P = TWO_PI_E / omegaKep(rc, a);
+    let d2 = rHit * rHit + p.x * p.x - 2.0 * rHit * p.x * cos(phiHit - p.y);
+    let G = exp(-d2 / (2.0 * R * R));
+    if (G < 1e-6) { continue; }
+    // ln B = ln(delta s Phi) - ln(pi R^2 r_g^2); ln E = 2 ln(delta s Phi) - ln(4 pi^2 R r_g)
+    let lnF = log(depth * s * Phi);
+    let lnB = lnF - log(PI * R * R) - 2.0 * log(rgCm);
+    let lnE = 2.0 * lnF - log(4.0 * PI * PI * R) - log(rgCm);
+    let lnNorm = log(0.5 * D + P * FLARE_CA) + log(rgCm) - log(2.99792458e10);
+    let lnP = log(zeta * f) + lnE + log(p.z) - lnNorm;                     // injected power (erg/s)
+    let lnq = lnP - 2.0 * lnB - log(4.0 * PI) - 3.0 * (log(R) + log(rgCm)) + log(G);
+    let lns = max(SYN_LNK0 + 2.0 * lnB + log(max(p.w, 1e-6)) + log(rgCm) - log(2.99792458e10), -30.0);
+    let o = synchCoeffsJ(lnB, lns, lnq, -log(g));
+    var acc: JetOut; acc.I = vec3<f32>(0.0); acc.tau = vec3<f32>(0.0);
+    acc = jetSlabJ(acc, o.j, o.a, 2.0 * R * rgCm);
+    I += acc.I;
+  }
+  return I;
 }

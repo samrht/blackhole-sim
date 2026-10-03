@@ -4,6 +4,10 @@ import { eruptionTime, eruptionDepth, FLUX } from "../src/physics/flux-history";
 import { iscoRadius } from "../src/physics/orbits";
 import { jetEnergetics } from "../src/physics/synchrotron";
 import { PRESETS } from "../src/physics/presets";
+import { readFileSync } from "node:fs"; import { join } from "node:path";
+import { parseTable } from "../src/physics/cyclosynch";
+import { tubeLight } from "../src/physics/eruption-spots";
+import { jetCoeffs, C_CGS as C } from "../src/physics/synchrotron";
 
 const sgra = PRESETS.find((p) => p.id === "sgra")!, E = jetEnergetics(sgra.massSun, sgra.a, sgra.lambda);
 describe("eruption flux tubes (spec 2026-10-04 eruption flares)", () => {
@@ -72,5 +76,27 @@ describe("eruption flux tubes (spec 2026-10-04 eruption flares)", () => {
     expect(W / (z * tubeEnergy(t, 1, E.phi, E.rgCm))).toBeCloseTo(1, 3);
     expect(tubePower(t, t.t0 + 0.3 * L, a, 1, 0, E.phi, z, E.rgCm)).toBe(0);
     expect(tubePower(t, t.t0 + 0.3 * L, a, 0, 1, E.phi, z, E.rgCm)).toBe(0);
+  });
+});
+
+const TAB = parseTable(readFileSync(join(__dirname, "../public/synch-table.bin")).buffer.slice(0) as ArrayBuffer);
+describe("tube light", () => {
+  const a = sgra.a, z = flareZeta(), t = tubeOf(4, a), when = t.t0 + t.D + 0.2 * 2 * Math.PI * (t.rc ** 1.5 + a);
+  const at = tubeAt(t, when, a);
+  it("bright at the tube centre, Gaussian fall-off, zero far away and with flares off", () => {
+    const c = tubeLight(TAB, at.r, at.phi, 1, when, a, 1, 1, E.phi, z, E.rgCm);
+    expect(c[1]).toBeGreaterThan(0);
+    const off = tubeLight(TAB, at.r + t.R, at.phi, 1, when, a, 1, 1, E.phi, z, E.rgCm);
+    expect(off[1] / c[1]).toBeCloseTo(Math.exp(-0.5), 2);
+    expect(tubeLight(TAB, at.r + 10 * t.R, at.phi, 1, when, a, 1, 1, E.phi, z, E.rgCm)[1]).toBe(0);
+    expect(tubeLight(TAB, at.r, at.phi, 1, when, a, 1, 0, E.phi, z, E.rgCm)).toEqual([0, 0, 0]);
+  });
+  it("radiated / injected >= 0.4 over the r_c range (outer tubes are not fully fast-cooling; spec corrections 3)", () => {
+    for (const k of [1, 2, 3, 4, 5, 6]) {
+      const tk = tubeOf(k, a), B = tubeField(tk, 1, E.phi, E.rgCm), ageS = 600 * E.rgCm / C;
+      const sc = Math.exp(-20.46682379) * B * B * ageS; let rad = 0; const n = 3000, l0 = Math.log(1e3), l1 = Math.log(1e24);
+      for (let i = 0; i < n; i++) { const nu = Math.exp(l0 + (l1 - l0) * (i + 0.5) / n); rad += jetCoeffs(TAB, nu, B, sc, 1, 1)[0] * nu * (l1 - l0) / n; }
+      expect(4 * Math.PI * rad / (B * B)).toBeGreaterThan(0.4);
+    }
   });
 });

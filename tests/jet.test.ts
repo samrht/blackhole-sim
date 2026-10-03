@@ -6,6 +6,7 @@ import {
   launchDelay, fieldLineOmega, comovingAzimuth, gammaProfile, GL6,
 } from "../src/physics/jet";
 import { FLUX, fluxRatio } from "../src/physics/flux-history";
+import { FLARE } from "../src/physics/eruption-spots";
 
 describe("jet geometry", () => {
   it("funnel widens with height (parabolic)", () => {
@@ -137,7 +138,7 @@ const wconst = (name: string) => { const m = WGSL_E.match(new RegExp(`const ${na
 describe("emission-shared.wgsl flux/filament constants match the CPU twins", () => {
   it("flux generator, filaments, envelope, Gauss nodes", () => {
     const pairs: [string, number][] = [["FLUX_T", FLUX.T], ["FLUX_JIT", FLUX.jitter], ["FLUX_TAUD", FLUX.tauD],
-      ["FLUX_SPREAD", FLUX.spread], ["FLUX_FLOOR", FLUX.floor], ["FLUX_CELL_N", FLUX.flickerCell], ["FLUX_CLIP", FLUX.flickerClip], ["FLUX_SALT_N", FLUX.saltN], ["FLUX_DBAR", FLUX.dbar], ["FLUX_EPS", FLUX.eps], ["FLUX_D1", FLUX.d1],
+      ["FLUX_SPREAD", FLUX.spread], ["FLUX_FLOOR", FLUX.floor], ["FLUX_CELL_N", FLUX.flickerCell], ["FLUX_CLIP", FLUX.flickerClip], ["FLUX_SALT_N", FLUX.saltN], ["FLUX_DBAR", FLUX.dbar], ["FLUX_EPS", FLUX.eps], ["FLUX_D1", FLUX.d1], ["FLARE_RMIN", 5], ["FLARE_RMAX", 30], ["FLARE_SIZE", 0.2], ["FLARE_CA", FLARE.cA], ["FLARE_SALT_R", FLARE.saltR], ["FLARE_SALT_PHI", FLARE.saltPhi],
       ["FLUX_SALT_T", FLUX.saltT], ["FLUX_SALT_D", FLUX.saltD], ["FIL_AMP", FILAMENT.amp], ["FIL_CELL_T", FILAMENT.cellT],
       ["FIL_CELLS_PHI", FILAMENT.cellsPhi], ["FIL_CELLS_Q", FILAMENT.cellsQ], ["FIL_SALT", FILAMENT.salt], ["JET_ENV_Q", JET_ENV_Q]];
     // Number() parses decimals and the hex salts (0x464c); WGSL's u suffix is stripped first.

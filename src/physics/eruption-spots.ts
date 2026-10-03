@@ -6,7 +6,8 @@
 import { FLUX, fluxHash, eruptionTime, eruptionDepth } from "./flux-history";
 import { GL6 } from "./jet";
 import { iscoRadius } from "./orbits";
-import { jetEnergetics, C_CGS } from "./synchrotron";
+import { jetEnergetics, jetCoeffs, slabStep, JET_BANDS_NM, LN_K0, C_CGS } from "./synchrotron";
+import type { SynchTable } from "./cyclosynch";
 import { PRESETS } from "./presets";
 
 export const FLARE = { rMin: 5, rMax: 30, sizeFrac: 0.2, lifeOrbits: 2, saltR: 0x5243, saltPhi: 0x5048, anchorErg: 1e38, cA: 0.48452046 } as const;
@@ -58,4 +59,25 @@ export function flareZeta(): number {
   if (!zetaCache) { const p = PRESETS.find((q) => q.id === "sgra")!, E = jetEnergetics(p.massSun, p.a, p.lambda);
     zetaCache = FLARE.anchorErg / meanTubeEnergy(1, E.phi, E.rgCm); }
   return zetaCache;
+}
+/** Observed I_nu per band (cgs) where a ray hits the disk at (rHit, phiHit) with disk shift g = nu_obs/nu_emit:
+ *  optically thin synchrotron of tubes k-2..k alive at `time` (twin: tubeLightJ). */
+export function tubeLight(T: SynchTable, rHit: number, phiHit: number, g: number, time: number, a: number, s: number, f: number,
+  phi: number, zeta: number, rgCm: number): [number, number, number] {
+  const out: [number, number, number] = [0, 0, 0];
+  if (f === 0 || s === 0) return out;
+  const k0 = Math.floor(time / FLUX.T);
+  for (let k = k0 - 2; k <= k0; k++) {
+    const t = tubeOf(k, a), p = tubeAt(t, time, a); if (p.A === 0) continue;
+    const d2 = rHit * rHit + p.r * p.r - 2 * rHit * p.r * Math.cos(phiHit - p.phi), G = Math.exp(-d2 / (2 * t.R * t.R));
+    if (G < 1e-6) continue;
+    const B = tubeField(t, s, phi, rgCm), P = tubePower(t, time, a, s, f, phi, zeta, rgCm);
+    const q = P / (B * B * 4 * Math.PI * (t.R * rgCm) ** 3), sc = Math.exp(LN_K0) * B * B * (time - t.t0) * rgCm / C_CGS;
+    const D = 1 / g, ds = 2 * t.R * rgCm;
+    JET_BANDS_NM.forEach((nm, b) => {
+      const [jp, al] = jetCoeffs(T, (C_CGS / (nm * 1e-7)) * D, B, Math.max(sc, 1e-13), q, G);
+      out[b] += slabStep(0, 0, jp / D ** 3, al, ds)[0];
+    });
+  }
+  return out;
 }
