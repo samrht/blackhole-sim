@@ -158,6 +158,7 @@ structural ${res.structural ? "ok" : "FAILED"} — centred dark shadow=${res.has
   // Light-travel delay (spec 2026-10-01): shading-only, delays are always in the cache.
   const ldelay = $("ldelay") as HTMLInputElement;
   ldelay.addEventListener("change", () => { state.lightDelay = ldelay.checked; reset(); });
+  turb.value = String(state.flicker * 100); turbv.textContent = (state.flicker * 100).toFixed(1); // default from FLICKER_DEFAULT
   turb.addEventListener("input", () => { state.flicker = +turb.value / 100; turbv.textContent = (+turb.value).toFixed(1); reset(); });
   flare.addEventListener("input", () => {
     state.flareScale = +flare.value; flarev.textContent = state.flareScale.toFixed(1);

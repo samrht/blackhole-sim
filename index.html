@@ -117,9 +117,9 @@
       <label class="row" style="cursor:pointer"><span>Light delay</span>
         <input id="ldelay" type="checkbox" checked style="accent-color:var(--accent)"></label>
     </div>
-    <div class="ctrl" title="Intrinsic rms flicker of the disk's total (bolometric) light from MRI turbulence (observed: ~2 %); it heats and cools the gas, so its visible contrast depends on the disk's temperature">
-      <div class="row"><label>Disk flicker (rms)</label><span class="val"><b id="turbv">2.0</b> %</span></div>
-      <input id="turb" type="range" min="0" max="10" step="0.5" value="2">
+    <div class="ctrl" title="Intrinsic rms flicker of the disk's total (bolometric) light from MRI turbulence (2 % default: inside the observed thermal-state bounds); it heats and cools the gas, so its visible contrast depends on the disk's temperature">
+      <div class="row"><label>Disk flicker (rms)</label><span class="val"><b id="turbv">—</b> %</span></div>
+      <input id="turb" type="range" min="0" max="10" step="0.5"><!-- value set from FLICKER_DEFAULT in main.ts -->
     </div>
     <div class="ctrl" title="Illustrative orbiting hot spots (not MRI turbulence)">
       <div class="row"><label>Flares (illustrative)</label><span class="val"><b id="flarev">0.0</b>×</span></div>

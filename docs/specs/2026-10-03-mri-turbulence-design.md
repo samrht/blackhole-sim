@@ -17,6 +17,8 @@ decorative.
   and soft-state X-ray binaries show a few per cent). The slider becomes "Disk flicker (rms)", 0–10 %, default 2 %.
 - **Energy conservation:** turbulence redistributes the disk's light; the time-averaged luminosity stays the
   Novikov–Thorne value.
+- (Corrected 2026-10-03, see the last section: the 2 % is chosen inside the observed thermal-state bounds;
+  SKH06's "≲ 2 %" is a variance.)
 - Persistent orbiting hot spots ("Flares") and the slow "breathing" stay available, **off by default**, labelled as
   illustrative (not MRI turbulence). The light-delay echo demo can switch a hot spot on.
 - Not in scope: viscous surface-density evolution (see above), vertical structure, a disk corona, the jet's own
@@ -99,3 +101,12 @@ turns into ever-tighter stripes) — the defect this design removes.
   than a pure exponential; only the 1/e time is calibrated.
 - σ is not small: κ ≈ 0.035, so 2 % flicker needs σ ≈ 0.55, where exp(σg) is visibly nonlinear. σ is therefore
   set from a measured table of integrated rms against σ (scripts/calibrate-turbulence.ts), not σ = flicker/κ.
+- Each lattice row's clock carries a hashed phase offset in [0, 1) tick (rows tick at different moments, so no
+  global synchronisation at t = 0); generation k of row i is therefore born at (k − 1 − phase_i) T_c.
+- Amplitude sourcing (follow-ups, 2026-10-03): SKH06's "total rms fractional variance of ≲ 2 % above 10 Hz" is
+  (rms/mean)²; their Table 1 gives 16.2 % rms face-on and 14.0 % at 70° for the thermal model (dominated by the
+  plunging region, 83 % at 2–6 M). Observed thermal-state disks are far steadier: the state is defined by a
+  whole-source rms below 7.5 % at 0.1–10 Hz (McClintock & Remillard 2006) and the disk component is
+  near-constant (Churazov, Gilfanov & Revnivtsev 2001). The 2 % default stays, justified by those bounds.
+- Turbulence frame cost re-measured (interleaved, flicker 0 vs 2 %): about 4 % of a cached frame (48 vs 50 FPS),
+  so the planned Box–Muller pairing (≈ 1 %) was not done.

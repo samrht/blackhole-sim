@@ -117,7 +117,9 @@ export function hotspotField(rHit: number, psi: number, spots: HotSpot[]): numbe
 
 /** Intrinsic flicker of the disk's integrated light (fractional rms, face-on, before beaming) against the
  *  lognormal sigma, measured by scripts/calibrate-turbulence.ts at a = 0.9, r_in = ISCO .. 40 M, 1500
- *  snapshots. Observed thermal-state disks flicker at ~2 % (SKH06 <~ 2 % above 10 Hz; soft states a few %). */
+ *  snapshots. The 2 % default sits inside the observed thermal state (whole source < 7.5 % rms at 0.1-10 Hz,
+ *  McClintock & Remillard 2006; disk component near-constant, Churazov et al. 2001). SKH06's "<~ 2 %" is a
+ *  variance: their simulated thermal disk shows 14-16 % rms. */
 export const FLICKER_TABLE: readonly (readonly [number, number])[] = [[0, 0], [0.05, 0.00173], [0.25, 0.00872], [0.5, 0.01787], [0.75, 0.02790], [1, 0.03945], [1.25, 0.05352], [1.5, 0.07198], [1.75, 0.09828], [2, 0.13887]];
 export const FLICKER_DEFAULT = 0.02;
 /** sigma giving intrinsic flicker `rms` (linear between table points; clamps to the table's top). */
