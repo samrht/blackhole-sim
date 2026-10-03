@@ -64,7 +64,9 @@ this file is the queue. Each item gets its own spec (and plan) before code, as e
 
 - [x] **Screenshot export** (2026-10-03): **Save PNG** under Pause saves exactly the presented frame at the canvas's
   full internal resolution (README "Screenshot export"). A size picker (e.g. 4K offscreen) was considered and left out.
-- [ ] **Video / clip export** of the animated view (MediaRecorder on the canvas stream).
+- [x] **Video / clip export** (2026-10-03): **Record** / **Stop** records the view as it plays (MP4 H.264, WebM
+  fallback) at the canvas's full internal size (README "Clip export"). An offline fixed-step renderer for
+  always-smooth clips was considered and left out.
 - [ ] **Shareable camera links**: spin, inclination, sliders and preset encoded in the URL.
 - [ ] **Mobile layout**: control panel as a collapsible sheet and a phone-sized default render
   scale (camera drag already works on touch: it uses pointer events).

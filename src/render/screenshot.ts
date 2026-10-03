@@ -17,10 +17,13 @@ export function toRGBA(px: Uint8Array, format: GPUTextureFormat): Uint8ClampedAr
 }
 
 const pad = (n: number) => String(n).padStart(2, "0");
-/** blackhole-<preset>-a<spin>-i<inclination deg>-<local time, filesystem-safe>.png */
-export function screenshotName(preset: string, a: number, inclDeg: number, when: Date): string {
+/** blackhole-<preset>-a<spin>-i<inclination deg>-<local time, filesystem-safe> (shared with clip export). */
+export function sceneStem(preset: string, a: number, inclDeg: number, when: Date): string {
   const stamp = `${when.getFullYear()}-${pad(when.getMonth() + 1)}-${pad(when.getDate())}T${pad(when.getHours())}-${pad(when.getMinutes())}-${pad(when.getSeconds())}`;
-  return `blackhole-${preset}-a${a.toFixed(2)}-i${Math.round(inclDeg)}-${stamp}.png`;
+  return `blackhole-${preset}-a${a.toFixed(2)}-i${Math.round(inclDeg)}-${stamp}`;
+}
+export function screenshotName(preset: string, a: number, inclDeg: number, when: Date): string {
+  return `${sceneStem(preset, a, inclDeg, when)}.png`;
 }
 
 /** Encode RGBA pixels as a PNG and download it under `name`. */
@@ -29,6 +32,11 @@ export async function savePNG(rgba: Uint8ClampedArray<ArrayBuffer>, w: number, h
   c.getContext("2d")!.putImageData(new ImageData(rgba, w, h), 0, 0);
   const blob = await new Promise<Blob | null>((res) => c.toBlob(res, "image/png"));
   if (!blob) throw new Error("PNG encoding failed");
+  downloadBlob(blob, name);
+}
+
+/** Download a blob under `name` through a temporary link. */
+export function downloadBlob(blob: Blob, name: string): void {
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a"); link.href = url; link.download = name;
   document.body.appendChild(link); link.click(); link.remove();

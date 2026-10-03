@@ -1,5 +1,6 @@
 import { Renderer } from "./render/gpu";
-import { toRGBA, screenshotName, savePNG } from "./render/screenshot";
+import { toRGBA, screenshotName, savePNG, downloadBlob } from "./render/screenshot";
+import { ClipRecorder, pickClipFormat, clipName, formatElapsed, CLIP } from "./render/clip";
 import type { UniformValues } from "./render/uniforms";
 import { ScaleController } from "./render/scale";
 import { geometryKey, BuildScheduler, chooseMode } from "./render/cache-plan";
@@ -203,6 +204,25 @@ structural ${res.structural ? "ok" : "FAILED"} — centred dark shadow=${res.has
     } catch (e) { console.error("screenshot export failed", e); }
     finally { shotBtn.disabled = false; }
   });
+  // Clip export: record the canvas as it plays; named after the scene at the moment recording started.
+  const recBtn = $("record") as HTMLButtonElement;
+  const clipFmt = typeof MediaRecorder !== "undefined" && "captureStream" in canvas
+    ? pickClipFormat((m) => MediaRecorder.isTypeSupported(m)) : null;
+  if (!clipFmt) { recBtn.disabled = true; recBtn.title = "This browser cannot record the canvas (no MediaRecorder video format)."; }
+  let clip: ClipRecorder | null = null, clipFile = "", clipTimer = 0;
+  const stopClip = async () => {
+    if (!clip) return;
+    const c = clip; clip = null; clearInterval(clipTimer); recBtn.textContent = "Record";
+    try { downloadBlob(await c.stop(), clipFile); } catch (e) { console.error("clip export failed", e); }
+  };
+  recBtn.addEventListener("click", () => {
+    if (clip) { void stopClip(); return; }
+    clip = new ClipRecorder(canvas, clipFmt!);
+    clipFile = clipName(presetSel.value, state.a, state.incl, new Date(), clipFmt!.ext);
+    const tick = () => { if (!clip) return; const el = performance.now() - clip.startedAt;
+      recBtn.textContent = `Stop · ${formatElapsed(el)}`; if (el >= CLIP.maxMs) void stopClip(); };
+    tick(); clipTimer = window.setInterval(tick, 250);
+  });
   function physicsChanged() { refreshPhysics(); refreshReadouts(); reset(); }
 
   mass.addEventListener("input", () => { state.massSun = 10 ** +mass.value; showMass(); markCustom(); physicsChanged(); });
@@ -248,6 +268,7 @@ structural ${res.structural ? "ok" : "FAILED"} — centred dark shadow=${res.has
   // Keep the render crisp across window resizes.
   let resizeTimer = 0;
   addEventListener("resize", () => {
+    void stopClip(); // the canvas changes size: save what was recorded rather than a stretched clip
     clearTimeout(resizeTimer);
     resizeTimer = window.setTimeout(() => { r.resize(canvas); r.rebind(); reset(); }, 120);
   });

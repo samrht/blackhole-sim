@@ -155,6 +155,34 @@ if (!cacheOk || appDiag) failed = true;
   console.log(`${ok ? "✓ PASS" : "✗ FAIL"}  screenshot export: ${name} ${r.w}x${r.h} (canvas ${r.cw}x${r.ch}), mean right of the panel ${r.fileMean.toFixed(1)} vs screen ${r.screenMean.toFixed(1)}${shotDiag}`);
   if (!ok) failed = true;
 }
+// Clip export (2026-10-03): record ~3 s, stop, catch the download. The video must have the canvas's size,
+// last about 3 s, and its middle frame must not be black.
+{
+  const dClip = diags.length;
+  const recSupported = await page.evaluate(() => !document.getElementById("record").disabled);
+  await page.click("#record"); await page.waitForTimeout(3000);
+  const [dl] = await Promise.all([page.waitForEvent("download", { timeout: 20000 }), page.click("#record")]);
+  const name = dl.suggestedFilename();
+  const vid = (await import("node:fs")).readFileSync(await dl.path()).toString("base64");
+  const v = await page.evaluate(async ([b64, type]) => {
+    const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+    const el = document.createElement("video"); el.muted = true; el.src = URL.createObjectURL(new Blob([bytes], { type }));
+    await new Promise((res, rej) => { el.onloadedmetadata = res; el.onerror = () => rej(new Error("video did not load")); });
+    if (!Number.isFinite(el.duration)) { el.currentTime = 1e6; await new Promise((res) => (el.ondurationchange = res)); } // WebM: no duration header
+    const duration = el.duration;
+    el.currentTime = duration / 2; await new Promise((res) => (el.onseeked = res));
+    const c = document.createElement("canvas"); c.width = el.videoWidth; c.height = el.videoHeight;
+    const g = c.getContext("2d"); g.drawImage(el, 0, 0);
+    const d = g.getImageData(0, 0, c.width, c.height).data; let s = 0;
+    for (let k = 0; k < d.length; k += 4) s += d[k] + d[k + 1] + d[k + 2];
+    const cv = document.querySelector("canvas");
+    return { w: el.videoWidth, h: el.videoHeight, cw: cv.width, ch: cv.height, duration, mean: s / (d.length / 4) / 3, bytes: bytes.length };
+  }, [vid, name.endsWith(".mp4") ? "video/mp4" : "video/webm"]);
+  const ok = recSupported && v.w === v.cw && v.h === v.ch && v.duration > 2 && v.duration < 5 && v.mean > 5
+    && /^blackhole-[a-z0-9]+-a-?\d\.\d\d-i\d+-\d{4}-\d\d-\d\dT\d\d-\d\d-\d\d\.(mp4|webm)$/.test(name) && !diagSince(dClip);
+  console.log(`${ok ? "✓ PASS" : "✗ FAIL"}  clip export: ${name} ${v.w}x${v.h} (canvas ${v.cw}x${v.ch}), ${v.duration.toFixed(2)} s, ${(v.bytes / 1e6).toFixed(1)} MB, middle-frame mean ${v.mean.toFixed(1)}${diagSince(dClip)}`);
+  if (!ok) failed = true;
+}
 // Presets (spec 2026-10-01): each one must leave the app lit, back in `cached` mode, warning-free.
 // Spin/inclination changes rebuild the cache; mass/accretion are shading-only (Review Focus 1).
 const dPre = diags.length;
