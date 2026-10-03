@@ -1,8 +1,9 @@
 // Jet geometry and density modulation (Tier 2B); the synchrotron physics is in synchrotron.ts.
 // Pure functions, no DOM/GPU. WGSL twins: emission-shared.wgsl (sole copy, prepended by the renderer
 // and the ?parity route).
-// Reuses the Tier 2A value-noise basis (emission.vnoise) so there is one shared noise impl.
-import { vnoise } from "./emission";
+// The filaments use the disk turbulence's integer hash (emission.hash4), so CPU and GPU share one hash.
+import { hash4 } from "./emission";
+import { fluxRatio } from "./flux-history";
 import { horizonOuter } from "./kerr";
 
 /** Shared design constants.
@@ -14,9 +15,6 @@ export const JET = {
   rho0: 0.6, slope: 0.7,      // funnel throat radius (M) and parabolic flare (M^1/2)
   qPeak: 0.8, wWall: 0.22,    // limb-brightening: wall peak position and width (in q units)
   zBase: 2.0,                 // launch height above the pole (M); below this = no jet
-  kz: 0.35,                   // knot spatial frequency (1/M); knots move with the flow at beta(Gamma)
-  turbAmpJet: 0.35,           // small cross-funnel churn
-  knotSeed: 17.0,             // fixed 2nd-axis coordinate for the 1-D knot noise
 } as const;
 
 function smoothstep(a: number, b: number, x: number): number {
@@ -85,34 +83,52 @@ export function comovingAzimuth(ph: number, z: number, a: number, g280: number):
   return ph - fieldLineOmega(a) * (launchDelay(z, g280) - (az - JET.zBase));
 }
 
-/** Traveling-wave knots: blobs of brightness marching outward as t advances. */
-/** Knots are blobs carried by the jet plasma, so the pattern moves outward at the flow speed
- *  beta = sqrt(1 - 1/Gamma^2) < c (t is coordinate time, M; c = 1). It used to move at 6/0.35 ~ 17c,
- *  which under light-travel delay averaged the knots out along each line of sight (2026-10-01 review);
- *  at beta < c an approaching jet now shows apparent superluminal motion, as observed in M87. */
-export function knots(z: number, t: number, gamma: number, jetKnots: number): number {
-  const beta = Math.sqrt(Math.max(0, 1 - 1 / (gamma * gamma)));
-  const phase = JET.kz * (Math.abs(z) - beta * t);
-  return 1 + jetKnots * (vnoise(phase, JET.knotSeed) - 0.5) * 2;
+/** Filaments frozen into the moving plasma (spec 2.5): value noise on (launch time, co-moving azimuth, field-line
+ *  label). Strength is illustrative (no measurement fixes it); the motion is physical. Twin: filamentsJ. */
+export const FILAMENT = { amp: 0.35, cellT: 25, cellsPhi: 8, cellsQ: 2.5, salt: 0x46494c } as const;
+/** Envelope bound on q = rho / rho_f: 1.2 (the wall's cut) times the widest width factor the slider allows,
+ *  sqrt(1 / (1 - sMax d1)) = 1.2572, rounded up. Twin: JET_ENV_Q in emission-shared.wgsl. */
+export const JET_ENV_Q = 1.51;
+
+const smooth = (t: number) => t * t * (3 - 2 * t);
+const node3 = (ix: number, iy: number, iw: number, salt: number) => (hash4(ix, iy, iw, salt) & 0xffffff) / 16777216;
+/** Smooth value noise in [0, 1] on (x, y, w), periodic in y with period n (twin: vnoise3J). */
+export function vnoise3(x: number, y: number, n: number, w: number, salt: number): number {
+  const ix = Math.floor(x), iy = Math.floor(y), iw = Math.floor(w);
+  const fx = smooth(x - ix), fy = smooth(y - iy), fw = smooth(w - iw);
+  const y0 = ((iy % n) + n) % n, y1 = (y0 + 1) % n;
+  let v = 0;
+  for (let c = 0; c < 8; c++) {
+    const dx = c & 1, dy = (c >> 1) & 1, dw = (c >> 2) & 1;
+    const wt = (dx ? fx : 1 - fx) * (dy ? fy : 1 - fy) * (dw ? fw : 1 - fw);
+    v += wt * node3(ix + dx, dy ? y1 : y0, iw + dw, salt);
+  }
+  return v;
+}
+export function filaments(q: number, phiC: number, tLaunch: number): number {
+  const turns = phiC / (2 * Math.PI), y = (turns - Math.floor(turns)) * FILAMENT.cellsPhi;
+  return 1 + FILAMENT.amp * (vnoise3(tLaunch / FILAMENT.cellT, y, FILAMENT.cellsPhi, q * FILAMENT.cellsQ, FILAMENT.salt) - 0.5) * 2;
 }
 
-/** Density modulation of the synchrotron jet (wall x length falloff x knots x turbulence); 0 outside the
- *  emitting region. Twin of jetShapeJ in emission-shared.wgsl. Knots ride the local flow, Gamma(z). */
-export function jetShape(r: number, th: number, t: number, jetLength: number, knotAmp: number, g280: number): number {
+/** Density modulation of the synchrotron jet (spec 2026-10-03 jet flux knots 2.4): the plasma at height z left
+ *  the base at t - tau(z), when the horizon flux ratio was f; the funnel there is sqrt(f) wider and f denser
+ *  (power per length ~ f^2 ~ phi^2), times the co-moving filaments. 0 outside the emitting region.
+ *  t is absolute coordinate time (M); a only sets the filaments' twist. Twin: jetShapeJ. */
+export function jetShape(r: number, th: number, ph: number, t: number, jetLength: number, fluxVar: number, g280: number, a: number): number {
   const z = r * Math.cos(th), az = Math.abs(z);
   if (az < JET.zBase || az > jetLength) return 0;
-  const rho = r * Math.sin(th), w = wallProfile(rho, z);
+  const tl = t - launchDelay(z, g280), f = fluxRatio(tl, fluxVar), sw = Math.sqrt(f);
+  const rho = r * Math.sin(th), w = wallProfile(rho / sw, z);
   if (w <= 0) return 0;
-  const turb = 1 + JET.turbAmpJet * (vnoise(Math.log(1 + rho), JET.kz * z) - 0.5) * 2;
-  return Math.max(0, w * lengthFalloff(z, jetLength) * knots(z, t, gammaProfile(z, g280), knotAmp) * turb);
+  const q = rho / (sw * funnelEdge(z));
+  return Math.max(0, f * w * lengthFalloff(z, jetLength) * filaments(q, comovingAzimuth(ph, z, a, g280), tl));
 }
 
-/** True where jetShape can be non-zero for SOME time: zBase <= |z| <= jetLength
- *  and inside the funnel wall (q <= 1.2, wallProfile's cut). Purely geometric, so the geodesic
- *  cache's jet bookmark never depends on the jet switch or brightness (spec 2026-10-01 3.3).
- *  WGSL twin: inJetEnvelope in raytrace.wgsl. */
+/** True where jetShape can be non-zero for SOME time and slider value: zBase <= |z| <= jetLength and
+ *  q <= JET_ENV_Q. Purely geometric, so the geodesic cache's jet bookmark never depends on the jet switch,
+ *  brightness or flux (spec 2026-10-01 3.3). WGSL twin: inJetEnvelope in raytrace.wgsl. */
 export function inJetEnvelope(r: number, th: number, jetLength: number): boolean {
   const z = r * Math.cos(th), az = Math.abs(z);
   if (az < JET.zBase || az > jetLength) return false;
-  return (r * Math.sin(th)) / funnelEdge(z) <= 1.2;
+  return (r * Math.sin(th)) / funnelEdge(z) <= JET_ENV_Q;
 }

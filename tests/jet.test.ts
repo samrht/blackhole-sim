@@ -1,9 +1,9 @@
 import { describe, it, expect } from "vitest";
 import {
-  JET, funnelEdge, wallProfile, lengthFalloff, knots, jetShape, inJetEnvelope,
+  JET, funnelEdge, wallProfile, lengthFalloff, jetShape, inJetEnvelope, FILAMENT, JET_ENV_Q, vnoise3, filaments,
   launchDelay, fieldLineOmega, comovingAzimuth, gammaProfile,
 } from "../src/physics/jet";
-import { vnoise } from "../src/physics/emission";
+import { FLUX, fluxRatio } from "../src/physics/flux-history";
 
 describe("jet geometry", () => {
   it("funnel widens with height (parabolic)", () => {
@@ -23,59 +23,72 @@ describe("jet geometry", () => {
   });
 });
 
-describe("jet living emission field", () => {
-  it("knots ride the jet flow at beta(Gamma) < c (a pattern faster than light washed out under light-travel delay)", () => {
-    const gamma = 5, beta = Math.sqrt(1 - 1 / (gamma * gamma)); // 0.9798
-    for (const [z, t, dt] of [[10, 0, 3], [25, 12, 7.5], [-14, 4, 2]]) {
-      const zs = Math.sign(z) * (Math.abs(z) + beta * dt); // outward along its own lobe
-      expect(knots(zs, t + dt, gamma, 0.7)).toBeCloseTo(knots(z, t, gamma, 0.7), 5);
+describe("flux-driven jet shape (spec 2.4, 2.5)", () => {
+  const thWall = (r: number) => Math.atan2(funnelEdge(r) * JET.qPeak, r); // approx. on the wall peak
+  it("zero outside the jet band, positive inside (both lobes)", () => {
+    expect(jetShape(8, 0.12, 0, 0, 60, 1, 2, 0.9)).toBeGreaterThan(0);
+    expect(jetShape(8, Math.PI - 0.12, 0, 0, 60, 1, 2, 0.9)).toBeGreaterThan(0);
+    expect(jetShape(1.5, 0.12, 0, 0, 60, 1, 2, 0.9)).toBe(0);        // below zBase
+    expect(jetShape(400, 0.12, 0, 0, 60, 1, 2, 0.9)).toBe(0);        // beyond jetLength
+    expect(jetShape(8, Math.PI / 2, 0, 0, 60, 1, 2, 0.9)).toBe(0);   // equatorial
+  });
+  it("density x f and width x sqrt(f) at the plasma's launch time", () => {
+    const r = 30, th = thWall(30), z = r * Math.cos(th), rho = r * Math.sin(th);
+    for (const t of [500, 2100, 7777]) {
+      const tl = t - launchDelay(z, 2), f = fluxRatio(tl, 1), sw = Math.sqrt(f);
+      const q = rho / (sw * funnelEdge(z));
+      const want = f * wallProfile(rho / sw, z) * lengthFalloff(z, 60) * filaments(q, comovingAzimuth(0.4, z, 0.9, 2), tl);
+      expect(jetShape(r, th, 0.4, t, 60, 1, 2, 0.9)).toBeCloseTo(want, 12);
     }
   });
-  it("knots form a traveling wave (advancing t shifts the pattern)", () => {
-    const a = knots(10, 0.0, 5, 0.7);
-    const b = knots(10, 0.5, 5, 0.7);
-    expect(a).not.toBeCloseTo(b, 6); // time changes the local knot brightness
+  it("the pattern rides the flow: what the base launched appears at height z after tau(z)", () => {
+    // Same launch time and co-moving azimuth => same flux ratio and filament value at both heights.
+    const a = 0.9, g = 2, t0 = 3000, ph0 = 1.1;
+    for (const z of [10, 40]) {
+      const tl = t0, t = tl + launchDelay(z, g), ph = ph0 + fieldLineOmega(a) * (launchDelay(z, g) - (z - JET.zBase));
+      expect(comovingAzimuth(ph, z, a, g)).toBeCloseTo(ph0, 10);
+      expect(fluxRatio(t - launchDelay(z, g), 1)).toBeCloseTo(fluxRatio(tl, 1), 12);
+    }
   });
-
-  it("emission is 0 outside the axial band and inside the funnel band it is positive", () => {
-    const thAxis = 0.12;                 // near the pole -> inside a funnel
-    const rIn = 8;
-    expect(jetShape(rIn, thAxis, 0, 60, 0.7, 2)).toBeGreaterThan(0);
-    expect(jetShape(1.5, thAxis, 0, 60, 0.7, 2)).toBe(0); // below zBase launch
-    expect(jetShape(400, thAxis, 0, 60, 0.7, 2)).toBe(0); // beyond jetLength
-    expect(jetShape(8, Math.PI / 2, 0, 60, 0.7, 2)).toBe(0); // equatorial: outside funnel
+  it("s = 0 gives the steady jet: wall x falloff x filaments, no width change (Review Focus 3)", () => {
+    const r = 20, th = thWall(20), z = r * Math.cos(th), rho = r * Math.sin(th), tl = 900 - launchDelay(z, 2);
+    const q = rho / funnelEdge(z);
+    expect(jetShape(r, th, 0.2, 900, 60, 0, 2, 0.9))
+      .toBeCloseTo(wallProfile(rho, z) * lengthFalloff(z, 60) * filaments(q, comovingAzimuth(0.2, z, 0.9, 2), tl), 12);
   });
-  it("jetShape is a mean-one modulation of the wall profile (energy budget assumes it, synchrotron.ts)", () => {
-    // average over many times at a fixed point in the wall: the knots stream past and average out.
-    // g280 = 8 so the flow moves here (Gamma(20) = 1.73; at g280 = 2 the plasma is still at Gamma = 1
-    // below z ~ 84 and the knot pattern is static there - a consequence of M87's measured profile).
-    const r = 20, th = Math.atan2(funnelEdge(20) * JET.qPeak, 20), z = r * Math.cos(th), rho = r * Math.sin(th);
-    let m = 0; const N = 4000;
-    for (let k = 0; k < N; k++) m += jetShape(r, th, k * 0.37, 60, 0.7, 8);
-    const turb = 1 + JET.turbAmpJet * (vnoise(Math.log(1 + rho), JET.kz * z) - 0.5) * 2;
-    expect(m / N / (wallProfile(rho, z) * lengthFalloff(z, 60) * turb)).toBeCloseTo(1, 1);
+  it("filaments: mean one, amplitude bound 0.35, periodic and continuous across the azimuth wrap (Review Focus 4)", () => {
+    let m = 0, n = 0;
+    for (let i = 0; i < 20000; i++) { const v = filaments(0.3 + (i % 7) * 0.13, i * 0.731, i * 3.17); m += v; n++;
+      expect(v).toBeGreaterThanOrEqual(1 - FILAMENT.amp - 1e-12); expect(v).toBeLessThanOrEqual(1 + FILAMENT.amp + 1e-12); }
+    expect(m / n).toBeCloseTo(1, 1);
+    for (const ph of [0, 1, -2.5]) expect(filaments(0.8, ph + 2 * Math.PI, 444)).toBeCloseTo(filaments(0.8, ph, 444), 10);
+    expect(Math.abs(filaments(0.8, 2 * Math.PI - 1e-9, 444) - filaments(0.8, 1e-9, 444))).toBeLessThan(1e-6);
+  });
+  it("vnoise3 interpolates node values and wraps y with period n", () => {
+    expect(vnoise3(3, 2, 8, 5, 7)).toBeCloseTo(vnoise3(3, 10, 8, 5, 7), 12);
+    expect(vnoise3(3.5, 2.25, 8, 5.75, 7)).toBeGreaterThanOrEqual(0);
+    expect(vnoise3(3.5, 2.25, 8, 5.75, 7)).toBeLessThanOrEqual(1);
   });
 });
 
-describe("jet envelope (geodesic-cache bookmark region)", () => {
-  it("contains every point where the jet can emit", () => {
-    // jetShape > 0 anywhere => inJetEnvelope true, over a grid and several times
-    for (let r = 1.2; r < 80; r *= 1.07) {
-      for (let th = 0.001; th < Math.PI; th += 0.013) {
-        for (const t of [0, 3.3, 77]) {
-          if (jetShape(r, th, t, 60, 0.7, 2) > 0) expect(inJetEnvelope(r, th, 60)).toBe(true);
-        }
-      }
-    }
+describe("jet envelope (geodesic-cache bookmark region), widened for the flux-driven width", () => {
+  it("JET_ENV_Q covers the widest jet the slider allows", () => {
+    expect(JET_ENV_Q).toBeGreaterThanOrEqual(1.2 * Math.sqrt(1 / (1 - FLUX.sMax * FLUX.d1)));
+  });
+  it("contains every point where the jet can emit, at any flux and slider value (Review Focus 2)", () => {
+    for (let r = 1.2; r < 80; r *= 1.07)
+      for (let th = 0.001; th < Math.PI; th += 0.013)
+        for (const t of [0, 333, 1777, 2950]) for (const s of [0, 1, FLUX.sMax])
+          if (jetShape(r, th, 0.5, t, 60, s, 2, 0.9) > 0) expect(inJetEnvelope(r, th, 60)).toBe(true);
   });
   it("excludes below the launch height, beyond the length, and outside the wall", () => {
-    expect(inJetEnvelope(1.5, 0.01, 60)).toBe(false);             // |z| < zBase
-    expect(inJetEnvelope(70, 0.01, 60)).toBe(false);              // |z| > jetLength
-    expect(inJetEnvelope(20, Math.PI / 2 - 0.2, 60)).toBe(false); // far outside the funnel
-    expect(inJetEnvelope(20, 0.03, 60)).toBe(true);               // on the axis, inside
-    expect(inJetEnvelope(20, Math.PI - 0.03, 60)).toBe(true);     // counter-jet
+    expect(inJetEnvelope(1.5, 0.01, 60)).toBe(false);
+    expect(inJetEnvelope(70, 0.01, 60)).toBe(false);
+    expect(inJetEnvelope(20, Math.PI / 2 - 0.2, 60)).toBe(false);
+    expect(inJetEnvelope(20, 0.03, 60)).toBe(true);
+    expect(inJetEnvelope(20, Math.PI - 0.03, 60)).toBe(true);
   });
-  it("does not depend on jet strength (it takes none)", () => {
+  it("does not depend on jet strength or the flux slider (it takes neither)", () => {
     expect(inJetEnvelope.length).toBe(3);
   });
 });
