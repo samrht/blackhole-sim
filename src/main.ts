@@ -9,6 +9,7 @@ import { PRESETS, CUSTOM_DEFAULT, type Preset } from "./physics/presets";
 import { computeReadouts, type Readouts } from "./physics/readouts";
 import { jetUniforms, ETA_DEFAULT } from "./physics/synchrotron";
 import { formatLength, formatDuration } from "./physics/units";
+import { advanceSimTime, splitTime } from "./render/sim-clock";
 import { sigmaForFlicker, FLICKER_DEFAULT, type HotSpot } from "./physics/emission";
 
 const canvas = document.getElementById("c") as HTMLCanvasElement;
@@ -18,9 +19,9 @@ if (location.search.includes("parity")) {
   const { runParity } = await import("./test/parity.browser");
   const res = await runParity();
   // jet coefficients are compared as logs with an absolute tolerance (cooled-jet plan, Task 5)
-  const ok = res.maxErr < 1e-3 && res.jetLogErr <= 2e-3 && res.turbErr <= 1;
+  const ok = res.maxErr < 1e-3 && res.jetLogErr <= 2e-3 && res.turbErr <= 1 && res.turbRough.gpu <= 1.5 * res.turbRough.cpu;
   document.body.innerHTML = `<pre style="color:${ok ? "#6f6" : "#f66"};font-size:18px;padding:20px">
-PARITY ${ok ? "PASS" : "FAIL"} — maxRelErr=${res.maxErr.toExponential(3)} over ${res.rows} cases; jet max |d ln| ${res.jetLogErr.toExponential(2)}; turb worst ${res.turbErr.toFixed(2)} of tolerance (${res.turbWorst})</pre>`;
+PARITY ${ok ? "PASS" : "FAIL"} — maxRelErr=${res.maxErr.toExponential(3)} over ${res.rows} cases; jet max |d ln| ${res.jetLogErr.toExponential(2)}; turb worst ${res.turbErr.toFixed(2)} of tolerance (${res.turbWorst}); turb roughness at t 1.8e6 ${res.turbRough.gpu.toFixed(3)} (exact ${res.turbRough.cpu.toFixed(3)}, old f32(t - delay) ${res.turbRough.old.toFixed(3)})</pre>`;
   console.log("parity", res);
 } else if (location.search.includes("shadow")) {
   // Validation entry: Schwarzschild shadow-radius check (a=0, pole-on).
@@ -260,7 +261,7 @@ ratio to analytic critical curve = ${res.calibration} (NOT a calibration — the
   // 1 and the progressive running mean converges to a sharp still.
   function loop(now: number) {
     const dt = lastNow ? now - lastNow : 0; lastNow = now;
-    if (state.playing) simTime += (dt / 1000) * SPEED * state.timeScale;
+    if (state.playing) simTime = advanceSimTime(simTime, dt, SPEED, state.timeScale);
     if (dt > 0 && dt < 250) dtEma = dtEma ? dtEma + 0.1 * (dt - dtEma) : dt;
     if (now - lastFpsShow >= 500 && dtEma > 0) { fpsEl.textContent = (1000 / dtEma).toFixed(0); lastFpsShow = now; }
     const geo = geometryKey({ a: state.a, incl: state.incl, fovScale: 14, rObs: 1000, rIn, rOut,
@@ -292,10 +293,11 @@ ratio to analytic critical curve = ${res.calibration} (NOT a calibration — the
     const blend = mode === "cached" ? (cachedFrame === 0 ? 1 : EMA_BLEND)
       : state.playing ? (sample === 0 ? 1 : EMA_BLEND) : 1 / (sample + 1);
     const setIndex = mode === "cached" ? cachedFrame % sched.completedSets : 0;
+    const clock = splitTime(simTime); // f32-safe: epoch + small remainder (sim-clock.ts)
     const u: UniformValues = {
       resW: r.width, resH: r.height, outW: r.displayW, outH: r.displayH, a: state.a, incl: state.incl * Math.PI / 180,
       rObs: 1000, fovScale: 14, rIn, rOut, Tpeak: phys.tPeakK, lumNorm: phys.lumNorm, lightDelay: state.lightDelay ? 1 : 0, exposure: state.exposure,
-      time: simTime, frame: sample, reset: sample === 0 ? 1 : 0, maxSteps: state.maxSteps,
+      time: clock.rel, timeEpoch: clock.epoch, frame: sample, reset: sample === 0 ? 1 : 0, maxSteps: state.maxSteps,
       blend, timeScale: state.timeScale, turbAmp: sigmaForFlicker(state.flicker),
       breatheAmp: state.breatheAmp, nSpots: baseSpots.length,
       jetStrength: state.jetOn ? 1 : 0, jetGamma: state.jetGamma, jetB0: jetU.jetB0, jetQ0: jetU.jetQ0, rgCm: jetU.rgCm,

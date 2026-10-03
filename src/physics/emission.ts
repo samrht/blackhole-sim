@@ -127,14 +127,15 @@ export function sigmaForFlicker(rms: number): number {
   return FLICKER_TABLE[FLICKER_TABLE.length - 1][0];
 }
 
-/** Dimensionless emission multiplier at disk point (r, phi) and emission time t: lognormal MRI turbulence
- *  (sigma from sigmaForFlicker) x the optional breathing + the optional hot spots, which orbit at the
- *  co-rotating phase psi = phi - Omega t. Exactly 1 when sigma = breatheAmp = 0 and there are no spots. */
-export function emissionField(
+/** How the disk is shaded at (r, phi, t) (final review, 2026-10-03). MRI turbulence changes the local
+ *  dissipation, i.e. the emitted flux F = lognormal (mean 1, so the bolometric light is conserved); an
+ *  optically thick disk radiates that as a blackbody at T x F^(1/4), which the renderer shades through its
+ *  colour table (tempScale). The illustrative breathing and hot spots stay a grey brightness factor. */
+export function diskShadeFactors(
   r: number, phi: number, t: number, a: number,
   sigma: number, breatheAmp: number, spots: HotSpot[],
-): number {
-  const turb = sigma > 0 ? lognormalFactor(turbulenceAt(r, phi, t, a), sigma) : 1;
+): { tempScale: number; grey: number } {
+  const tempScale = sigma > 0 ? Math.pow(lognormalFactor(turbulenceAt(r, phi, t, a), sigma), 0.25) : 1;
   const breathe = 1 + breatheAmp * Math.sin(TWO_PI * t / T_BREATHE);
-  return Math.max(0, turb * breathe + hotspotField(r, patternPhase(r, phi, t, 1, a), spots));
+  return { tempScale, grey: Math.max(0, breathe + hotspotField(r, patternPhase(r, phi, t, 1, a), spots)) };
 }

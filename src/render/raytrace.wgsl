@@ -8,6 +8,7 @@ struct Uniforms {
   lumNorm: f32,
   lightDelay: f32,
   jetB0: f32, jetQ0: f32, rgCm: f32,   // synchrotron jet (CPU: jetUniforms in synchrotron.ts)
+  timeEpoch: f32,                      // clock epoch: absolute time = timeEpoch + time (sim-clock.ts)
 };
 @group(0) @binding(0) var<uniform> U: Uniforms;
 @group(0) @binding(1) var<storage, read_write> accum: array<vec4<f32>>;
@@ -130,15 +131,17 @@ fn hotspotFieldE(rHit: f32, psi: f32) -> f32 {
   }
   return s;
 }
-// Emission multiplier (twin: emissionField in src/physics/emission.ts): lognormal MRI turbulence with
-// sigma = U.turbAmp (mean exactly 1, so the Novikov-Thorne light is redistributed, not changed), times the
-// optional breathing, plus the optional hot spots at the co-rotating phase psi. Exactly 1 with all off.
-fn emissionFieldE(rHit: f32, phiHit: f32, psi: f32, tEmit: f32, a: f32) -> f32 {
+// How the disk is shaded (twin: diskShadeFactors in src/physics/emission.ts). MRI turbulence modulates
+// the local flux F = exp(sigma g - sigma^2 / 2) (sigma = U.turbAmp; mean 1, so the bolometric light is
+// conserved), which an optically thick disk radiates as a blackbody at T x F^(1/4): x = temperature scale.
+// The illustrative breathing and hot spots (co-rotating phase psi) stay a grey factor: y. (1, 1) with all off.
+// tEmit is the absolute emission time; tRel the same time less the clock epoch (full precision per pixel).
+fn diskShadeFactorsE(rHit: f32, phiHit: f32, psi: f32, tEmit: f32, tRel: f32, a: f32) -> vec2<f32> {
   let s = U.turbAmp;
-  var turb = 1.0;
-  if (s > 0.0) { turb = exp(s * turbulenceFieldE(rHit, phiHit, tEmit, a) - 0.5 * s * s); }
+  var tempScale = 1.0;
+  if (s > 0.0) { tempScale = exp(0.25 * (s * turbulenceFieldE(rHit, phiHit, U.timeEpoch, tRel, a) - 0.5 * s * s)); }
   let breathe = 1.0 + U.breatheAmp * sin(2.0 * PI * tEmit / 2000.0);
-  return max(0.0, turb * breathe + hotspotFieldE(rHit, psi));
+  return vec2<f32>(tempScale, max(0.0, breathe + hotspotFieldE(rHit, psi)));
 }
 
 // --- Tier 2B synchrotron jet ----------------------------------------------------------------
@@ -192,22 +195,26 @@ fn diskG(rHit: f32, xi: f32, a: f32) -> f32 {
 }
 
 // Observed disk colour at a hit: the only time dependence is the co-rotating pattern phase psi.
-fn shadeDisk(rHit: f32, phiHit: f32, g: f32, a: f32, tEmit: f32) -> vec3<f32> {
+fn shadeDisk(rHit: f32, phiHit: f32, g: f32, a: f32, tRel: f32) -> vec3<f32> {
   let Tn = sampleTemp(rHit);
   let Om = omegaKep(rHit, a);
-  let Tobs = U.Tpeak * g * Tn;                 // observed blackbody temperature
+  let tEmit = U.timeEpoch + tRel;              // absolute emission time
   let psi = phiHit - Om * tEmit;               // co-rotating pattern phase at emission
-  let E = emissionFieldE(rHit, phiHit, psi, tEmit, a); // time-varying brightness (==1 when features off)
+  let E = diskShadeFactorsE(rHit, phiHit, psi, tEmit, tRel, a); // (temperature scale, grey); (1, 1) when off
+  let Tobs = U.Tpeak * g * Tn * E.x;           // observed blackbody temperature
   // Visible-band radiance of a blackbody at T_obs (I_nu / nu^3 is invariant, so a shifted blackbody
   // is a blackbody at g T): colour AND brightness a camera records, normalised so the disk's
   // rest-frame peak has luminance 1 (spec 2026-10-01 §2.3). Was the bolometric (g Tn)^4 law.
-  return sampleColor(Tobs) * U.lumNorm * E;
+  return sampleColor(Tobs) * U.lumNorm * E.y;
 }
 
 // Light-travel delay (spec 2026-10-01): the backward ray starts at t = 0 and t decreases, so an
 // emitter at coordinate time t_e is seen delay = -t_e - rObs later than a reference at the camera's
 // distance (the constant rObs keeps values in tens of M). Emission time of what this pixel shows:
-fn emitTime(delay: f32) -> f32 { return U.time - U.lightDelay * delay; }
+// U.time is the clock's remainder after the epoch U.timeEpoch (sim-clock.ts), so emitRel keeps full f32
+// precision per pixel at any session length; emitTime is the absolute time for the other time-dependent terms.
+fn emitRel(delay: f32) -> f32 { return U.time - U.lightDelay * delay; }
+fn emitTime(delay: f32) -> f32 { return U.timeEpoch + emitRel(delay); }
 
 // The jet quadrature is a left Riemann sum along the ray with samples at most JET_DL apart,
 // independent of the geodesic stride: a step longer than JET_DL is split into n = ceil(dl / JET_DL)
@@ -365,7 +372,7 @@ fn traceRay(pix: vec2<u32>, jit: vec2<f32>, record: bool) -> TraceOut {
         let g = diskG(rHit, xi, a);
         let phiHit = mix(s.x.w, sNew.x.w, frac);     // azimuth of the emitting matter
         let delay = -mix(s.x.x, sNew.x.x, frac) - U.rObs;
-        color = shadeDisk(rHit, phiHit, g, a, emitTime(delay));
+        color = shadeDisk(rHit, phiHit, g, a, emitRel(delay));
         out.kind = KIND_DISK; out.payload = vec3<f32>(rHit, phiHit, delay);
         resolved = true;
         break;
@@ -491,7 +498,7 @@ fn replayJet(bm: State, nJet: u32) -> JetOut {
     // traceRay, so xi and g match the live trace.
     let ab = pixelImpact(gid.xy, fixedJitter(U.setIndex));
     let g = diskG(e.p0, cameraXiEta(ab.x, ab.y, U.a, U.incl).x, U.a);
-    color = shadeDisk(e.p0, e.p1, g, U.a, emitTime(e.p2));
+    color = shadeDisk(e.p0, e.p1, g, U.a, emitRel(e.p2));
   }
   else if (kind == KIND_SKY) { color = skyColor(vec3<f32>(e.p0, e.p1, e.p2)); }
   var jet: JetOut; jet.I = vec3<f32>(0.0); jet.tau = vec3<f32>(0.0);

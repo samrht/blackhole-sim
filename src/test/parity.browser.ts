@@ -21,7 +21,7 @@ import integratorParityWGSL from "../render/integrator-parity.wgsl?raw";
 
 /** Runs the WGSL metric/orbit/g-factor helpers on fixed inputs and returns the max relative
  *  error vs the TypeScript core. f32 GPU vs f64 CPU keeps this in the ~1e-6..1e-4 range. */
-export async function runParity(): Promise<{ maxErr: number; rows: number; jetLogErr: number; turbErr: number; turbWorst: string }> {
+export async function runParity(): Promise<{ maxErr: number; rows: number; jetLogErr: number; turbErr: number; turbWorst: string; turbRough: { gpu: number; old: number; cpu: number } }> {
   const cases = [
     { r: 8, th: Math.PI / 2, a: 0.0, xi: 3 }, { r: 6, th: 1.2, a: 0.5, xi: 2 },
     { r: 12, th: Math.PI / 2, a: 0.9, xi: -4 }, { r: 20, th: 0.9, a: 0.99, xi: 5 },
@@ -51,42 +51,61 @@ export async function runParity(): Promise<{ maxErr: number; rows: number; jetLo
     for (let k = 0; k < 4; k++) maxErr = Math.max(maxErr, Math.abs(gpu[i * 4 + k] - cpu[k]) / (1 + Math.abs(cpu[k])));
   });
   // --- turbulence parity (CPU emission.ts turbulenceAt vs the shipped turbulenceFieldE) ---
-  // Late (2e5), negative (-50) and both spin extremes are Review Focus 1-3.
+  // The shader takes time as an epoch t0 (a multiple of 2048, exact in f32) plus a small remainder tRel,
+  // as the renderer does (sim-clock.ts). Late (t0 ~ 2e5), negative (-50) and both spin extremes are
+  // Review Focus 1-3. Then a line of 256 pixels at t ~ 1.8e6 M whose emission times step by 0.05 M (a
+  // light-delay gradient) checks smoothness: the old composition, f32(t - delay), turned this into grain.
   const tcases = [
-    { r: 6, phi: 0.4, t: 1.7, a: 0.9 }, { r: 9, phi: 1.7, t: 500, a: 0.9 },
-    { r: 14, phi: -3.9, t: 5000, a: 0.9 }, { r: 22, phi: 5.2, t: 2e5, a: 0.9 },
-    { r: 4, phi: 2.2, t: -50, a: 0.9 }, { r: 7, phi: 0.9, t: 333, a: 0 },
-    { r: 1.3, phi: 4.4, t: 81, a: 0.998 }, { r: 35, phi: -0.6, t: 12345, a: 0.5 },
+    { r: 6, phi: 0.4, t0: 0, tr: 1.7, a: 0.9 }, { r: 9, phi: 1.7, t0: 0, tr: 500, a: 0.9 },
+    { r: 14, phi: -3.9, t0: 4096, tr: 904, a: 0.9 }, { r: 22, phi: 5.2, t0: 198656, tr: 1344, a: 0.9 },
+    { r: 4, phi: 2.2, t0: 0, tr: -50, a: 0.9 }, { r: 7, phi: 0.9, t0: 0, tr: 333, a: 0 },
+    { r: 1.3, phi: 4.4, t0: 0, tr: 81, a: 0.998 }, { r: 35, phi: -0.6, t0: 12288, tr: 57, a: 0.5 },
   ];
-  const tin = device.createBuffer({ size: tcases.length * 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
-  const tarr = new Float32Array(tcases.length * 4);
-  tcases.forEach((c, i) => { tarr.set([c.r, c.phi, c.t, c.a], i * 4); });
+  const LINE_N = 256, LINE_T0 = 1835008, LINE_R = 3, LINE_PHI = 0.7, LINE_A = 0.9;
+  const lineRel = (k: number) => 500 - 0.05 * k;
+  const nT = tcases.length + 2 * LINE_N;
+  const tarr = new Float32Array(nT * 8);
+  tcases.forEach((c, i) => { tarr.set([c.r, c.phi, c.t0, c.tr, c.a, 0, 0, 0], i * 8); });
+  for (let k = 0; k < LINE_N; k++) {
+    tarr.set([LINE_R, LINE_PHI, LINE_T0, lineRel(k), LINE_A, 0, 0, 0], (tcases.length + k) * 8);                    // epoch + remainder
+    tarr.set([LINE_R, LINE_PHI, Math.fround(LINE_T0 + lineRel(k)), 0, LINE_A, 0, 0, 0], (tcases.length + LINE_N + k) * 8); // old: f32(t - delay)
+  }
+  const tin = device.createBuffer({ size: tarr.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
   device.queue.writeBuffer(tin, 0, tarr);
-  const tout = device.createBuffer({ size: tcases.length * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
-  const tread = device.createBuffer({ size: tcases.length * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+  const tout = device.createBuffer({ size: nT * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
+  const tread = device.createBuffer({ size: nT * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
   const tmod = device.createShaderModule({ code: integratorSharedWGSL + emissionSharedWGSL + turbParityWGSL }) // emission-shared uses gUp;
   const tpipe = device.createComputePipeline({ layout: "auto", compute: { module: tmod, entryPoint: "main" } });
   const tbind = device.createBindGroup({ layout: tpipe.getBindGroupLayout(0), entries: [
     { binding: 0, resource: { buffer: tin } }, { binding: 1, resource: { buffer: tout } }] });
   const tenc = device.createCommandEncoder();
-  const tcp = tenc.beginComputePass(); tcp.setPipeline(tpipe); tcp.setBindGroup(0, tbind); tcp.dispatchWorkgroups(1); tcp.end();
-  tenc.copyBufferToBuffer(tout, 0, tread, 0, tcases.length * 4);
+  const tcp = tenc.beginComputePass(); tcp.setPipeline(tpipe); tcp.setBindGroup(0, tbind); tcp.dispatchWorkgroups(Math.ceil(nT / 64)); tcp.end();
+  tenc.copyBufferToBuffer(tout, 0, tread, 0, nT * 4);
   device.queue.submit([tenc.finish()]);
   await tread.mapAsync(GPUMapMode.READ);
   const tgpu = new Float32Array(tread.getMappedRange().slice(0));
-  // Tolerance per case: 2e-3, plus 8x the field's change over one f32 step of t. At late times the GPU's
-  // tau = t / T_c rounds by a few f32 steps of t (the same offset for every pixel of a lattice row, so a
-  // coherent time shift, not noise); the CPU, in f64, sees the exact f32 input. turbErr is the worst
-  // |d g| / tolerance (PASS <= 1).
+  // Tolerance per case: 2e-3, plus 8x the field's change over one f32 step of the epoch t0. The GPU's
+  // t0 / T_c rounds by a few such steps: one offset per lattice row and epoch, shared by every pixel (a
+  // coherent time shift); the CPU, in f64, sees the exact time. turbErr is the worst |d g| / tolerance.
   let turbErr = 0, turbWorst = "";
   tcases.forEach((c, i) => {
-    const r = Math.fround(c.r), phi = Math.fround(c.phi), t = Math.fround(c.t), a = Math.fround(c.a);
+    const r = Math.fround(c.r), phi = Math.fround(c.phi), t = c.t0 + Math.fround(c.tr), a = Math.fround(c.a);
     const cpu = turbulenceAt(r, phi, t, a);
-    const ulpT = Math.max(Math.abs(t), 1) * 2 ** -23;
+    const ulpT = Math.max(Math.abs(c.t0), 1) * 2 ** -23;
     const tol = 2e-3 + 8 * Math.abs(turbulenceAt(r, phi, t + ulpT, a) - cpu);
     const e = Math.abs(tgpu[i] - cpu) / tol;
-    if (e > turbErr) { turbErr = e; turbWorst = `t=${c.t}: |d g| ${Math.abs(tgpu[i] - cpu).toExponential(2)} tol ${tol.toExponential(2)}`; }
+    if (e > turbErr) { turbErr = e; turbWorst = `t=${t}: |d g| ${Math.abs(tgpu[i] - cpu).toExponential(2)} tol ${tol.toExponential(2)}`; }
   });
+  // Smoothness: rms second difference along the line, GPU (epoch + remainder) against the exact field.
+  const rough = (v: (k: number) => number) => {
+    let s = 0; for (let k = 1; k < LINE_N - 1; k++) s += (v(k + 1) - 2 * v(k) + v(k - 1)) ** 2;
+    return Math.sqrt(s / (LINE_N - 2));
+  };
+  const turbRough = {
+    gpu: rough((k) => tgpu[tcases.length + k]),
+    old: rough((k) => tgpu[tcases.length + LINE_N + k]),
+    cpu: rough((k) => turbulenceAt(LINE_R, Math.fround(LINE_PHI), LINE_T0 + Math.fround(lineRel(k)), LINE_A)),
+  };
   // --- jet parity (CPU synchrotron.ts / cyclosynch.ts / jet.ts vs the SHIPPED emission-shared.wgsl) ---
   // Cases are real photon states inside the jet: rays walked with the CPU integrator from the camera until
   // the sample lies in the emitting region, so D sees realistic momenta (approaching and receding lobes).
@@ -402,5 +421,5 @@ export async function runParity(): Promise<{ maxErr: number; rows: number; jetLo
     "cpu dl0", icases.map((c) => cpuStep(c).dl0.toPrecision(6)),
     "gpu dl0", icases.map((_, i) => igpu[i * OUT_F + 12].toPrecision(6)),
     "state relErr", icases.map((c, i) => { const { out } = cpuStep(c); let e = 0; for (let k = 0; k < c.nCmp; k++) e = Math.max(e, Math.abs(igpu[i * OUT_F + k] - out.s[k]) / (1 + Math.abs(out.s[k]))); return e.toExponential(2); }));
-  return { maxErr, rows: cases.length + tcases.length + jcases.length + scases.length + ccases.length + icases.length, jetLogErr, turbErr, turbWorst };
+  return { maxErr, rows: cases.length + tcases.length + jcases.length + scases.length + ccases.length + icases.length, jetLogErr, turbErr, turbWorst, turbRough };
 }

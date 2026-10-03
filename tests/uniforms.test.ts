@@ -30,6 +30,8 @@ describe("uniforms packing", () => {
     expect(dv.getFloat32(128, true)).toBeCloseTo(632.4);                    // jetB0 (index 32)
     expect(dv.getFloat32(132, true)).toBeCloseTo(0.1465, 6);                // jetQ0 (index 33)
     expect(dv.getFloat32(136, true) / 9.6e14).toBeCloseTo(1, 6);            // rgCm (index 34)
+    expect(dv.getFloat32(140, true)).toBe(0);                               // timeEpoch (index 35) defaults to 0
+    expect(new DataView(packUniforms({ ...u, timeEpoch: 1835008 })).getFloat32(140, true)).toBe(1835008);
   });
   it("packs the geodesic-cache fields after outW/outH and defaults them to 0", () => {
     const base: UniformValues = {

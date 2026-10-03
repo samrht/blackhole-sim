@@ -38,15 +38,19 @@ fn gaussT(ix: i32, iy: u32, gen: i32, salt: u32) -> f32 {
   let u2 = f32(h2 & 0xffffffu) / 16777216.0;
   return sqrt(max(0.0, -2.0 * log(u1))) * cos(TWO_PI_E * u2);
 }
-fn turbOctaveT(r: f32, phi: f32, t: f32, a: f32, cellEta: f32, cellsPhi: u32, salt: u32) -> f32 {
+fn turbOctaveT(r: f32, phi: f32, t0: f32, tRel: f32, a: f32, cellEta: f32, cellsPhi: u32, salt: u32) -> f32 {
   let x = log(r) / cellEta; let i0 = i32(floor(x)); let fx = smoothE(x - floor(x));
   let Om = omegaKep(r, a);
   var num = 0.0; var v = 0.0;
   for (var d = 0; d < 2; d++) {
     let i = i0 + d; let wr = select(1.0 - fx, fx, d == 1);
     let Tc = TURB_CLOCK * TWO_PI_E / omegaKep(exp(f32(i) * cellEta), a);
-    let tau = t / Tc + f32(hash4T(i, 0x51edu, 0, salt) & 0xffffffu) / 16777216.0;
-    let k = i32(floor(tau)); let f = tau - floor(tau);
+    // tau = (t0 + tRel) / T_c + row phase, in two parts: the epoch's (rounded once per row: a coherent
+    // offset shared by every pixel) and the small per-pixel remainder's, which keeps full precision.
+    let tau0 = t0 / Tc + f32(hash4T(i, 0x51edu, 0, salt) & 0xffffffu) / 16777216.0;
+    let k0 = floor(tau0);
+    let tau = (tau0 - k0) + tRel / Tc;
+    let k = i32(k0) + i32(floor(tau)); let f = tau - floor(tau);
     for (var e = 0; e < 2; e++) {
       let wt = select(cos(0.25 * TWO_PI_E * f), sin(0.25 * TWO_PI_E * f), e == 1);
       let age = select(1.0 + f, f, e == 1) * Tc;
@@ -60,10 +64,11 @@ fn turbOctaveT(r: f32, phi: f32, t: f32, a: f32, cellEta: f32, cellsPhi: u32, sa
   }
   return num / sqrt(v);
 }
-// Unit-Gaussian turbulence g at (r, phi, t_emit, a). 2 pi-periodic in phi.
-fn turbulenceFieldE(r: f32, phi: f32, t: f32, a: f32) -> f32 {
-  return (turbOctaveT(r, phi, t, a, TURB_CELL_ETA, TURB_CELLS_PHI, 1u)
-        + TURB_OCT2 * turbOctaveT(r, phi, t, a, 0.5 * TURB_CELL_ETA, 2u * TURB_CELLS_PHI, 2u)) / sqrt(1.0 + TURB_OCT2 * TURB_OCT2);
+// Unit-Gaussian turbulence g at (r, phi, a) and emission time t0 + tRel: t0 the clock epoch (a multiple of
+// 2048 M, sim-clock.ts), tRel the small remainder (it carries the per-pixel light delay). 2 pi-periodic in phi.
+fn turbulenceFieldE(r: f32, phi: f32, t0: f32, tRel: f32, a: f32) -> f32 {
+  return (turbOctaveT(r, phi, t0, tRel, a, TURB_CELL_ETA, TURB_CELLS_PHI, 1u)
+        + TURB_OCT2 * turbOctaveT(r, phi, t0, tRel, a, 0.5 * TURB_CELL_ETA, 2u * TURB_CELLS_PHI, 2u)) / sqrt(1.0 + TURB_OCT2 * TURB_OCT2);
 }
 
 // --- Tier 2B jet geometry -------------------------------------------------------------------

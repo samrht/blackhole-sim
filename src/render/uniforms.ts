@@ -7,6 +7,7 @@
 //         + lumNorm (1, visible-band brightness; after the uints)        -> 23 floats
 //         + lightDelay (1, 0/1 light-travel delay)                      -> 24 floats
 //         + jetB0, jetQ0, rgCm (3, synchrotron jet)                     -> 27 floats
+//         + timeEpoch (1; `time` is then the remainder: t = timeEpoch + time) -> 28 floats
 // uint:   frame,reset,maxSteps (3) + nSpots (1)                        -> 4 uints
 //         + jitterMode,setIndex,rowStart,rowEnd (4, geodesic cache)    -> 8 uints
 export interface UniformValues {
@@ -23,12 +24,15 @@ export interface UniformValues {
   lightDelay: number;
   /** Synchrotron jet (specs 2026-10-02): funnel field scale (G), energy-budget injection scale q0 (erg s^-1 cm^-3 G^-2), r_g (cm). */
   jetB0: number; jetQ0: number; rgCm: number;
+  /** Clock epoch (M, a multiple of 2048; splitTime in sim-clock.ts): absolute time = timeEpoch + time.
+   *  Omitted = 0, so `time` is absolute (tests, golden scenes). */
+  timeEpoch?: number;
   /** Geodesic cache (spec 2026-10-01): 0 = per-frame hash jitter, 1 = fixed jitter set `setIndex`. */
   jitterMode?: number; setIndex?: number;
   /** Build pass row slice [rowStart, rowEnd). */
   rowStart?: number; rowEnd?: number;
 }
-export const UNIFORM_FLOATS = 27, UNIFORM_UINTS = 8;
+export const UNIFORM_FLOATS = 28, UNIFORM_UINTS = 8;
 export const UNIFORM_SIZE = Math.ceil((UNIFORM_FLOATS + UNIFORM_UINTS) / 4) * 16; // -> 144 bytes
 
 export function packUniforms(u: UniformValues): ArrayBuffer {
@@ -47,5 +51,6 @@ export function packUniforms(u: UniformValues): ArrayBuffer {
   f[30] = u.lumNorm;
   f[31] = u.lightDelay;
   f[32] = u.jetB0; f[33] = u.jetQ0; f[34] = u.rgCm;
+  f[35] = u.timeEpoch ?? 0;
   return buf;
 }
