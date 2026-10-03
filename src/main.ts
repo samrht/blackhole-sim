@@ -1,6 +1,7 @@
 import { Renderer } from "./render/gpu";
 import { toRGBA, screenshotName, savePNG, downloadBlob } from "./render/screenshot";
 import { ClipRecorder, pickClipFormat, clipName, formatElapsed, CLIP } from "./render/clip";
+import { SHARE_FIELDS, encodeShare, decodeShare, type ShareLimit } from "./share";
 import type { UniformValues } from "./render/uniforms";
 import { ScaleController } from "./render/scale";
 import { geometryKey, BuildScheduler, chooseMode } from "./render/cache-plan";
@@ -292,6 +293,53 @@ structural ${res.structural ? "ok" : "FAILED"} — centred dark shadow=${res.has
   // resolution for frame rate (it targets ~60 fps, never below half resolution; what a given GPU
   // actually reaches is shown in the FPS and Render-scale readouts); paused, the scale snaps back to
   // 1 and the progressive running mean converges to a sharp still.
+  // --- Shareable links (2026-10-03): the view lives in the URL hash (src/share.ts) ------------------------------
+  // Values are read from and written to the panel controls themselves; applying a link fires each control's own
+  // input/change event, so physics, presets and cache rebuilds run exactly as for a user's change.
+  const shareEl = (id: string) => document.getElementById(id) as HTMLInputElement & HTMLSelectElement;
+  const readShare = (): Record<string, string> => Object.fromEntries(SHARE_FIELDS.map((f) => [f.key,
+    f.key === "play" ? (state.playing ? "1" : "0") : f.kind === "check" ? (shareEl(f.id).checked ? "1" : "0") : shareEl(f.id).value]));
+  const shareLimits: Record<string, ShareLimit> = Object.fromEntries(SHARE_FIELDS.map((f) => {
+    const el = shareEl(f.id);
+    const lim: ShareLimit = f.kind === "select" ? { kind: "select", options: [...el.options].map((o) => o.value) }
+      : f.kind === "check" ? { kind: "check" } : { kind: "range", min: +el.min, max: +el.max, step: +el.step };
+    return [f.key, lim];
+  }));
+  const shareDefaults = readShare(); // the page's own defaults (Default view), before any link is applied
+  function applyShare(hash: string) {
+    const want = { ...shareDefaults, ...decodeShare(hash, shareLimits) };
+    for (const f of SHARE_FIELDS) {
+      const v = want[f.key], el = shareEl(f.id);
+      if (f.key === "play") { if ((v === "1") !== state.playing) playBtn.click(); continue; }
+      if (f.customOnly && want.p !== "custom") continue; // the preset sets these
+      if (f.kind === "check") {
+        if ((v === "1") !== el.checked) { el.checked = v === "1"; el.dispatchEvent(new Event("change", { bubbles: true })); }
+      } else if (el.value !== v) {
+        el.value = v; el.dispatchEvent(new Event(f.kind === "select" ? "change" : "input", { bubbles: true }));
+      }
+    }
+  }
+  let shareTimer = 0;
+  const syncShare = () => {
+    clearTimeout(shareTimer);
+    const h = encodeShare(readShare(), shareDefaults);
+    if (h !== location.hash.replace(/^#/, "")) history.replaceState(null, "", h ? `#${h}` : location.pathname + location.search);
+  };
+  const scheduleShare = () => { clearTimeout(shareTimer); shareTimer = window.setTimeout(syncShare, 300); };
+  const panelEl = $("panel");
+  panelEl.addEventListener("input", scheduleShare); panelEl.addEventListener("change", scheduleShare);
+  playBtn.addEventListener("click", scheduleShare);
+  canvas.addEventListener("pointerup", scheduleShare); // drag-tilt changes the inclination without an input event
+  addEventListener("hashchange", () => applyShare(location.hash)); // edited address or Back
+  const copyBtn = $("copylink") as HTMLButtonElement;
+  copyBtn.addEventListener("click", async () => {
+    syncShare();
+    try { await navigator.clipboard.writeText(location.href); copyBtn.textContent = "Copied"; }
+    catch (e) { console.warn("copy link: clipboard unavailable", e); copyBtn.textContent = "Copy failed"; }
+    setTimeout(() => { copyBtn.textContent = "Copy link"; }, 1500);
+  });
+  if (location.hash.length > 1) applyShare(location.hash);
+
   function loop(now: number) {
     const dt = lastNow ? now - lastNow : 0; lastNow = now;
     if (state.playing) simTime = advanceSimTime(simTime, dt, SPEED, state.timeScale);

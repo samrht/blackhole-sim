@@ -273,5 +273,31 @@ const reachOk = reach.panelBottom <= reach.viewport && reach.lastBottom <= reach
 console.log(`${reachOk ? "✓ PASS" : "✗ FAIL"}  panel reachable at 1280x720 with a caption: panel bottom ${reach.panelBottom.toFixed(0)}, last control ${reach.lastBottom.toFixed(0)}, window ${reach.viewport}`);
 if (!reachOk) failed = true;
 
+// Shareable links (2026-10-03): a #hash opens that view; changing a control rewrites the hash; Copy link copies it.
+{
+  const dShare = diags.length, sSteps = [];
+  const sstep = (name, ok) => { sSteps.push(`${name} ${ok ? "ok" : "FAILED"}`); return ok; };
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin: BASE });
+  await page.goto(BASE + "/#p=m87&x=0.5&fv=1.4&play=0", { waitUntil: "load", timeout: 20000 });
+  await page.waitForTimeout(1500);
+  const opened = await page.evaluate(() => ({ p: document.getElementById("preset").value, x: document.getElementById("exp").value,
+    fv: document.getElementById("fv").value, i: document.getElementById("incl").value, play: document.getElementById("playpause").textContent }));
+  let ok = sstep(`opened ${JSON.stringify(opened)}`, opened.p === "m87" && opened.x === "0.5" && opened.fv === "1.4" && opened.i === "17" && opened.play === "Play");
+  await page.evaluate(() => { const s = document.getElementById("spin"); s.value = "0.5"; s.dispatchEvent(new Event("input", { bubbles: true })); });
+  await page.waitForTimeout(800);
+  const hash = await page.evaluate(() => location.hash);
+  ok = sstep(`hash ${hash}`, (/^#p=custom&/.test(hash) && /a=0\.5(&|$)/.test(hash) && /i=17/.test(hash) && /x=0\.5/.test(hash) && /play=0/.test(hash))) && ok;
+  await page.click("#copylink");
+  const copied = await page.waitForFunction(() => document.getElementById("copylink").textContent === "Copied", null, { timeout: 5000 }).then(() => true, () => false);
+  const clip = await page.evaluate(() => navigator.clipboard.readText()).catch(() => "");
+  ok = sstep("copy", copied && clip === BASE + "/" + hash) && ok;
+  // Back to a clean page: hashchange to the default view re-applies it.
+  await page.evaluate(() => { location.hash = ""; });
+  await page.waitForTimeout(300);
+  const shareDiag = diagSince(dShare);
+  console.log(`${ok && !shareDiag ? "✓ PASS" : "✗ FAIL"}  shareable links: ${sSteps.join(", ")}${shareDiag}`);
+  if (!ok || shareDiag) failed = true;
+}
+
 await browser.close();
 process.exit(failed ? 1 : 0);

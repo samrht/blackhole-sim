@@ -73,6 +73,9 @@
 
   #err{position:fixed;inset:0;display:none;place-items:center;text-align:center;padding:40px;
     font-size:14px;color:#ff8c8c;line-height:1.6}
+  .xbtn { flex: 1; min-width: 0; padding: 9px 2px; background: transparent; border: 1px solid var(--hair); border-radius: 9px;
+    color: var(--accent); font: inherit; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; cursor: pointer; white-space: nowrap; }
+  .xbtn:disabled { opacity: 0.4; cursor: default; }
 </style>
 </head>
 <body>
@@ -152,14 +155,12 @@
     <button id="playpause" style="width:100%;margin-top:6px;padding:9px;background:transparent;
       border:1px solid var(--hair);border-radius:9px;color:var(--accent);font:inherit;font-size:11px;
       letter-spacing:0.2em;text-transform:uppercase;cursor:pointer">Pause</button>
-    <button id="saveshot" title="Save the view as a PNG at the canvas's full internal resolution. Pause first and let Samples climb for the cleanest image."
-      style="width:100%;margin-top:6px;padding:9px;background:transparent;
-      border:1px solid var(--hair);border-radius:9px;color:var(--accent);font:inherit;font-size:11px;
-      letter-spacing:0.2em;text-transform:uppercase;cursor:pointer">Save PNG</button>
-    <button id="record" title="Record the view as it plays (MP4, or WebM where MP4 is unavailable); click again to stop and save. Smoothness follows the live frame rate; stops by itself after 5 minutes."
-      style="width:100%;margin-top:6px;padding:9px;background:transparent;
-      border:1px solid var(--hair);border-radius:9px;color:var(--accent);font:inherit;font-size:11px;
-      letter-spacing:0.2em;text-transform:uppercase;cursor:pointer">Record</button>
+    <!-- Export row: Save PNG, Record / Stop, Copy link (one row keeps the panel short) -->
+    <div style="display:flex;gap:6px;margin-top:6px">
+      <button id="saveshot" class="xbtn" title="Save the view as a PNG at the canvas's full internal resolution. Pause first and let Samples climb for the cleanest image.">Save PNG</button>
+      <button id="record" class="xbtn" title="Record the view as it plays (MP4, or WebM where MP4 is unavailable); click again to stop and save. Smoothness follows the live frame rate; stops by itself after 5 minutes.">Record</button>
+      <button id="copylink" class="xbtn" title="Copy a link to this view (preset, sliders and pause state; the address bar always holds it too).">Copy link</button>
+    </div>
 
     <div class="rule"></div>
     <div id="readout">

@@ -67,7 +67,8 @@ this file is the queue. Each item gets its own spec (and plan) before code, as e
 - [x] **Video / clip export** (2026-10-03): **Record** / **Stop** records the view as it plays (MP4 H.264, WebM
   fallback) at the canvas's full internal size (README "Clip export"). An offline fixed-step renderer for
   always-smooth clips was considered and left out.
-- [ ] **Shareable camera links**: spin, inclination, sliders and preset encoded in the URL.
+- [x] **Shareable links** (2026-10-03): the address bar always holds the view (`#p=m87&x=0.5&play=0`) and **Copy link**
+  copies it (README "Shareable links").
 - [ ] **Mobile layout**: control panel as a collapsible sheet and a phone-sized default render
   scale (camera drag already works on touch: it uses pointer events).
 
