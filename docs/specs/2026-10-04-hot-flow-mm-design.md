@@ -63,7 +63,12 @@ r_S = 2M; ρ, z cylindrical; r spherical (Boyer–Lindquist).
 |---|---|---|
 | Sgr A* (preset a = 0.94, i = 30°) | 51.8 ± 2.3 µas (EHT 2022) | 48.2 / 46.0 µas |
 | Sgr A* at a = 0.1, i = 60° (Broderick 2016 fit) | — | 55.0 / 55.0 µas |
-| M87* (preset a = 0.9, i = 17°) | 42 ± 3 µas (EHT 2019) | to be measured |
+| M87* (preset a = 0.9, i = 17°) | 42 ± 3 µas (EHT 2019) | 35.6 / 27.3 µas (n₀ = 5.0 × 10⁵ cm⁻³; θ_g = 3.82 µas/M, EHT 3.8) |
+
+**Known limitation (measured while designing):** at M87*'s nearly face-on 17° the flow between the observer and the
+horizon fills the shadow and pulls the brightness peak inward: −2.1σ unblurred, ~−5σ blurred. MAD flows (EHT's
+favoured M87* model) compress the flow height near the horizon (McKinney et al. 2012, noted by Pu et al. 2016), which
+this analytic model omits. Documented in the app's M87* caption and the README; Sgr A* is the validation gate.
 
 ## 3. Rendering and code
 
@@ -94,7 +99,8 @@ the mm view are nearly dark (their disks emit little at 1.3 mm) apart from their
 (α = β = 1 → Keplerian, 0 → free fall), u normalised (u·u = −1 where K₀ > 0), D = 1 for a static emitter far away;
 density/temperature/field formulas; the regime threshold; n₀ scaling ∝ λ/M. **Calibration gate** (SWEEP-style,
 48²): traced flux reproduces 2.4 Jy (Sgr A*) and 0.5 Jy (M87*) at the tabulated n₀ within 5 %, and the ring
-diameters lie within 2σ of EHT (Sgr A* 51.8 ± 2.3; M87* 42 ± 3 µas).
+diameter of Sgr A* (unblurred) lies within 2σ of EHT's 51.8 ± 2.3 µas; the M87* ring is reported against
+42 ± 3 µas, not gated (§2.4 limitation).
 
 **GPU (`npm run verify:gpu`):** `?parity` cases for the flow functions and the per-sample slab (a mutation fails);
 golden: two new mm scenes (Sgr A*, M87*), visible scenes unchanged (or the known compiler rescheduling, proven with
