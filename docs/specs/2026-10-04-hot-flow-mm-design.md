@@ -98,12 +98,12 @@ The jet is not drawn in the mm view, for any object.
   thin-disk objects shade the disk at 230 GHz (Rayleigh–Jeans blackbody at g T); the jet's band loop can run at
   230 GHz (used only by `?hotflow`'s report, §2.5). `present.wgsl`: mm display (T_b → afmhot × exposure).
 - Geodesic cache: the band and the regime enter the geometry key (disk termination changes the path set). In mm
-  hot-flow mode the build pass stores each pixel's integrated steady-flow intensity; cached frames display it (the jet
-  replays as now).
+  hot-flow mode the build pass stores each pixel's integrated steady-flow intensity; cached frames display it (no jet bookmarks are recorded in
+  mm, since no jet is drawn there).
 - Uniforms: band, hot-flow flag, n₀ (cm⁻³), r_g already present; the block grows (layout test updated).
 - UI: the band control; preset captions updated (a "Flux (230 GHz)" readout was dropped in the plan: for the presets it
-  equals the measured flux by construction, and custom objects have no distance) (the M87* and
-  Sgr A* captions currently say the hot flow is not modelled).
+  equals the measured flux by construction, and custom objects have no distance); the M87* and Sgr A* captions
+  describe the 1.3 mm view.
 
 ## 4. On screen
 
@@ -116,12 +116,14 @@ little at 1.3 mm). No jet is drawn at 1.3 mm (§2.5).
 **CPU (`npm test`):** M(X) against Mahadevan's tabulated values; Kirchhoff consistency; Pu velocity limits
 (α = β = 1 → Keplerian, 0 → free fall), u normalised (u·u = −1 where K₀ > 0), D = 1 for a static emitter far away;
 density/temperature/field formulas; the regime threshold; n₀ scaling ∝ λ/M. **Calibration gate** (SWEEP-style,
-48²): traced flux reproduces 2.4 Jy (Sgr A*) and 0.5 Jy (M87*) at the tabulated n₀ within 5 %, and the ring
+96²; 48² read the ring one profile bin low): traced flux reproduces 2.4 Jy (Sgr A*) and 0.5 Jy (M87*) at the tabulated n₀ within 5 %, and the ring
 diameter of Sgr A* (unblurred) lies within 2σ of EHT's 51.8 ± 2.3 µas; the M87* ring is reported against
 42 ± 3 µas, not gated (§2.4 limitation).
 
-**GPU (`npm run verify:gpu`):** `?parity` cases for the flow functions and the per-sample slab (a mutation fails);
+**GPU (`npm run verify:gpu`):** `?parity` cases for the flow functions (velocity, D, coefficients; a mutation fails;
+the per-sample slab in flowStep is checked end to end by `?hotflow`: flux and ring against the CPU twin);
 golden: two new mm scenes (Sgr A*, M87*), visible scenes unchanged (or the known compiler rescheduling, proven with
-the stubbed-kernel check); `?cachecheck` gains an mm scene (cached = live); app check: band switch at Sgr A* shows a
-ring with the flux readout within 5 % of 2.4 Jy, no console warnings; performance of live mm frames measured and
+the stubbed-kernel check); `?cachecheck` gains an mm scene (cached = live); app check: `#p=sgra&b=mm` reaches `cached` and shows
+a bright ring around a darker centre, no console warnings; `?hotflow` gates the GPU image's flux (±5 %) and ring
+(±0.5 µas of the CPU twin, both objects; Sgr A* also within 2σ of the EHT); performance of live mm frames measured and
 reported (bench).

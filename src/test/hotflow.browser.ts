@@ -1,7 +1,7 @@
 // ?hotflow (spec 2026-10-04 hot flow): the GPU renderer's own 1.3 mm image of Sgr A* and M87*, measured like the CPU
 // calibration (hot-flow-image.ts): total flux at the preset distance and the ring diameter (azimuthal-mean peak,
-// unblurred). PASS iff Sgr A*'s flux is within 5 % of 2.4 Jy and its ring within 2 sigma of the EHT's 51.8 uas; M87*'s
-// flux and ring are reported. Also reported: what the jet model, if drawn at 230 GHz (the shader can, the app does not),
+// unblurred). PASS iff Sgr A*'s ring is within 2 sigma of the EHT's 51.8 uas and, for both objects, the flux is within
+// 5 % of the measured value its n0 was fitted to and the ring within 0.5 uas of the CPU twin's (twin checks). Also reported: what the jet model, if drawn at 230 GHz (the shader can, the app does not),
 // would add to M87*'s frame -- the measurement behind spec 2.5's decision not to draw the jet at 1.3 mm.
 import { Renderer } from "../render/gpu";
 import { SCENES, prepareScene, sceneUniforms, type Scene } from "./scenes";
@@ -31,12 +31,13 @@ export async function runHotFlow(canvas: HTMLCanvasElement): Promise<{ ok: boole
   if (r.width !== N || r.height !== N) throw new Error(`hotflow: canvas is ${r.width}x${r.height}, want ${N}x${N} (device pixel ratio 1)`);
   const sg = SCENES.find((s) => s.name === "sgra-mm")!, m87 = SCENES.find((s) => s.name === "m87-mm")!;
   const a = await measure(r, sg), b = await measure(r, m87), c = await measure(r, { ...m87, name: "m87-mm with the model jet (not drawn)", jetStrength: 1 });
-  const T = HOTFLOW_TARGETS.sgra;
-  const fluxOk = Math.abs(a.jy / T.jy - 1) < 0.05, ringOk = Math.abs(a.ringUas - T.ringUas) < 2 * T.ringErr;
+  const T = HOTFLOW_TARGETS.sgra, M = HOTFLOW_TARGETS.m87;
+  const twin = (x: HotFlowRow, t: typeof T | typeof M) => Math.abs(x.jy / t.jy - 1) < 0.05 && Math.abs(x.ringUas - t.cpuRingUas) < 0.5;
+  const sgOk = twin(a, T), m87Ok = twin(b, M), ehtOk = Math.abs(a.ringUas - T.ringUas) < 2 * T.ringErr;
   const row = (x: HotFlowRow) => `${x.name}: ${x.jy.toFixed(3)} Jy, ring ${x.ringUas.toFixed(1)} uas, peak T_b ${x.peakTb.toExponential(2)} K`;
-  return { ok: fluxOk && ringOk, lines: [
-    `${row(a)} (want ${T.jy} Jy +- 5 % ${fluxOk ? "ok" : "FAILED"}; EHT ${T.ringUas} +- ${T.ringErr} ${ringOk ? "ok" : "FAILED"})`,
-    `${row(b)} (want ${HOTFLOW_TARGETS.m87.jy} Jy; EHT ${HOTFLOW_TARGETS.m87.ringUas} +- ${HOTFLOW_TARGETS.m87.ringErr}, reported)`,
+  return { ok: sgOk && m87Ok && ehtOk, lines: [
+    `${row(a)} (twin: ${T.jy} Jy +- 5 %, CPU ring ${T.cpuRingUas} +- 0.5 ${sgOk ? "ok" : "FAILED"}; EHT ${T.ringUas} +- ${T.ringErr} ${ehtOk ? "ok" : "FAILED"})`,
+    `${row(b)} (twin: ${M.jy} Jy +- 5 %, CPU ring ${M.cpuRingUas} +- 0.5 ${m87Ok ? "ok" : "FAILED"}; EHT ${M.ringUas} +- ${M.ringErr}, reported)`,
     `${row(c)}: the jet would add ${(c.jy - b.jy).toFixed(3)} Jy (${((100 * (c.jy - b.jy)) / b.jy).toFixed(0)} % of the flow; EHT: jet base <~10 % of the ring)`,
   ] };
 }

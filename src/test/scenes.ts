@@ -11,7 +11,7 @@ import { sigmaForFlicker, FLICKER_DEFAULT } from "../physics/emission";
 export interface Scene { name: string; a: number; inclDeg: number; time: number; frame: number; jetStrength: number; skyStrength: number; lightDelay?: number;
   /** The jet's object (mass, accretion) when it is not the default view's. */
   obj?: { massSun: number; lambda: number };
-  /** 1.3 mm view (spec 2026-10-04): band, and the preset whose calibrated n0 the hot flow uses. */
+  /** 1.3 mm view (spec 2026-10-04): band, and the preset (?hotflow takes its distance and EHT targets from it). */
   band?: "vis" | "mm"; preset?: string; }
 const preset = (id: string) => PRESETS.find((p) => p.id === id)!;
 const mmScene = (name: string, id: string, jetStrength: number, time: number): Scene => {
@@ -49,7 +49,7 @@ export function sceneUniforms(r: Renderer, s: Scene, rIn: number, extra: Partial
     maxSteps: 4800, blend: 1, timeScale: 1, turbAmp: sigmaForFlicker(FLICKER_DEFAULT), breatheAmp: 0.2, nSpots: 3,
     jetStrength: s.jetStrength, jetGamma: 2, jetLength: 60, fluxVar: 1, skyStrength: s.skyStrength,
     jetB0: J.jetB0, jetQ0: J.jetQ0, rgCm: J.rgCm,
-    ...(s.band === "mm" ? { band: 1, hotFlow: isHotFlow(obj.lambda) ? 1 : 0, flowN0: flowN0(obj.massSun, obj.lambda, s.preset) } : {}),
+    ...(s.band === "mm" ? { band: 1, hotFlow: isHotFlow(obj.lambda) ? 1 : 0, flowN0: flowN0(obj.massSun, obj.lambda) } : {}),
     ...extra,
   };
 }

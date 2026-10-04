@@ -37,7 +37,7 @@ export const PRESETS: readonly Preset[] = [
     id: "gargantua", name: "Gargantua (Interstellar)", massSun: 1e8, a: 0.6, inclDeg: 85,
     // "Anemic" disk about as hot as the Sun's surface (Thorne, The Science of Interstellar).
     lambda: lambdaForPeakTemperature(1e8, 0.6, 5800), jet: false,
-    caption: "Fictional. 100 million solar masses (Thorne, The Science of Interstellar); the film's disk was rendered at spin 0.6 for the visuals (James, von Tunzelmann, Franklin & Thorne 2015), an 'anemic' disk about as hot as the Sun's surface. The 85° view is our choice to resemble the film. The film removed Doppler colour and brightness shifts; this render keeps them, which is why one side is brighter here.",
+    caption: "Fictional. 100 million solar masses (Thorne, The Science of Interstellar); the film's disk was rendered at spin 0.6 for the visuals (James, von Tunzelmann, Franklin & Thorne 2015), an 'anemic' disk about as hot as the Sun's surface. The 85° view is our choice to resemble the film. The film removed Doppler colour and brightness shifts; this render keeps them, which is why one side is brighter here. An accretion rate this low is a hot flow's, so at 1.3 mm it shows as one (density scaled from Sgr A*'s calibration).",
   },
 ];
 

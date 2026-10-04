@@ -9,7 +9,7 @@ describe.skipIf(!RUN)("hot flow calibration (96^2 CPU trace, ~1.5 min per object
       const p = PRESETS.find((q) => q.id === id)!, T = HOTFLOW_TARGETS[id];
       const rg = 1.476625e5 * p.massSun, dist = T.distKpc * 3.0857e21, uasPerM = (rg / dist) * 206264.806e6;
       const smp = traceFlowSamples(p.a, p.inclDeg, 96, 13);
-      const I = flowImage(smp, flowN0(p.massSun, p.lambda, id), rg);
+      const I = flowImage(smp, flowN0(p.massSun, p.lambda), rg);
       expect(Math.abs(imageFluxJy(I, 96, 13, rg, dist) / T.jy - 1)).toBeLessThan(0.05);
       const d = ringDiameterUas(I, 96, 13, uasPerM);
       console.log(`${id}: ring ${d.toFixed(1)} uas vs EHT ${T.ringUas} +- ${T.ringErr}`);

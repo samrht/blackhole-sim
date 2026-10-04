@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { HOTFLOW, mahadevanM, flowDensity, flowTemperature, flowField, iscoEL, flowVelocity, flowCoeffs, isHotFlow, flowN0 } from "../src/physics/hot-flow";
+import { HOTFLOW, mahadevanM, flowDensity, flowTemperature, flowField, iscoEL, flowVelocity, flowCoeffs, isHotFlow, flowN0, HOTFLOW_N0 } from "../src/physics/hot-flow";
 import { ringDiameterUas } from "../src/physics/hot-flow-image";
 import { metricLower } from "../src/physics/kerr";
 import { iscoRadius } from "../src/physics/orbits";
@@ -40,14 +40,17 @@ describe("hot flow (spec 2026-10-04)", () => {
     expect((j / al) / ((2 * 230e9 ** 2 * 1.380649e-16 * flowTemperature(6)) / 2.99792458e10 ** 2)).toBeCloseTo(1, 9);
     expect(flowCoeffs(6, 1e-9, 230e9, 1e7)).toEqual([0, 0]);
   });
-  it("regime: hot below 1 % Eddington; n0 from the calibration for presets, scaled lambda / M otherwise", () => {
+  it("regime: hot below 1 % Eddington; n0 scaled lambda / M from the calibrated object nearest in mass", () => {
     expect(isHotFlow(0.009)).toBe(true); expect(isHotFlow(0.011)).toBe(false);
-    const sg = PRESETS.find((p) => p.id === "sgra")!;
-    expect(isHotFlow(sg.lambda)).toBe(true); expect(isHotFlow(PRESETS.find((p) => p.id === "m87")!.lambda)).toBe(true);
+    const sg = PRESETS.find((p) => p.id === "sgra")!, m87 = PRESETS.find((p) => p.id === "m87")!;
+    expect(isHotFlow(sg.lambda)).toBe(true); expect(isHotFlow(m87.lambda)).toBe(true);
     expect(isHotFlow(PRESETS.find((p) => p.id === "cygx1")!.lambda)).toBe(false);
-    const n = flowN0(sg.massSun, sg.lambda, "sgra");
-    expect(flowN0(sg.massSun, sg.lambda)).toBeCloseTo(n, 6);                      // the scaling reproduces Sgr A*
-    expect(flowN0(2 * sg.massSun, 3 * sg.lambda) / n).toBeCloseTo(1.5, 9);         // n0 ~ lambda / M
+    // Each calibrated object gets its own n0 from its mass and accretion alone (no preset id: spin, inclination or a
+    // Custom link with the same mass and accretion cannot change it).
+    expect(flowN0(sg.massSun, sg.lambda)).toBeCloseTo(HOTFLOW_N0.sgra, 6);
+    expect(flowN0(m87.massSun, m87.lambda) / HOTFLOW_N0.m87).toBeCloseTo(1, 12);
+    expect(flowN0(2 * sg.massSun, 3 * sg.lambda) / HOTFLOW_N0.sgra).toBeCloseTo(1.5, 9);   // n0 ~ lambda / M near Sgr A*
+    expect(flowN0(m87.massSun / 2, m87.lambda) / HOTFLOW_N0.m87).toBeCloseTo(2, 9);        // ... and near M87*
     expect(HOTFLOW.nu).toBe(230e9);
   });
 });

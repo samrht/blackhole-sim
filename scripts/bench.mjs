@@ -49,7 +49,7 @@ const out = await page.evaluate(async () => {
       time: f, frame: f, reset: f === 0 ? 1 : 0, maxSteps: 4800, blend: f === 0 ? 1 : 0.15, timeScale: 1,
       turbAmp: 0.6, breatheAmp: 0, nSpots: 3, jetStrength: 1, jetGamma: 2, jetLength: 60, fluxVar: 1,
       skyStrength: 0, jetB0: J.jetB0, jetQ0: J.jetQ0, rgCm: J.rgCm,
-      ...(mm ? { incl: (sg.inclDeg * Math.PI) / 180, jetStrength: 0, band: 1, hotFlow: 1, flowN0: flowN0(sg.massSun, sg.lambda, "sgra") } : {}),
+      ...(mm ? { incl: (sg.inclDeg * Math.PI) / 180, jetStrength: 0, band: 1, hotFlow: 1, flowN0: flowN0(sg.massSun, sg.lambda) } : {}),
     });
     r.frame(u(0)); await r.device.queue.onSubmittedWorkDone(); // warm-up: pipeline compile
     const t = [];

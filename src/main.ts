@@ -360,10 +360,10 @@ structural ${res.structural ? "ok" : "FAILED"} — centred dark shadow=${res.has
     // value, or scaled from Sgr A*'s. The jet is not drawn at 1.3 mm (spec 2.5: below the gyrofrequency for the X-ray
     // binaries; for M87* its optical anchor would put 2.8 Jy in view where the EHT sees the jet base at <~10 % of the ring).
     const mm = state.band === "mm" ? 1 : 0, hot = mm && isHotFlow(state.lambda) ? 1 : 0;
-    const n0 = hot ? flowN0(state.massSun, state.lambda, presetSel.value) : 0;
+    const n0 = hot ? flowN0(state.massSun, state.lambda) : 0;
     const jetDrawn = state.jetOn && !mm;
     const geo = geometryKey({ a: state.a, incl: state.incl, fovScale: 14, rObs: 1000, rIn, rOut,
-      maxSteps: state.maxSteps, jetLength: state.jetLength, displayW: r.displayW, displayH: r.displayH, epoch: r.cacheEpoch,
+      maxSteps: state.maxSteps, jetLength: mm ? 0 : state.jetLength, displayW: r.displayW, displayH: r.displayH, epoch: r.cacheEpoch,
       band: mm, hotFlow: hot, flowN0: n0, flowRg: hot ? jetU.rgCm : 0 });
     if (geo !== geoKey) { geoKey = geo; sched.reset(r.cacheSets, r.displayH); r.resetCache(); }
     // One background build slice per playing frame (the cache is only used while playing).

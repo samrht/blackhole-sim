@@ -59,11 +59,15 @@ export function flowCoeffs(r: number, th: number, nu: number, n0: number): [numb
   return [j, j / ((2 * nu * nu * KB * T) / (C * C))];
 }
 export function isHotFlow(lambda: number): boolean { return lambda < HOTFLOW.lambdaHot; }
-/** n0 calibrated to the measured 230 GHz flux (scripts/calibrate-hotflow.ts); other objects scale from Sgr A*'s as
- *  density ~ Mdot / (r_g^2 c) ~ lambda / M. */
+/** n0 calibrated to the measured 230 GHz flux (scripts/calibrate-hotflow.ts). Any object scales from the calibrated
+ *  object nearest in log mass as density ~ Mdot / (r_g^2 c) ~ lambda / M, so a calibrated object's own mass and accretion
+ *  give its calibrated n0 exactly, whatever the selector says (a spin or inclination nudge, a Custom link). */
 export const HOTFLOW_N0: Record<string, number> = { sgra: 1.5e7, m87: 5.03e5 }; // from scripts/calibrate-hotflow.ts (96^2, flux-matched)
-export function flowN0(mSun: number, lambda: number, presetId?: string): number {
-  if (presetId && HOTFLOW_N0[presetId] !== undefined) return HOTFLOW_N0[presetId];
-  const sg = PRESETS.find((p) => p.id === "sgra")!;
-  return HOTFLOW_N0.sgra * (lambda / sg.lambda) * (sg.massSun / mSun);
+export function flowN0(mSun: number, lambda: number): number {
+  let best = PRESETS[0], dBest = Infinity;
+  for (const p of PRESETS) {
+    if (HOTFLOW_N0[p.id] === undefined) continue;
+    const d = Math.abs(Math.log(mSun / p.massSun)); if (d < dBest) { dBest = d; best = p; }
+  }
+  return HOTFLOW_N0[best.id] * (lambda / best.lambda) * (best.massSun / mSun);
 }

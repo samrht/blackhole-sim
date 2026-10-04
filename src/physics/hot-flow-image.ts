@@ -5,8 +5,10 @@ import { horizonOuter } from "./kerr";
 import { HOTFLOW, flowShift, flowCoeffs } from "./hot-flow";
 
 export const HOTFLOW_TARGETS = {
-  sgra: { distKpc: 8.2, jy: 2.4, ringUas: 51.8, ringErr: 2.3 },   // EHT 2022 (Sgr A* Papers I, IV)
-  m87: { distKpc: 16800, jy: 0.5, ringUas: 42, ringErr: 3 },      // EHT 2019 (Papers I, IV, VI); not gated (spec 2.4)
+  // cpuRingUas: this CPU twin's ring at the calibrated n0 (scripts/calibrate-hotflow.ts, 96^2), which ?hotflow's GPU
+  // image must reproduce (a twin check; the EHT comparison alone has a window of +-4.6 uas)
+  sgra: { distKpc: 8.2, jy: 2.4, ringUas: 51.8, ringErr: 2.3, cpuRingUas: 48.2 },   // EHT 2022 (Sgr A* Papers I, IV)
+  m87: { distKpc: 16800, jy: 0.5, ringUas: 42, ringErr: 3, cpuRingUas: 35.6 },      // EHT 2019 (Papers I, IV, VI); not gated (spec 2.4)
 } as const;
 export interface FlowSamples { N: number; half: number; rays: Float64Array[] } // per ray: (r, th, D, dl) quads
 export function traceFlowSamples(a: number, inclDeg: number, N: number, half: number): FlowSamples {
