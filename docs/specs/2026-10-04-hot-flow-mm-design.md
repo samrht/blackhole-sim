@@ -10,8 +10,8 @@ what the Event Horizon Telescope images. (It is also the prerequisite the shelve
 
 - A **band switch**: "Visible" (today's renderer, unchanged) and "1.3 mm (EHT)".
 - In the mm view, objects **below 1 % of Eddington** (the hot-flow regime) show a **hot flow** instead of the thin disk;
-  thin-disk objects show their disk's (faint, Rayleigh–Jeans) mm emission; the jet is shown at 230 GHz. The visible
-  view does not change for any object.
+  thin-disk objects show their disk's (faint, Rayleigh–Jeans) mm emission; the jet is shown at 230 GHz where the model
+  holds there (§2.5). The visible view does not change for any object.
 - **Approach A:** a published semi-analytic RIAF, its density normalisation **calibrated to the measured 230 GHz flux**,
   its **ring diameter a prediction** checked against EHT.
 - False colour as the EHT shows it: brightness temperature in an afmhot-style map; the panel shows the image's flux in
@@ -70,6 +70,17 @@ horizon fills the shadow and pulls the brightness peak inward: −2.1σ unblurre
 favoured M87* model) compress the flow height near the horizon (McKinney et al. 2012, noted by Pu et al. 2016), which
 this analytic model omits. Documented in the app's M87* caption and the README; Sgr A* is the validation gate.
 
+
+### 2.5 The jet at 230 GHz (added during Task 3)
+
+The jet's emissivity (cooled power law, synchrotron kernel above γ = 10, table x = ν′/ν_B from 1e-4 to 1e10) holds
+where ν′ is above the gyrofrequency. At 230 GHz that is true for M87* (base field ≤ 257 G: x ≈ 320 at the base,
+16–9e4 over the visible jet and D = 0.05–20). It is not for the X-ray binaries: Cyg X-1's base field ~1.6e8 G and GRS
+1915+105's ~9e8 G give x ≈ 5e-4 and 9e-5 at the base (down to 2.6e-5 and 4.4e-6), below every electron's fundamental
+(x = 1/γ) and below the table, where the kernel's x^(1/3) tail would invent the emission. Their observed mm jets come
+from ~10⁴ r_g and beyond, outside this 60 M frame. Rule: in the mm view the jet is drawn only when 230 GHz exceeds the
+gyrofrequency of the strongest field in the jet (x > 1 at D = 1 at the base wall); otherwise it is off and the caption
+says why. Applies to custom objects by the same test.
 ## 3. Rendering and code
 
 - `src/physics/hot-flow.ts` (CPU twin): flow profiles, velocity field, D, j/α, n₀ table and scaling, the hot-flow
@@ -91,7 +102,8 @@ this analytic model omits. Documented in the app's M87* caption and the README; 
 
 Switching Sgr A* or M87* to "1.3 mm (EHT)" shows the asymmetric glowing ring of the EHT images, brighter on the side
 where the flow approaches, with the shadow inside; M87*'s jet base appears faintly at 230 GHz. Thin-disk objects in
-the mm view are nearly dark (their disks emit little at 1.3 mm) apart from their jets.
+the mm view are nearly dark (their disks emit little at 1.3 mm); Cyg X-1's and GRS 1915+105's jets are not drawn
+there (§2.5).
 
 ## 5. Tests and gates
 
