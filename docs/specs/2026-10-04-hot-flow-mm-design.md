@@ -1,7 +1,8 @@
 # Hot accretion flow and the 1.3 mm (EHT) view — design
 
 **Date:** 2026-10-04
-**Status:** design approved in conversation; this document awaits review
+**Status:** implemented 2026-10-04 (feat/hot-flow-mm; README "Hot flow and the 1.3 mm view"). §2.5 changed during
+implementation: no jet at 1.3 mm.
 **Why:** the app draws every object as a thin Novikov–Thorne disk in visible light. Sgr A* and M87* are hot,
 geometrically thick, radiatively inefficient flows (RIAFs) whose horizon-scale emission is millimetre synchrotron —
 what the Event Horizon Telescope images. (It is also the prerequisite the shelved eruption flares need.)

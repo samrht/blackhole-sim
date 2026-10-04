@@ -75,6 +75,11 @@ this file is the queue. Each item gets its own spec (and plan) before code, as e
   always-smooth clips was considered and left out.
 - [x] **Shareable links** (2026-10-03): the address bar always holds the view (`#p=m87&x=0.5&play=0`) and **Copy link**
   copies it (README "Shareable links").
+- [x] **Hot flow and the 1.3 mm view** (2026-10-04; README "Hot flow and the 1.3 mm view"): RIAF calibrated to the
+  measured 230 GHz flux, Sgr A*'s ring 48 µas vs the EHT's 51.8 ± 2.3, no jet at 1.3 mm. Follow-ups: live mm frames
+  are 2.2x slower than visible (hoist the ISCO orbit out of the per-sample velocity); a cooling-aware T_e for dense
+  hot flows (λ ≳ 1e-4); MAD compression for M87*'s ring; eruption flares (feat/eruption-flares) can now be revisited
+  against the hot flow.
 - [ ] **Mobile layout**: control panel as a collapsible sheet and a phone-sized default render
   scale (camera drag already works on touch: it uses pointer events).
 

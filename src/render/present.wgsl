@@ -41,9 +41,10 @@ const BLOOM = 0.85; // glow intensity
                 mix(accum[ay1 * res.x + ax0].rgb, accum[ay1 * res.x + ax1].rgb, f.x), f.y);
 
   // 1.3 mm (spec 2026-10-04 hot flow): accum holds brightness temperature (K). False colour like the EHT images
-  // (afmhot) with v = T_b / 1e10 K x 2^exposure; no bloom, vignette or tone map, so equal T_b reads as equal colour.
+  // (afmhot) with v = T_b / 2e10 K x 2^exposure: at the default -1 EV the brightest pixels of Sgr A* and M87* (~4e10 K)
+  // just reach white. No bloom, vignette or tone map, so equal T_b reads as equal colour.
   if (U.band > 0.5) {
-    let v = hdr.x / 1e10 * exp2(U.exposure);
+    let v = hdr.x / 2e10 * exp2(U.exposure);
     return vec4<f32>(clamp(2.0 * v, 0.0, 1.0), clamp(2.0 * v - 0.5, 0.0, 1.0), clamp(2.0 * v - 1.0, 0.0, 1.0), 1.0);
   }
 

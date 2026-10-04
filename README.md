@@ -16,6 +16,7 @@ This isn't a stylized visualization — it's a real general-relativistic ray tra
 - Physical units — Mass and Accretion (fraction of Eddington) sliders; horizon, ISCO and photon orbit in km/AU, disk peak temperature, ISCO orbital period, playback time scale
 - Synchrotron jet — magnetically arrested field, M87's measured acceleration, electrons injected with M87's core spectrum and cooled by their own radiation, exact cyclo-synchrotron emission and self-absorption transferred in general relativity along the geodesics, brightness from energy conservation (the electrons radiate η × the Blandford–Znajek power) in the same units as the disk
 - Light-travel delay — each pixel shows its emitter at the time the light left it, so the photon-ring subimages echo the disk tens of M later (toggle in the panel)
+- 1.3 mm (EHT) view — a Band switch shows the sky at the Event Horizon Telescope's 230 GHz: below 1 % of Eddington a hot accretion flow (semi-analytic RIAF, density calibrated to the measured flux) replaces the thin disk, in brightness temperature and false colour; Sgr A*'s ring comes out 48 µas against the EHT's 51.8 ± 2.3
 - HDR accumulation with ACES tonemapping and progressive anti-aliasing
 - Interactive controls: object preset, spin (a*), inclination, mass, accretion, exposure — drag the canvas to tilt the camera live
 
@@ -172,7 +173,42 @@ was never the problem.)
 
 **Shareable links (feat/share-links, 2026-10-03):** the view lives in the URL hash, e.g. `#p=m87&x=0.5&fv=1.4&play=0`, so bookmarking, pasting or the **Copy link** button (in one row with Save PNG and Record) reopens it. The hash, not the query string, because the validation routes match the query by substring (`?parity`, `?golden`, `?record`, …). `src/share.ts` maps short keys to panel controls — preset `p`, spin `a`, inclination `i`, mass `m` and accretion `acc` (log10, slider units), exposure `x`, Motion `t`, light delay `ld`, flicker `fl`, flares `hs`, jet `jet`, efficiency `eta` (log10), jet speed `g`, flux variability `fv`, sky `sky`, detail `d`, paused `play=0` — and writes only values that differ from the page's defaults; spin, inclination, mass and accretion only for a Custom view (a preset implies them). Decoding drops unknown keys, non-numbers, unknown presets and malformed pairs, and clamps numbers to the slider's range and snaps them to its step, so any link opens a valid view. `main.ts` applies a link by setting each control and firing its own input/change event (preset first, pause last), so physics, presets and cache rebuilds run exactly as for a user's change; the address bar is rewritten 0.3 s after the last change with `history.replaceState` (no history entries), and editing the hash or Back re-applies it. The simulation clock is not part of the link. Checks: `tests/share.test.ts` (field table, defaults → empty, preset vs Custom fields, round trip, clamping and snapping, garbage, 0/1 checkboxes, percent-encoding) and a `verify:gpu` app check that opens `#p=m87&x=0.5&fv=1.4&play=0`, moves the spin slider (hash becomes `#p=custom&a=0.5&i=17&m=9.81&acc=-5.08&x=0.5&fv=1.4&play=0`) and copies the link.
 
-**Current gates (feat/mri-turbulence):** `npm test` 179 passed, 5 skipped; `?parity` PASS 1.654e-4 over 61 with jet |Δ ln| 1.5e-5, turbulence 0.44 of tolerance and roughness 0.060 (exact 0.055); `?shadow` PASS 3.91 M / 0.753; `?golden` PASS (re-recorded); `?cachecheck` PASS (8 scenes, all 0.00e+0); app checks PASS (incl. the flicker panel and a shading-only flicker nudge); `probe-axis`, `probe-scale` PASS.
+**Hot flow and the 1.3 mm view (feat/hot-flow-mm, 2026-10-04):** a Band control (Visible / 1.3 mm (EHT), share key `b`)
+switches the camera to 230 GHz. Objects below 1 % of Eddington show a hot accretion flow instead of the thin disk: the
+semi-analytic RIAF of Broderick et al. 2011/2016 (n_e ∝ r^-1.1 e^(-z²/2ρ²), T_e = 1e11 K (r/2M)^-0.84, toroidal field at
+β = 10) moving with the sub-Keplerian dynamics of Pu, Akiyama & Asada 2016 (Keplerian, plunging inside the ISCO, and
+zero-angular-momentum free fall mixed 50/50), emitting thermal synchrotron (Mahadevan et al. 1996 fit) with Kirchhoff
+absorption. Rays integrate it every ≤ 0.25 M inside r < 50 M (no disk termination); the image is brightness
+temperature in afmhot false colour (v = T_b / 2e10 K × 2^EV, no bloom or tone map). The density scale n₀ is fitted to
+the measured 230 GHz flux by `scripts/calibrate-hotflow.ts` (96², CPU twin `src/physics/hot-flow-image.ts`); the ring
+diameter is then a prediction:
+
+| Object | n₀ (cm⁻³) | flux (CPU / GPU) | ring, unblurred (CPU / GPU) | 20 µas blur | EHT |
+|---|---|---|---|---|---|
+| Sgr A* (8.2 kpc) | 1.50e7 | 2.400 / 2.401 Jy | 48.2 / 48.1 µas | 46.2 µas | 51.8 ± 2.3 µas (gated, 2σ) |
+| M87* (16.8 Mpc) | 5.03e5 | 0.500 / 0.498 Jy | 35.6 / 35.5 µas | 27.7 µas | 42 ± 3 µas (reported) |
+
+Other hot-flow objects scale n₀ from Sgr A*'s as λ / M. Thin disks at 1.3 mm are Rayleigh–Jeans, T_b = g T (~1e7 K:
+nearly dark). Limitations: M87*'s ring is 2σ small (seen nearly face-on, a flow of this kind fills the shadow; no
+magnetically arrested compression); the RIAF's fixed electron temperature is calibrated where λ ~ 1e-7–1e-5, while
+real flows cool toward λ ~ 1e-2, so dense hot flows are overstated (the default view, λ 3.7e-4 at 1e8 M☉, is opaque at
+230 GHz across the frame). **No jet at 1.3 mm** (spec §2.5, by decision): the X-ray binaries' fields put 230 GHz below
+the gyrofrequency, where the jet model does not hold; M87*'s jet, anchored to its optical nucleus, would add 2.8 Jy
+(5.6× the ring; `?hotflow` reports it) where the EHT sees the jet base at about a tenth of the ring or less. Gates:
+`?parity` gains 176 flow cases (worst 0.245 of tolerance: D and u^t at 1e-3, D against the size of its terms; WGSL's
+sin/cos may be off by 2^-11 and the Intel iGPU's sin(1.55) is ~3e-5 off, which the K₀ cancellation lifts to 2.4e-4 in
+u^t at r = 1.5 M); `?hotflow` renders Sgr A* at 512² on the GPU and gates its flux (±5 %) and ring (2σ);
+`?cachecheck` adds sgra-mm, m87-mm and xrb-mm (cached = live exactly: the cache stores each pixel's steady flow
+intensity; band, regime, n₀ and r_g join the geometry key; no jet bookmarks in mm); golden adds sgra-mm and m87-mm with
+the five visible hashes unchanged; a verify-gpu app check opens `#p=sgra&b=mm`. Performance (RTX 3050 Laptop,
+1280×720): live 132 ms/frame in mm vs 59 visible; cached 3.4 ms (exact, so a playing still view is fast); interaction
+in mm is the slow path.
+
+**Current gates (feat/hot-flow-mm):** `npm test` 239 passed, 7 skipped; `?parity` PASS 1.654e-4 over 337 (hot flow
+0.245 of tolerance); `?shadow` PASS; `?golden` PASS (visible 914d238f/62578f82/a78f2dcc/97ea770a/f1496f01 unchanged,
+sgra-mm fa585842, m87-mm f358f238); `?cachecheck` PASS 0.00e+0 everywhere; `?hotflow` PASS; every app check PASS.
+
+**Previous gates (feat/mri-turbulence):** `npm test` 179 passed, 5 skipped; `?parity` PASS 1.654e-4 over 61 with jet |Δ ln| 1.5e-5, turbulence 0.44 of tolerance and roughness 0.060 (exact 0.055); `?shadow` PASS 3.91 M / 0.753; `?golden` PASS (re-recorded); `?cachecheck` PASS (8 scenes, all 0.00e+0); app checks PASS (incl. the flicker panel and a shading-only flicker nudge); `probe-axis`, `probe-scale` PASS.
 
 **Previous gates (feat/cooled-jet):** `npm test` 161 passed, 5 skipped (the cyclo-synchrotron tests take ~3 min); `?parity` PASS 1.654e-4 over 57 with jet |Δ ln| 1.5e-5; `?shadow` PASS 3.91 M / 0.753; `?golden` PASS (re-recorded); `?cachecheck` PASS (8 scenes incl. `xrb-thick`); app checks PASS; `probe-axis`, `probe-scale` PASS.
 

@@ -26,7 +26,8 @@ steady flow intensity.
   T_b = I_ν c²/(2ν²k); K_TB = c²/(2ν²k) = 6.15280e13 (cgs).
 - Calibration targets: Sgr A* 2.4 Jy at 8.2 kpc, ring 51.8 ± 2.3 µas (gate, unblurred, within 2σ);
   M87* 0.5 Jy at 16.8 Mpc, ring 42 ± 3 µas (reported, not gated). Prototype n₀: Sgr A* ≈ 1.5e7, M87* ≈ 5.0e5 cm⁻³.
-- Display: v = T_b / 1e10 K · 2^exposure; afmhot r = clamp(2v), g = clamp(2v − 0.5), b = clamp(2v − 1); no bloom,
+- Display: v = T_b / 1e10 K · 2^exposure (shipped as 2e10 K after the visual check: at the default −1 EV the ~4e10 K
+  peaks of Sgr A* and M87* reach white); afmhot r = clamp(2v), g = clamp(2v − 0.5), b = clamp(2v − 1); no bloom,
   vignette or ACES in mm.
 - No Co-Authored-By trailer. Merge, push and deploy when done (standing rule + user request).
 
