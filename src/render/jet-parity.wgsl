@@ -16,7 +16,7 @@ const P_JETLEN = 60.0; const P_FLUX = 1.0;
   let r = c.x.y; let th = c.x.z; let a = c.c.x;
   let D = plasmaShiftJ(r, th, c.p, a, jetGammaAt(r * cos(th), c.c.y));
   let shape = jetShapeJ(r, th, c.x.w, c.k.w, c.c.z, P_JETLEN, P_FLUX, c.c.y, a);
-  let s = synchSampleJ(r, th, D, a, c.k.x, c.k.y, shape, c.c.y, c.k.z);
+  let s = synchSampleJ(JET_LNNU, r, th, D, a, c.k.x, c.k.y, shape, c.c.y, c.k.z);
   var acc: JetOut; acc.I = vec3<f32>(0.0); acc.tau = vec3<f32>(0.0);
   acc = jetSlabJ(acc, s.j, s.a, c.c.w);
   acc = jetSlabJ(acc, s.j, s.a, c.c.w);

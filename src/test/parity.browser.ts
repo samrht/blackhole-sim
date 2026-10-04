@@ -8,6 +8,8 @@ import turbParityWGSL from "../render/turb-parity.wgsl?raw";
 import emissionSharedWGSL from "../render/emission-shared.wgsl?raw";
 import jetParityWGSL from "../render/jet-parity.wgsl?raw";
 import fluxParityWGSL from "../render/flux-parity.wgsl?raw";
+import flowParityWGSL from "../render/flow-parity.wgsl?raw";
+import { HOTFLOW, flowVelocity, flowShift, flowCoeffs, flowDensity } from "../physics/hot-flow";
 import { fluxRatio } from "../physics/flux-history";
 import { jetShape, launchDelay, comovingAzimuth, filaments } from "../physics/jet";
 import { plasmaShift, streamlineDir, gammaProfile, jetField, jetCoeffs, flowTime, slabStep, JET_BANDS_NM, C_CGS, LN_K0 } from "../physics/synchrotron";
@@ -23,7 +25,7 @@ import integratorParityWGSL from "../render/integrator-parity.wgsl?raw";
 
 /** Runs the WGSL metric/orbit/g-factor helpers on fixed inputs and returns the max relative
  *  error vs the TypeScript core. f32 GPU vs f64 CPU keeps this in the ~1e-6..1e-4 range. */
-export async function runParity(): Promise<{ maxErr: number; rows: number; jetLogErr: number; turbErr: number; turbWorst: string; turbRough: { gpu: number; old: number; cpu: number }; fluxErr: number; fluxWorst: string }> {
+export async function runParity(): Promise<{ maxErr: number; rows: number; jetLogErr: number; turbErr: number; turbWorst: string; turbRough: { gpu: number; old: number; cpu: number }; fluxErr: number; fluxWorst: string; flowErr: number; flowWorst: string }> {
   const cases = [
     { r: 8, th: Math.PI / 2, a: 0.0, xi: 3 }, { r: 6, th: 1.2, a: 0.5, xi: 2 },
     { r: 12, th: Math.PI / 2, a: 0.9, xi: -4 }, { r: 20, th: 0.9, a: 0.99, xi: 5 },
@@ -459,5 +461,66 @@ export async function runParity(): Promise<{ maxErr: number; rows: number; jetLo
       if (e > fluxErr) { fluxErr = e; fluxWorst = `case ${i} out ${k}: gpu ${fgpu[i * 4 + k]} cpu ${want[k]}`; } }
   });
   console.log("flux parity worst (|err| / tol)", fluxErr.toExponential(2), fluxWorst);
-  return { maxErr, rows: cases.length + tcases.length + jcases.length + scases.length + ccases.length + icases.length + fcases.length, jetLogErr, turbErr, turbWorst, turbRough, fluxErr, fluxWorst };
+  // --- hot flow (CPU hot-flow.ts vs the SHIPPED flowVelocityJ / flowShiftJ / flowCoeffsJ in emission-shared.wgsl) ---
+  // Spins 0.1 / 0.94; r from inside the ISCO (plunge, near the horizon) to the edge of the flow; latitudes at the plane,
+  // mid, near the axis (th 0.15: density down e^-22) and on it (th 0.05: ln n < -40, the GPU must return j = 0);
+  // n0 at M87* and Sgr A*. Each point gets two null momenta (p_t = 1, prograde and retrograde, in- and outgoing),
+  // with p_r from the null condition and L shrunk until one exists, so D sees both blue- and redshifts.
+  const hcases: { s: Float64Array; a: number; n0: number }[] = [];
+  for (const a of [0.1, 0.94]) for (const r of [1.5, 2.5, 5, 12, 30, 49]) for (const th of [1.55, 1.0, 0.15, 0.05]) {
+    if (r <= (1 + Math.sqrt(1 - a * a)) * 1.01) continue;
+    const gu = metricUpper(r, th, a);
+    for (const [L0, pth, sgn] of [[2, 0.5, 1], [-3, -1, -1]]) {
+      let L = L0, R = -(gu.tt + 2 * gu.tphi * L + gu.thth * pth * pth + gu.phph * L * L);
+      for (let k = 0; k < 30 && R <= 0; k++) { L *= 0.5; R = -(gu.tt + 2 * gu.tphi * L + gu.thth * pth * pth + gu.phph * L * L); }
+      for (const n0 of [5.03e5, 1.5e7]) hcases.push({ s: Float64Array.from([0, r, th, 0, 1, sgn * Math.sqrt(R / gu.rr), pth, L]), a, n0 });
+    }
+  }
+  const harr = new Float32Array(hcases.length * 8);
+  hcases.forEach((c, i) => harr.set([c.s[1], c.s[2], c.a, c.n0, c.s[4], c.s[5], c.s[6], c.s[7]], i * 8));
+  const hin = device.createBuffer({ size: harr.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+  device.queue.writeBuffer(hin, 0, harr);
+  const hout = device.createBuffer({ size: hcases.length * 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
+  const hread = device.createBuffer({ size: hcases.length * 16, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+  const hmod = device.createShaderModule({ code: integratorSharedWGSL + emissionSharedWGSL + flowParityWGSL });
+  const hpipe = device.createComputePipeline({ layout: "auto", compute: { module: hmod, entryPoint: "main" } });
+  const hbind = device.createBindGroup({ layout: hpipe.getBindGroupLayout(0), entries: [
+    { binding: 0, resource: { buffer: hin } }, { binding: 1, resource: { buffer: hout } }] });
+  const henc = device.createCommandEncoder();
+  const hcp = henc.beginComputePass(); hcp.setPipeline(hpipe); hcp.setBindGroup(0, hbind); hcp.dispatchWorkgroups(hcases.length); hcp.end();
+  henc.copyBufferToBuffer(hout, 0, hread, 0, hcases.length * 16);
+  device.queue.submit([henc.finish()]);
+  await hread.mapAsync(GPUMapMode.READ);
+  const hgpu = new Float32Array(hread.getMappedRange().slice(0));
+  // Errors / tolerance: 1e-3 on D and u^t (the metric cases' tolerance above), D's measured against the size of its terms
+  // |u^t p_t| + |u^r p_r| + |Omega u^t p_phi| (it cancels near the horizon); absolute 2e-3 on ln j and ln alpha (as for
+  // the jet). Why not tighter: WGSL allows sin/cos 2^-11 absolute error and the Intel iGPU's sin(1.55) is off by ~3e-5,
+  // so gLow's sin^2 carries ~7e-5; the K0 cancellation lifts that to 2.4e-4 in u^t at r = 1.5, a = 0.94 (the
+  // renderer's metric shares it). No velocity (K0 <= 0) must come back as D = -1, u^t = 0; ln n < -40 as j = 0
+  // (the shader writes ln j = -1e30).
+  let flowErr = 0, flowWorst = "", nNoVel = 0, nCut = 0, nTiny = 0, nEmit = 0;
+  const hbad = (i: number, k: number, g: number, w: number) => { flowErr = Infinity; flowWorst = `case ${i} out ${k}: gpu ${g} cpu ${w}`; };
+  hcases.forEach((c, i) => {
+    const v = Array.from(harr.subarray(i * 8, i * 8 + 8)), s = Float64Array.from([0, v[0], v[1], 0, v[4], v[5], v[6], v[7]]);
+    const [r, th, a, n0] = v, g = Array.from(hgpu.subarray(i * 4, i * 4 + 4)), u = flowVelocity(r, th, a), D = flowShift(s, a);
+    if (!u || D === null) { nNoVel++; if (g[0] !== -1 || g[3] !== 0) hbad(i, 0, g[0], NaN); return; }
+    const rel = (k: number, w: number, scale: number) => { const e = Math.abs(g[k] - w) / scale / 1e-3; if (e > flowErr) { flowErr = e; flowWorst = `case ${i} out ${k}: gpu ${g[k]} cpu ${w}`; } };
+    rel(0, D, Math.abs(u.ut * s[4]) + Math.abs(u.ur * s[5]) + Math.abs(u.Om * u.ut * s[7])); rel(3, u.ut, u.ut);
+    if (D <= 0) return;
+    if (Math.log(flowDensity(r, th, n0)) < -40) { nCut++; if (g[1] !== Math.fround(-1e30)) hbad(i, 1, g[1], -1e30); return; }
+    // at the GPU's own D, so this gates flowCoeffsJ alone (D is gated above; alpha ~ nu^-3 would re-count its error)
+    const [j, al] = flowCoeffs(r, th, g[0] * HOTFLOW.nu, n0);
+    // Far out on the 230 GHz Wien tail j drops below f32's smallest normal (e^-87.3; the CPU's own f64 M(X) underflows
+    // to 0 further out): there the shader must return none, and within e^7 of that edge either answer is right.
+    if (!(Math.log(j) > -80)) {
+      if (g[1] === Math.fround(-1e30)) { nTiny++; return; }
+      if (!(Math.log(j) > -87.3)) { nTiny++; hbad(i, 1, g[1], Math.log(j)); return; }
+    }
+    nEmit++;
+    for (const [k, w] of [[1, Math.log(j)], [2, Math.log(al)]]) { const e = Math.abs(g[k] - w) / 2e-3;
+      if (e > flowErr) { flowErr = e; flowWorst = `case ${i} out ${k}: gpu ${g[k]} cpu ${w}`; } }
+  });
+  console.log("flow parity worst (|err| / tol)", flowErr.toExponential(2), flowWorst, "cases", hcases.length,
+    `(no velocity ${nNoVel}, density cut ${nCut}, j below f32 ${nTiny}, compared ${nEmit})`);
+  return { maxErr, rows: cases.length + tcases.length + jcases.length + scases.length + ccases.length + icases.length + fcases.length + hcases.length, jetLogErr, turbErr, turbWorst, turbRough, fluxErr, fluxWorst, flowErr, flowWorst };
 }

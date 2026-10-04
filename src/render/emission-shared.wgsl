@@ -263,8 +263,9 @@ fn synchLookupJ(lnx: f32, lns: f32) -> vec2<f32> {
   }
   return v + slope * extX + vec2<f32>(extS, extS);
 }
-// Per band: j = (nu/nu')^3 j'(nu') (cgs per sr) and alpha'(nu') (1/cm) of the cooled population at nu' = D nu.
-fn synchSampleJ(r: f32, th: f32, D: f32, a: f32, b0: f32, q0: f32, shape: f32, g280: f32, rgCm: f32) -> SynchOut {
+// Per band (frequencies e^lnNu: JET_LNNU in the visible, HF_LNNU x 3 at 1.3 mm): j = (nu/nu')^3 j'(nu') (cgs per sr)
+// and alpha'(nu') (1/cm) of the cooled population at nu' = D nu.
+fn synchSampleJ(lnNu: vec3<f32>, r: f32, th: f32, D: f32, a: f32, b0: f32, q0: f32, shape: f32, g280: f32, rgCm: f32) -> SynchOut {
   let z = r * cos(th); let rho = r * sin(th);
   let rf = funnelEdgeJ(z); let rH = 1.0 + sqrt(max(0.0, 1.0 - a * a)); let w = rho * a / (4.0 * rH);
   let lnB = log(b0 / (rf * rf)) + 0.5 * log(1.0 + w * w);
@@ -276,7 +277,7 @@ fn synchSampleJ(r: f32, th: f32, D: f32, a: f32, b0: f32, q0: f32, shape: f32, g
   let lnD = log(D);
   var o: SynchOut;
   for (var b = 0; b < 3; b++) {
-    let lnx = JET_LNNU[b] + lnD - SYN_LNNUB0 - lnB;
+    let lnx = lnNu[b] + lnD - SYN_LNNUB0 - lnB;
     let t = synchLookupJ(lnx, lns);
     o.j[b] = exp(SYN_LNCJ + base + lnB + t.x - 3.0 * lnD);
     o.a[b] = exp(SYN_LNCA + base - lnB - 2.0 * lnx + t.y);
@@ -294,4 +295,62 @@ fn jetSlabJ(acc: JetOut, j: vec3<f32>, alpha: vec3<f32>, ds: f32) -> JetOut {
   o.I = acc.I + j * ds * fac * exp(-acc.tau);
   o.tau = min(acc.tau + dt, vec3<f32>(1e30));
   return o;
+}
+// --- Hot flow at 230 GHz (spec 2026-10-04 hot flow; twin: src/physics/hot-flow.ts) ---------------------------------
+// Broderick et al. 2011 RIAF profiles, Pu et al. 2016 velocity (Keplerian / free fall mixed 50/50), thermal synchrotron
+// (Mahadevan et al. 1996 fit) with Kirchhoff absorption. Coefficients are built in logs so n0 (5e5-1e8) and
+// j (~1e-20 cgs) stay inside f32.
+const HF_LNNU = 26.16134515;        // ln(230e9)
+const HF_T0 = 1e11; const HF_BETA = 10.0; const HF_RMAX = 50.0; const HF_KTB = 6.1528e13;
+// cgs logs: ln e^2, ln(k / m_e c^2), ln(8 pi m_p c^2 * 2 / 12) [B^2 = e^(that + ln n - ln r) / beta], ln(2 k / c^2),
+// ln(2 sqrt(3) c); ln(e / 2 pi m_e c) is the jet's SYN_LNNUB0.
+const HF_LN_QE2 = -42.91313517; const HF_LN_THE = -22.50327261; const HF_LN_B2 = -5.06769552;
+const HF_LN_RJ = -84.07320297; const HF_LN_2S3C = 25.3662245;
+fn iscoJ(a: f32) -> f32 { // prograde ISCO (Bardeen, Press & Teukolsky 1972; twin: iscoRadius in orbits.ts)
+  let z1 = 1.0 + pow(max(1.0 - a * a, 0.0), 1.0 / 3.0) * (pow(1.0 + a, 1.0 / 3.0) + pow(max(1.0 - a, 0.0), 1.0 / 3.0));
+  let z2 = sqrt(3.0 * a * a + z1 * z1);
+  return 3.0 + z2 - sqrt(max((3.0 - z1) * (3.0 + z1 + 2.0 * z2), 0.0));
+}
+// ln of the Mahadevan isotropic fit M(X), written out so it does not underflow at large X.
+fn lnMahadevanJ(lnX: f32) -> f32 {
+  return 1.39884033 - lnX / 6.0 + log(1.0 + 0.4 * exp(-0.25 * lnX) + 0.5316 * exp(-0.5 * lnX)) - 1.8899 * exp(lnX / 3.0);
+}
+// (u^t, u^r, Omega, ok) of the flow; ok = 0 where no timelike velocity exists (K0 <= 0).
+fn flowVelocityJ(r: f32, th: f32, a: f32) -> vec4<f32> {
+  let gu = gUp(r, 0.5 * PI, a);                         // 0 tt, 1 tphi, 2 rr, 3 thth, 4 phph
+  let risco = iscoJ(a);
+  var urK = 0.0; var OmK = omegaKep(r, a);
+  if (r < risco) {
+    let sq = sqrt(risco); let den = pow(risco, 0.75) * sqrt(risco * sq - 3.0 * sq + 2.0 * a);
+    let E = (risco * sq - 2.0 * sq + a) / den; let L = (risco * risco - 2.0 * a * sq + a * a) / den;
+    let uT = -gu[0] * E + gu[1] * L; let uP = -gu[1] * E + gu[4] * L;
+    let rest = -1.0 - (gu[0] * E * E - 2.0 * gu[1] * E * L + gu[4] * L * L);
+    urK = -sqrt(max(0.0, rest * gu[2])); OmK = uP / uT;
+  }
+  let urFF = -sqrt(max(0.0, gu[2] * (-1.0 - gu[0]))); let OmFF = gu[1] / gu[0];
+  let ur = urK + 0.5 * (urFF - urK); let Om = OmK + 0.5 * (OmFF - OmK);
+  let g = gLow(r, th, a);                                // 0 tt, 1 tphi, 2 rr, 3 thth, 4 phph
+  let K0 = -(g[0] + 2.0 * Om * g[1] + Om * Om * g[4]);
+  if (K0 <= 0.0) { return vec4<f32>(0.0); }
+  return vec4<f32>(sqrt((1.0 + g[2] * ur * ur) / K0), ur, Om, 1.0);
+}
+// nu_plasma / nu_observed for the camera-normalised covariant momentum p = (p_t, p_r, p_th, p_phi); -1 if no velocity.
+fn flowShiftJ(r: f32, th: f32, p: vec4<f32>, a: f32) -> f32 {
+  let u = flowVelocityJ(r, th, a);
+  if (u.w == 0.0) { return -1.0; }
+  return u.x * p.x + u.y * p.y + u.z * u.x * p.w;
+}
+// Plasma-frame (j_nu, alpha_nu) at nu = e^lnNu; (0, 0) where there is no plasma.
+fn flowCoeffsJ(r: f32, th: f32, lnNu: f32, n0: f32) -> vec2<f32> {
+  let z = r * cos(th); let rho = r * sin(th);
+  if (rho < 1e-6) { return vec2<f32>(0.0); }
+  let lnN = log(n0) - 1.1 * log(0.5 * r) - z * z / (2.0 * rho * rho);
+  if (lnN < -40.0) { return vec2<f32>(0.0); }
+  let lnT = log(HF_T0) - 0.84 * log(0.5 * r);
+  let lnThe = HF_LN_THE + lnT;
+  let lnB = 0.5 * (HF_LN_B2 - log(HF_BETA) + lnN - log(r));
+  let lnX = log(2.0 / 3.0) + lnNu - (SYN_LNNUB0 + lnB) - 2.0 * lnThe;
+  let lnJ = lnN + HF_LN_QE2 + lnNu - HF_LN_2S3C - 2.0 * lnThe + lnMahadevanJ(lnX);
+  let lnA = lnJ - (HF_LN_RJ + 2.0 * lnNu + lnT);
+  return vec2<f32>(exp(lnJ), exp(lnA));
 }

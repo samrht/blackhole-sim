@@ -269,7 +269,7 @@ fn jetStep(s: State, sNew: State, dl: f32, accIn: JetOut) -> JetOut {
     if (shape > 0.0) {
       let D = plasmaShiftJ(q.x, q.y, mix(s.p, sNew.p, f), U.a, jetGammaAt(q.x * cos(q.y), U.jetGamma));
       if (D > 1e-6) {                                       // never divide by D -> 0
-        let so = synchSampleJ(q.x, q.y, D, U.a, U.jetB0, U.jetQ0, shape, U.jetGamma, U.rgCm);
+        let so = synchSampleJ(JET_LNNU, q.x, q.y, D, U.a, U.jetB0, U.jetQ0, shape, U.jetGamma, U.rgCm);
         acc = jetSlabJ(acc, so.j, so.a, U.rgCm * D * dl / f32(n));
       }
     }

@@ -6,6 +6,7 @@ import {
   launchDelay, fieldLineOmega, comovingAzimuth, gammaProfile, GL6,
 } from "../src/physics/jet";
 import { FLUX, fluxRatio } from "../src/physics/flux-history";
+import { HOTFLOW } from "../src/physics/hot-flow";
 
 describe("jet geometry", () => {
   it("funnel widens with height (parabolic)", () => {
@@ -144,6 +145,16 @@ describe("emission-shared.wgsl flux/filament constants match the CPU twins", () 
     for (const [n, v] of pairs) expect(Math.abs(Number(wconst(n).trim().replace(/u$/, "")) - v)).toBeLessThan(1e-7 * Math.max(1, Math.abs(v)));
     const nodes = wconst("GL6_X").match(/-?\d+\.\d+/g)!.map(Number), wts = wconst("GL6_W").match(/-?\d+\.\d+/g)!.map(Number);
     GL6.forEach(([x, w], i) => { expect(nodes[i]).toBeCloseTo(x, 7); expect(wts[i]).toBeCloseTo(w, 7); });
+  });
+  it("hot-flow constants match hot-flow.ts and the cgs values they are logs of", () => {
+    for (const [n, v] of [["HF_T0", 1e11], ["HF_BETA", 10], ["HF_RMAX", 50], ["HF_KTB", HOTFLOW.kTb]] as [string, number][])
+      expect(Number(wconst(n))).toBe(v);
+    expect(Number(wconst("HF_LNNU"))).toBeCloseTo(Math.log(230e9), 7);
+    const C = 2.99792458e10, QE = 4.80320471e-10, ME = 9.1093837e-28, MP = 1.67262192e-24, KB = 1.380649e-16;
+    const logs: [string, number][] = [["HF_LN_QE2", Math.log(QE * QE)], ["HF_LN_THE", Math.log(KB / (ME * C * C))],
+      ["HF_LN_B2", Math.log((8 * Math.PI * MP * C * C * 2) / 12)], ["HF_LN_RJ", Math.log((2 * KB) / (C * C))],
+      ["HF_LN_2S3C", Math.log(2 * Math.sqrt(3) * C)], ["SYN_LNNUB0", Math.log(QE / (2 * Math.PI * ME * C))]];
+    for (const [n, v] of logs) expect(Number(wconst(n))).toBeCloseTo(v, 7);
   });
   it("the old knot and churn noise is gone from the shared jet code", () => {
     expect(WGSL_E).not.toMatch(/knotsJ|JET_KZ|JET_TURB|JET_SEED/);
