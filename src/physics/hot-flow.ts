@@ -61,7 +61,7 @@ export function flowCoeffs(r: number, th: number, nu: number, n0: number): [numb
 export function isHotFlow(lambda: number): boolean { return lambda < HOTFLOW.lambdaHot; }
 /** n0 calibrated to the measured 230 GHz flux (scripts/calibrate-hotflow.ts); other objects scale from Sgr A*'s as
  *  density ~ Mdot / (r_g^2 c) ~ lambda / M. */
-export const HOTFLOW_N0: Record<string, number> = { sgra: 1.5e7, m87: 5.0e5 }; // replaced by the script's values in Step 4 of Task 2
+export const HOTFLOW_N0: Record<string, number> = { sgra: 1.5e7, m87: 5.03e5 }; // from scripts/calibrate-hotflow.ts (96^2, flux-matched)
 export function flowN0(mSun: number, lambda: number, presetId?: string): number {
   if (presetId && HOTFLOW_N0[presetId] !== undefined) return HOTFLOW_N0[presetId];
   const sg = PRESETS.find((p) => p.id === "sgra")!;
