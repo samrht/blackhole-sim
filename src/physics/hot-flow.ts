@@ -7,6 +7,8 @@
 import { metricLower, metricUpper } from "./kerr";
 import { iscoRadius } from "./orbits";
 import { PRESETS } from "./presets";
+import { jetField, LN_NUB0 } from "./synchrotron";
+import { funnelEdge, JET } from "./jet";
 
 export const HOTFLOW = { nu: 230e9, T0: 1e11, beta: 10, rMax: 50, dl: 0.25, lambdaHot: 0.01, kTb: 6.1528e13 } as const;
 const C = 2.99792458e10, QE = 4.80320471e-10, ME = 9.1093837e-28, MP = 1.67262192e-24, KB = 1.380649e-16;
@@ -66,4 +68,10 @@ export function flowN0(mSun: number, lambda: number, presetId?: string): number 
   if (presetId && HOTFLOW_N0[presetId] !== undefined) return HOTFLOW_N0[presetId];
   const sg = PRESETS.find((p) => p.id === "sgra")!;
   return HOTFLOW_N0.sgra * (lambda / sg.lambda) * (sg.massSun / mSun);
+}
+/** Spec 2.5: the jet's emissivity holds above the gyrofrequency, so at 230 GHz the jet is drawn only when 230 GHz exceeds
+ *  nu_B of its strongest field (the base wall: B_p ~ 1/rho_f^2 and the toroidal part both fall with height).
+ *  M87* (base <= 257 G): yes; Cyg X-1 and GRS 1915+105 (1e8-1e9 G): no. */
+export function jetAtMm(a: number, b0: number): boolean {
+  return Math.log(HOTFLOW.nu) > LN_NUB0 + Math.log(jetField(funnelEdge(JET.zBase), JET.zBase, a, b0));
 }

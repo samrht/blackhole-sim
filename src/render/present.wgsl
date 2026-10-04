@@ -4,6 +4,10 @@ struct Uniforms {
   blend: f32, timeScale: f32, turbAmp: f32, breatheAmp: f32, nSpots: u32,
   jetStrength: f32, jetGamma: f32, jetLength: f32, fluxVar: f32,
   skyStrength: f32, outW: f32, outH: f32,
+  // the rest of raytrace.wgsl's block, through the 1.3 mm fields this pass reads
+  jitterMode: u32, setIndex: u32, rowStart: u32, rowEnd: u32,
+  lumNorm: f32, lightDelay: f32, jetB0: f32, jetQ0: f32, rgCm: f32, timeEpoch: f32,
+  band: f32, hotFlow: f32, flowN0: f32,
 };
 @group(0) @binding(0) var<uniform> U: Uniforms;
 @group(0) @binding(1) var<storage, read> accum: array<vec4<f32>>;
@@ -35,6 +39,13 @@ const BLOOM = 0.85; // glow intensity
   let ax1 = min(ax0 + 1u, res.x - 1u); let ay1 = min(ay0 + 1u, res.y - 1u);
   var hdr = mix(mix(accum[ay0 * res.x + ax0].rgb, accum[ay0 * res.x + ax1].rgb, f.x),
                 mix(accum[ay1 * res.x + ax0].rgb, accum[ay1 * res.x + ax1].rgb, f.x), f.y);
+
+  // 1.3 mm (spec 2026-10-04 hot flow): accum holds brightness temperature (K). False colour like the EHT images
+  // (afmhot) with v = T_b / 1e10 K x 2^exposure; no bloom, vignette or tone map, so equal T_b reads as equal colour.
+  if (U.band > 0.5) {
+    let v = hdr.x / 1e10 * exp2(U.exposure);
+    return vec4<f32>(clamp(2.0 * v, 0.0, 1.0), clamp(2.0 * v - 0.5, 0.0, 1.0), clamp(2.0 * v - 1.0, 0.0, 1.0), 1.0);
+  }
 
   // additive quarter-res bloom, bilinearly upsampled (nearest-tap would show 4x4 blocks)
   let bw = (res.x + 3u) / 4u;

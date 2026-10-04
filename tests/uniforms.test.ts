@@ -2,8 +2,8 @@ import { describe, it, expect } from "vitest";
 import { packUniforms, UNIFORM_SIZE, type UniformValues } from "../src/render/uniforms";
 
 describe("uniforms packing", () => {
-  it("is 144 bytes and packs all fields (incl. display size) at the expected offsets", () => {
-    expect(UNIFORM_SIZE).toBe(144);
+  it("is 160 bytes and packs all fields (incl. display size) at the expected offsets", () => {
+    expect(UNIFORM_SIZE).toBe(160);
     const u: UniformValues = {
       resW: 100, resH: 50, a: 0.9, incl: 1.2, rObs: 1000, fovScale: 14, rIn: 5, rOut: 40,
       Tpeak: 3e4, exposure: 1.6, time: 7, frame: 3, reset: 0, maxSteps: 1200,
@@ -32,6 +32,11 @@ describe("uniforms packing", () => {
     expect(dv.getFloat32(136, true) / 9.6e14).toBeCloseTo(1, 6);            // rgCm (index 34)
     expect(dv.getFloat32(140, true)).toBe(0);                               // timeEpoch (index 35) defaults to 0
     expect(new DataView(packUniforms({ ...u, timeEpoch: 1835008 })).getFloat32(140, true)).toBe(1835008);
+    for (const off of [144, 148, 152]) expect(dv.getFloat32(off, true)).toBe(0);  // band, hotFlow, flowN0 default to 0
+    const m = new DataView(packUniforms({ ...u, band: 1, hotFlow: 1, flowN0: 1.5e7 }));
+    expect(m.getFloat32(144, true)).toBe(1);                                // band (index 36)
+    expect(m.getFloat32(148, true)).toBe(1);                                // hotFlow (index 37)
+    expect(m.getFloat32(152, true)).toBe(1.5e7);                            // flowN0 (index 38)
   });
   it("packs the geodesic-cache fields after outW/outH and defaults them to 0", () => {
     const base: UniformValues = {

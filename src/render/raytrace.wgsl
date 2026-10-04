@@ -9,6 +9,7 @@ struct Uniforms {
   lightDelay: f32,
   jetB0: f32, jetQ0: f32, rgCm: f32,   // synchrotron jet (CPU: jetUniforms in synchrotron.ts)
   timeEpoch: f32,                      // clock epoch: absolute time = timeEpoch + time (sim-clock.ts)
+  band: f32, hotFlow: f32, flowN0: f32, // 1.3 mm view: band 0/1, hot flow 0/1, its density scale (cm^-3)
 };
 @group(0) @binding(0) var<uniform> U: Uniforms;
 @group(0) @binding(1) var<storage, read_write> accum: array<vec4<f32>>;
@@ -207,6 +208,15 @@ fn shadeDisk(rHit: f32, phiHit: f32, g: f32, a: f32, tRel: f32) -> vec3<f32> {
   // rest-frame peak has luminance 1 (spec 2026-10-01 §2.3). Was the bolometric (g Tn)^4 law.
   return sampleColor(Tobs) * U.lumNorm * E.y;
 }
+// The same disk at 230 GHz (spec 2026-10-04 hot flow): Rayleigh-Jeans (h nu / k = 11 K), so its observed brightness
+// temperature is the shifted temperature itself, T_b = g T (every channel; the mm composite reads .x).
+fn shadeDiskMm(rHit: f32, phiHit: f32, g: f32, a: f32, tRel: f32) -> vec3<f32> {
+  let tEmit = U.timeEpoch + tRel;
+  let E = diskShadeFactorsE(rHit, phiHit, phiHit - omegaKep(rHit, a) * tEmit, tEmit, tRel, a);
+  return vec3<f32>(U.Tpeak * g * sampleTemp(rHit) * E.x * E.y);
+}
+fn bandMm() -> bool { return U.band > 0.5; }
+fn mmFlow() -> bool { return U.band > 0.5 && U.hotFlow > 0.5; }
 
 // Light-travel delay (spec 2026-10-01): the backward ray starts at t = 0 and t decreases, so an
 // emitter at coordinate time t_e is seen delay = -t_e - rObs later than a reference at the camera's
@@ -241,11 +251,13 @@ fn jetSample(s: State, p0: vec3<f32>, dvec: vec3<f32>, k: u32, n: u32) -> vec3<f
 // Exact skip: the emitter lies inside |z| <= jetLength, rho <= JET_ENV_Q funnelEdge(jetLength), so a
 // chord whose closest approach to the hole is beyond that bounding sphere sees no jet (its first
 // sample, the only one when n = 1, is then outside too and jetShapeJ would return 0).
+fn chordMisses(p0: vec3<f32>, dvec: vec3<f32>, R: f32) -> bool {
+  let tc = clamp(-dot(p0, dvec) / dot(dvec, dvec), 0.0, 1.0);
+  return length(p0 + dvec * tc) > R;
+}
 fn jetChordMisses(p0: vec3<f32>, dvec: vec3<f32>) -> bool {
   let fe = JET_ENV_Q * funnelEdgeJ(U.jetLength);
-  let rJet = sqrt(U.jetLength * U.jetLength + fe * fe);
-  let tc = clamp(-dot(p0, dvec) / dot(dvec, dvec), 0.0, 1.0);
-  return length(p0 + dvec * tc) > rJet;
+  return chordMisses(p0, dvec, sqrt(U.jetLength * U.jetLength + fe * fe));
 }
 
 // Synchrotron emission and absorption along one integrator step (spec 2026-10-02 2.4): each sub-sample
@@ -269,9 +281,30 @@ fn jetStep(s: State, sNew: State, dl: f32, accIn: JetOut) -> JetOut {
     if (shape > 0.0) {
       let D = plasmaShiftJ(q.x, q.y, mix(s.p, sNew.p, f), U.a, jetGammaAt(q.x * cos(q.y), U.jetGamma));
       if (D > 1e-6) {                                       // never divide by D -> 0
-        let so = synchSampleJ(JET_LNNU, q.x, q.y, D, U.a, U.jetB0, U.jetQ0, shape, U.jetGamma, U.rgCm);
+        let so = synchSampleJ(select(JET_LNNU, vec3<f32>(HF_LNNU), bandMm()), q.x, q.y, D, U.a, U.jetB0, U.jetQ0, shape, U.jetGamma, U.rgCm);
         acc = jetSlabJ(acc, so.j, so.a, U.rgCm * D * dl / f32(n));
       }
+    }
+  }
+  return acc;
+}
+
+// Hot flow at 230 GHz along one step (spec 2026-10-04): the jet's quadrature (samples <= JET_DL apart on the step's
+// chord, each a uniform slab of plasma-frame path r_g D dl / n), inside r < HF_RMAX and outside 1.01 r_+ (as the CPU
+// calibration in hot-flow-image.ts). The flow is steady and axisymmetric: no time, no azimuth. Only .x is used.
+fn flowStep(s: State, sNew: State, dl: f32, rh: f32, accIn: JetOut) -> JetOut {
+  let p0 = cartOf(s.x);
+  let dvec = cartOf(sNew.x) - p0;
+  if (dot(dvec, dvec) <= 1e-12 || chordMisses(p0, dvec, HF_RMAX)) { return accIn; }
+  let n = jetSubCount(dl);
+  var acc = accIn;
+  for (var k = 0u; k < n; k++) {
+    let q = jetSample(s, p0, dvec, k, n);
+    if (q.x >= HF_RMAX || q.x <= rh * 1.01) { continue; }
+    let D = flowShiftJ(q.x, q.y, mix(s.p, sNew.p, f32(k) / f32(n)), U.a);
+    if (D > 1e-6) {
+      let c = flowCoeffsJ(q.x, q.y, HF_LNNU + log(D), U.flowN0);
+      if (c.x > 0.0) { acc = jetSlabJ(acc, vec3<f32>(c.x / (D * D * D)), vec3<f32>(c.y), U.rgCm * D * dl / f32(n)); }
     }
   }
   return acc;
@@ -311,6 +344,7 @@ fn pixelImpact(pix: vec2<u32>, jit: vec2<f32>) -> vec2<f32> {
 
 struct TraceOut {
   color: vec3<f32>, jet: JetOut,
+  flowI: f32,                      // mm hot-flow mode: the flow's observed I_nu (cgs) along the ray; else 0
   kind: u32, payload: vec3<f32>,   // DISK: (rHit, phiHit, delay); SKY: asymptotic direction; else 0
   hasBm: bool, bm: State, nJet: u32, // record only: first state inside the jet envelope, steps through the last
   resolved: bool,                    // false: the step budget ran out (kind then comes from the classifier)
@@ -340,6 +374,7 @@ fn traceRay(pix: vec2<u32>, jit: vec2<f32>, record: bool) -> TraceOut {
   var resolved = false; // set by each real termination; false => the step budget ran out
   var jet: JetOut; jet.I = vec3<f32>(0.0); jet.tau = vec3<f32>(0.0); // synchrotron light and optical depth along the ray
   var firstJ = 0u; var lastJ = 0u;
+  var flow: JetOut; flow.I = vec3<f32>(0.0); flow.tau = vec3<f32>(0.0); // hot flow (mm): .x only
 
   for (var step = 0u; step < U.maxSteps; step++) {
     // dl > 0 with p_r < 0 integrates INWARD along the reversed worldline.
@@ -356,6 +391,9 @@ fn traceRay(pix: vec2<u32>, jit: vec2<f32>, record: bool) -> TraceOut {
     // Synchrotron jet: emission and absorption along the ray. The disk hit below still `break`s
     // (opaque), so jet segments behind the disk/horizon are occluded.
     if (U.jetStrength > 0.0) { jet = jetStep(s, sNew, dl, jet); }
+    // Hot flow (mm): a volume emitter the ray crosses; it does not stop at the plane. Jet and flow are separate
+    // accumulators (neither absorbs the other's light; the jet is faint at 1.3 mm).
+    if (mmFlow()) { flow = flowStep(s, sNew, dl, rh, flow); }
     // Cache bookmark: the first step whose jet samples can see the envelope, through the last one.
     if (record && jetTouches(s, sNew, dl)) {
       if (!out.hasBm) { out.hasBm = true; out.bm = s; firstJ = step; }
@@ -367,14 +405,15 @@ fn traceRay(pix: vec2<u32>, jit: vec2<f32>, record: bool) -> TraceOut {
     // step moves theta by <= ~0.07 rad): it is a diverged state that reflectAxis's single-crossing
     // reduction cannot have made sense of, and interpolating a disk hit from it would be garbage.
     let f0 = s.x.z - PI*0.5; let f1 = sNew.x.z - PI*0.5;
-    if (f0 * f1 < 0.0 && abs(sNew.x.z - s.x.z) < 0.5) {
+    if (!mmFlow() && f0 * f1 < 0.0 && abs(sNew.x.z - s.x.z) < 0.5) {
       let frac = f0 / (f0 - f1);
       let rHit = mix(s.x.y, sNew.x.y, frac);
       if (rHit >= U.rIn && rHit <= U.rOut) {
         let g = diskG(rHit, xi, a);
         let phiHit = mix(s.x.w, sNew.x.w, frac);     // azimuth of the emitting matter
         let delay = -mix(s.x.x, sNew.x.x, frac) - U.rObs;
-        color = shadeDisk(rHit, phiHit, g, a, emitRel(delay));
+        if (bandMm()) { color = shadeDiskMm(rHit, phiHit, g, a, emitRel(delay)); }
+        else { color = shadeDisk(rHit, phiHit, g, a, emitRel(delay)); }
         out.kind = KIND_DISK; out.payload = vec3<f32>(rHit, phiHit, delay);
         resolved = true;
         break;
@@ -391,7 +430,7 @@ fn traceRay(pix: vec2<u32>, jit: vec2<f32>, record: bool) -> TraceOut {
       // The deflected direction makes the starfield appear gravitationally lensed —
       // warped and magnified into a ring around the shadow.
       let dir = skyDir(s, a);
-      color = skyColor(dir);
+      if (!bandMm()) { color = skyColor(dir); } // no sky at 1.3 mm (the CMB's 2.7 K is nothing here)
       out.kind = KIND_SKY; out.payload = dir;
       resolved = true;
       break;
@@ -415,11 +454,11 @@ fn traceRay(pix: vec2<u32>, jit: vec2<f32>, record: bool) -> TraceOut {
       color = vec3<f32>(0.0);
     } else {
       let dir = skyDir(s, a);
-      color = skyColor(dir);
+      if (!bandMm()) { color = skyColor(dir); }
       out.kind = KIND_SKY; out.payload = dir;
     }
   }
-  out.color = color; out.jet = jet;
+  out.color = color; out.jet = jet; out.flowI = flow.I.x;
   if (out.hasBm) { out.nJet = lastJ - firstJ + 1u; }
   return out;
 }
@@ -427,11 +466,13 @@ fn traceRay(pix: vec2<u32>, jit: vec2<f32>, record: bool) -> TraceOut {
 // Temporal EMA: blend = 1/(frame+1) reproduces the Tier-1 running mean when static; a fixed
 // blend (~0.15) tracks an animating scene. blend==1 (first frame after a reset) clears cleanly.
 // The jet over whatever the ray terminated on (disk/starfield/shadow).
-fn storeComposite(idx: u32, color: vec3<f32>, jet: JetOut) {
+fn storeComposite(idx: u32, color: vec3<f32>, jet: JetOut, flowI: f32) {
   // Light from behind the jet (disk, sky) is absorbed: R, G, B by the 650 / 550 / 450 nm optical depths.
   // The jet's own light enters in the disk's units (band matrix) times the disk's lumNorm (spec 2.5);
   // clamped at 0 like blackbodyVisibleRGB (a pure power law can sit just outside the sRGB gamut).
-  let raw = color * exp(-vec3<f32>(jet.tau.z, jet.tau.y, jet.tau.x)) + U.lumNorm * max(JET_BAND_M * jet.I, vec3<f32>(0.0));
+  // 1.3 mm: brightness temperature (K) in every channel: the disk's T_b behind the jet, plus K_TB (jet + flow) I_nu.
+  var raw = color * exp(-vec3<f32>(jet.tau.z, jet.tau.y, jet.tau.x)) + U.lumNorm * max(JET_BAND_M * jet.I, vec3<f32>(0.0));
+  if (bandMm()) { raw = vec3<f32>(color.x * exp(-jet.tau.x) + HF_KTB * (max(jet.I.x, 0.0) + flowI)); }
   // Single choke point: nothing non-finite may enter accum. The in-loop escape branch above reads
   // s.x without the `usable` guard, so a diverged RK4 ray (r = +inf compares true, th/ph NaN) can
   // still produce a NaN colour there. A NaN in accum is PERMANENT -- mix(NaN, ..) stays NaN for
@@ -447,7 +488,7 @@ fn storeComposite(idx: u32, color: vec3<f32>, jet: JetOut) {
   if (gid.x >= u32(U.res.x) || gid.y >= u32(U.res.y)) { return; }
   let idx = gid.y * u32(U.res.x) + gid.x;
   let t = traceRay(gid.xy, pixelJitter(gid.xy), false);
-  storeComposite(idx, t.color, t.jet);
+  storeComposite(idx, t.color, t.jet, t.flowI);
 }
 
 // Re-integrate a bookmarked jet stretch: the same steps, in the same order, as traceRay took from
@@ -481,6 +522,8 @@ fn replayJet(bm: State, nJet: u32) -> JetOut {
       word = KIND_LIVE | (BM_NONE << 2u); // bookmark buffer full: shade traces this pixel in full
     }
   }
+  // mm hot-flow mode: no disk kind can occur and the sky is dark, so the entry carries the pixel's steady flow intensity.
+  if (mmFlow()) { entries[idx] = Entry(word, t.flowI, 0.0, 0.0); return; }
   entries[idx] = Entry(word, t.payload.x, t.payload.y, t.payload.z);
 }
 
@@ -501,23 +544,26 @@ fn replayJet(bm: State, nJet: u32) -> JetOut {
   let kind = e.word & 3u;
   if (kind == KIND_LIVE) {
     let t = traceRay(gid.xy, fixedJitter(U.setIndex), false);
-    storeComposite(idx, t.color, t.jet);
+    storeComposite(idx, t.color, t.jet, t.flowI);
     return;
   }
   var color = vec3<f32>(0.0);
-  if (kind == KIND_DISK) {
+  var flowI = 0.0;
+  if (mmFlow()) { flowI = e.p0; }
+  else if (kind == KIND_DISK) {
     // g is recomputed (the entry's third slot holds the delay): same helper and camera fragment as
     // traceRay, so xi and g match the live trace.
     let ab = pixelImpact(gid.xy, fixedJitter(U.setIndex));
     let g = diskG(e.p0, cameraXiEta(ab.x, ab.y, U.a, U.incl).x, U.a);
-    color = shadeDisk(e.p0, e.p1, g, U.a, emitRel(e.p2));
+    if (bandMm()) { color = shadeDiskMm(e.p0, e.p1, g, U.a, emitRel(e.p2)); }
+    else { color = shadeDisk(e.p0, e.p1, g, U.a, emitRel(e.p2)); }
   }
-  else if (kind == KIND_SKY) { color = skyColor(vec3<f32>(e.p0, e.p1, e.p2)); }
+  else if (kind == KIND_SKY && !bandMm()) { color = skyColor(vec3<f32>(e.p0, e.p1, e.p2)); }
   var jet: JetOut; jet.I = vec3<f32>(0.0); jet.tau = vec3<f32>(0.0);
   let bi = e.word >> 2u;
   if (U.jetStrength > 0.0 && bi != BM_NONE) {
     let b = bookmarks[bi];
     jet = replayJet(State(b.x, b.p), b.nJet);
   }
-  storeComposite(idx, color, jet);
+  storeComposite(idx, color, jet, flowI);
 }

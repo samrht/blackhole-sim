@@ -21,10 +21,14 @@ export interface GeometryInputs {
   /** Renderer.cacheEpoch: bumped whenever the cache buffers are reallocated (a resize can do that
    *  without changing the display size, e.g. a debounced drag back to the same size). */
   epoch: number;
+  /** 1.3 mm view: band (0/1) and hot flow (0/1) change the path set (no disk termination in a hot flow); in mm hot-flow
+   *  mode the cache stores each pixel's flow intensity, which depends on the density scale n0 and on r_g (the plasma
+   *  path), so those join the key too. main.ts passes flowN0 = flowRg = 0 outside that mode. */
+  band: number; hotFlow: number; flowN0: number; flowRg: number;
 }
 /** Everything a ray's path depends on. Shading-only inputs are deliberately absent. */
 export function geometryKey(g: GeometryInputs): string {
-  return [g.a, g.incl, g.fovScale, g.rObs, g.rIn, g.rOut, g.maxSteps, g.jetLength, g.displayW, g.displayH, g.epoch].join("|");
+  return [g.a, g.incl, g.fovScale, g.rObs, g.rIn, g.rOut, g.maxSteps, g.jetLength, g.displayW, g.displayH, g.epoch, g.band, g.hotFlow, g.flowN0, g.flowRg].join("|");
 }
 
 export interface CachePlan { nSets: number; entryBytes: number; bookmarkCapacity: number; }

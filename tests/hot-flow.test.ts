@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { HOTFLOW, mahadevanM, flowDensity, flowTemperature, flowField, iscoEL, flowVelocity, flowCoeffs, isHotFlow, flowN0 } from "../src/physics/hot-flow";
+import { HOTFLOW, mahadevanM, flowDensity, flowTemperature, flowField, iscoEL, flowVelocity, flowCoeffs, isHotFlow, flowN0, jetAtMm } from "../src/physics/hot-flow";
+import { jetEnergetics, jetField, LN_NUB0 } from "../src/physics/synchrotron";
+import { funnelEdge, JET } from "../src/physics/jet";
 import { metricLower } from "../src/physics/kerr";
 import { iscoRadius } from "../src/physics/orbits";
 import { PRESETS } from "../src/physics/presets";
@@ -48,5 +50,21 @@ describe("hot flow (spec 2026-10-04)", () => {
     expect(flowN0(sg.massSun, sg.lambda)).toBeCloseTo(n, 6);                      // the scaling reproduces Sgr A*
     expect(flowN0(2 * sg.massSun, 3 * sg.lambda) / n).toBeCloseTo(1.5, 9);         // n0 ~ lambda / M
     expect(HOTFLOW.nu).toBe(230e9);
+  });
+});
+
+describe("the jet at 230 GHz (spec 2.5)", () => {
+  it("is drawn only where 230 GHz is above the gyrofrequency of the jet base: M87* yes, the X-ray binaries no", () => {
+    const want: Record<string, boolean> = { m87: true, cygx1: false, grs1915: false };
+    for (const [id, yes] of Object.entries(want)) {
+      const p = PRESETS.find((q) => q.id === id)!;
+      expect(jetAtMm(p.a, jetEnergetics(p.massSun, p.a, p.lambda).b0)).toBe(yes);
+    }
+  });
+  it("switches exactly where nu_B of the strongest base field crosses 230 GHz", () => {
+    const B = (b0: number) => jetField(funnelEdge(JET.zBase), JET.zBase, 0.9, b0);
+    const b0Edge = 230e9 / (Math.exp(LN_NUB0) * B(1)); // B is linear in b0
+    expect(jetAtMm(0.9, b0Edge * 0.999)).toBe(true);
+    expect(jetAtMm(0.9, b0Edge * 1.001)).toBe(false);
   });
 });
