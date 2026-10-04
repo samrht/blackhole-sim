@@ -315,14 +315,21 @@ fn iscoJ(a: f32) -> f32 { // prograde ISCO (Bardeen, Press & Teukolsky 1972; twi
 fn lnMahadevanJ(lnX: f32) -> f32 {
   return 1.39884033 - lnX / 6.0 + log(1.0 + 0.4 * exp(-0.25 * lnX) + 0.5316 * exp(-0.5 * lnX)) - 1.8899 * exp(lnX / 3.0);
 }
-// (u^t, u^r, Omega, ok) of the flow; ok = 0 where no timelike velocity exists (K0 <= 0).
-fn flowVelocityJ(r: f32, th: f32, a: f32) -> vec4<f32> {
-  let gu = gUp(r, 0.5 * PI, a);                         // 0 tt, 1 tphi, 2 rr, 3 thth, 4 phph
+// The prograde ISCO orbit (r_isco, E, L) per unit mass: depends on the spin alone, so a ray computes it once
+// (flowStep's callers) instead of per sample.
+fn iscoOrbitJ(a: f32) -> vec3<f32> {
   let risco = iscoJ(a);
+  let sq = sqrt(risco); let den = pow(risco, 0.75) * sqrt(risco * sq - 3.0 * sq + 2.0 * a);
+  return vec3<f32>(risco, (risco * sq - 2.0 * sq + a) / den, (risco * risco - 2.0 * a * sq + a * a) / den);
+}
+// (u^t, u^r, Omega, ok) of the flow; ok = 0 where no timelike velocity exists (K0 <= 0).
+fn flowVelocityJ(r: f32, th: f32, a: f32) -> vec4<f32> { return flowVelocityOrbJ(r, th, a, iscoOrbitJ(a)); }
+fn flowVelocityOrbJ(r: f32, th: f32, a: f32, orb: vec3<f32>) -> vec4<f32> {
+  let gu = gUp(r, 0.5 * PI, a);                         // 0 tt, 1 tphi, 2 rr, 3 thth, 4 phph
+  let risco = orb.x;
   var urK = 0.0; var OmK = omegaKep(r, a);
   if (r < risco) {
-    let sq = sqrt(risco); let den = pow(risco, 0.75) * sqrt(risco * sq - 3.0 * sq + 2.0 * a);
-    let E = (risco * sq - 2.0 * sq + a) / den; let L = (risco * risco - 2.0 * a * sq + a * a) / den;
+    let E = orb.y; let L = orb.z;
     let uT = -gu[0] * E + gu[1] * L; let uP = -gu[1] * E + gu[4] * L;
     let rest = -1.0 - (gu[0] * E * E - 2.0 * gu[1] * E * L + gu[4] * L * L);
     urK = -sqrt(max(0.0, rest * gu[2])); OmK = uP / uT;
@@ -335,8 +342,9 @@ fn flowVelocityJ(r: f32, th: f32, a: f32) -> vec4<f32> {
   return vec4<f32>(sqrt((1.0 + g[2] * ur * ur) / K0), ur, Om, 1.0);
 }
 // nu_plasma / nu_observed for the camera-normalised covariant momentum p = (p_t, p_r, p_th, p_phi); -1 if no velocity.
-fn flowShiftJ(r: f32, th: f32, p: vec4<f32>, a: f32) -> f32 {
-  let u = flowVelocityJ(r, th, a);
+fn flowShiftJ(r: f32, th: f32, p: vec4<f32>, a: f32) -> f32 { return flowShiftOrbJ(r, th, p, a, iscoOrbitJ(a)); }
+fn flowShiftOrbJ(r: f32, th: f32, p: vec4<f32>, a: f32, orb: vec3<f32>) -> f32 {
+  let u = flowVelocityOrbJ(r, th, a, orb);
   if (u.w == 0.0) { return -1.0; }
   return u.x * p.x + u.y * p.y + u.z * u.x * p.w;
 }

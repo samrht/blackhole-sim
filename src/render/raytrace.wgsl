@@ -289,20 +289,21 @@ fn jetStep(s: State, sNew: State, dl: f32, accIn: JetOut) -> JetOut {
   return acc;
 }
 
-// Hot flow at 230 GHz along one step (spec 2026-10-04): the jet's quadrature (samples <= JET_DL apart on the step's
-// chord, each a uniform slab of plasma-frame path r_g D dl / n), inside r < HF_RMAX and outside 1.01 r_+ (as the CPU
-// calibration in hot-flow-image.ts). The flow is steady and axisymmetric: no time, no azimuth. One channel, carried as
+// Hot flow at 230 GHz along one step (spec 2026-10-04): the jet's quadrature (samples on the step's chord, each a
+// uniform slab of plasma-frame path r_g D dl / n), inside r < HF_RMAX and outside 1.01 r_+ (as the CPU calibration in
+// hot-flow-image.ts). Samples are <= JET_DL apart inside 8 M and JET_DL r / 8 beyond, where the flow is faint (perf/mm-live:
+// one sample per step out there, ~190 fewer per ray; flux changed 2e-6, worst pixel 2e-6 of the peak, sgra-mm/m87-mm). The flow is steady and axisymmetric: no time, no azimuth. One channel, carried as
 // acc = (I_nu, tau) so visible frames hold two floats through the ray loop, not two vec3 (the jet's slab, scalar).
-fn flowStep(s: State, sNew: State, dl: f32, rh: f32, accIn: vec2<f32>) -> vec2<f32> {
+fn flowStep(s: State, sNew: State, dl: f32, rh: f32, orb: vec3<f32>, accIn: vec2<f32>) -> vec2<f32> {
   let p0 = cartOf(s.x);
   let dvec = cartOf(sNew.x) - p0;
   if (dot(dvec, dvec) <= 1e-12 || chordMisses(p0, dvec, HF_RMAX)) { return accIn; }
-  let n = jetSubCount(dl);
+  let n = clamp(u32(ceil(dl / (JET_DL * max(1.0, min(s.x.y, sNew.x.y) / 8.0)))), 1u, JET_NSUB_MAX);
   var acc = accIn;
   for (var k = 0u; k < n; k++) {
     let q = jetSample(s, p0, dvec, k, n);
     if (q.x >= HF_RMAX || q.x <= rh * 1.01) { continue; }
-    let D = flowShiftJ(q.x, q.y, mix(s.p, sNew.p, f32(k) / f32(n)), U.a);
+    let D = flowShiftOrbJ(q.x, q.y, mix(s.p, sNew.p, f32(k) / f32(n)), U.a, orb);
     if (D > 1e-6) {
       let c = flowCoeffsJ(q.x, q.y, HF_LNNU + log(D), U.flowN0);
       if (c.x > 0.0) {
@@ -380,6 +381,7 @@ fn traceRay(pix: vec2<u32>, jit: vec2<f32>, record: bool) -> TraceOut {
   var jet: JetOut; jet.I = vec3<f32>(0.0); jet.tau = vec3<f32>(0.0); // synchrotron light and optical depth along the ray
   var firstJ = 0u; var lastJ = 0u;
   var flow = vec2<f32>(0.0); // hot flow (mm): (I_nu, tau)
+  let orb = iscoOrbitJ(a);   // the flow's ISCO orbit, once per ray
 
   for (var step = 0u; step < U.maxSteps; step++) {
     // dl > 0 with p_r < 0 integrates INWARD along the reversed worldline.
@@ -398,7 +400,7 @@ fn traceRay(pix: vec2<u32>, jit: vec2<f32>, record: bool) -> TraceOut {
     if (U.jetStrength > 0.0) { jet = jetStep(s, sNew, dl, jet); }
     // Hot flow (mm): a volume emitter the ray crosses; it does not stop at the plane. Jet and flow are separate
     // accumulators (neither absorbs the other's light; the jet is faint at 1.3 mm).
-    if (mmFlow()) { flow = flowStep(s, sNew, dl, rh, flow); }
+    if (mmFlow()) { flow = flowStep(s, sNew, dl, rh, orb, flow); }
     // Cache bookmark: the first step whose jet samples can see the envelope, through the last one.
     if (record && jetTouches(s, sNew, dl)) {
       if (!out.hasBm) { out.hasBm = true; out.bm = s; firstJ = step; }
@@ -430,6 +432,10 @@ fn traceRay(pix: vec2<u32>, jit: vec2<f32>, record: bool) -> TraceOut {
     // flips the metric signature and the state explodes to garbage that can pass the escape test
     // and paint starfield inside the shadow.
     if (s.x.y <= rh * 1.005) { color = vec3(0.0); resolved = true; break; }
+    // 1.3 mm hot flow: a ray leaving r = HF_RMAX outward has collected all it will (no emitter beyond, no sky at 1.3 mm,
+    // and outside Kerr's potential barrier, r <~ 4 M, an outgoing ray cannot turn back). Ending it here instead of at
+    // 1.2 rObs gives the same image and skips the long outbound leg.
+    if (mmFlow() && s.x.y > HF_RMAX && sNew.x.y > r) { out.kind = KIND_SKY; resolved = true; break; }
     if (s.x.y > r0 * 1.2) {
       // escaped: sample the background along the ray's (bent) asymptotic direction.
       // The deflected direction makes the starfield appear gravitationally lensed —

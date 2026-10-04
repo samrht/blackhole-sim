@@ -21,7 +21,8 @@ page.on("console", (m) => { if (m.type() === "warning" || m.type() === "error") 
 page.on("pageerror", (e) => diags.push("PAGEERROR " + e.message));
 await page.goto(BASE + "/?bench", { waitUntil: "load", timeout: 20000 });
 
-const out = await page.evaluate(async () => {
+// ONLY_MM=1: just the 1.3 mm row, 16 frames (A/B runs of the mm path).
+const out = await page.evaluate(async (ONLY_MM) => {
   const ad = await navigator.gpu.requestAdapter();
   const info = (ad && ad.info) || {};
   const { Renderer } = await import("/src/render/gpu.ts");
@@ -83,15 +84,15 @@ const out = await page.evaluate(async () => {
       cachedOn = await cachedMedian(1); cachedOff = await cachedMedian(0);
     }
     r.device.destroy();
-    return { mm, w: r.width, h: r.height, median: t[t.length >> 1], build, cachedOn, cachedOff, sets: r.cacheSets,
+    return { mm, w: r.width, h: r.height, median: t[t.length >> 1], min: t[0], build, cachedOn, cachedOff, sets: r.cacheSets,
       bmFrac: bm ? bm.count / (r.displayW * r.displayH * r.cacheSets) : null, meanNJet: bm ? bm.meanNJet : null };
   }
-  return { adapter: `${info.vendor || "?"} ${info.architecture || "?"}`, rows: [await bench(1280, 720), await bench(1920, 1080), await bench(1280, 720, 8, true)] };
-});
+  return { adapter: `${info.vendor || "?"} ${info.architecture || "?"}`, rows: ONLY_MM ? [await bench(1280, 720, 16, true)] : [await bench(1280, 720), await bench(1920, 1080), await bench(1280, 720, 8, true)] };
+}, process.env.ONLY_MM === "1");
 
 console.log(`adapter: ${out.adapter}`);
 for (const r of out.rows) {
-  console.log(`${`${r.w}x${r.h}${r.mm ? " mm" : ""}`.padEnd(10)} live   median ${r.median.toFixed(1)} ms/frame (${(1000 / r.median).toFixed(1)} fps)`);
+  console.log(`${`${r.w}x${r.h}${r.mm ? " mm" : ""}`.padEnd(10)} live   median ${r.median.toFixed(1)} ms/frame (${(1000 / r.median).toFixed(1)} fps), min ${r.min.toFixed(1)}`);
   if (r.sets) {
     console.log(`${"".padEnd(10)} cached median ${r.cachedOn.toFixed(1)} ms jet on (${(1000 / r.cachedOn).toFixed(1)} fps), ${r.cachedOff.toFixed(1)} ms jet off; ` +
       `build ${r.build.toFixed(0)} ms/set x ${r.sets}; bookmarks ${(100 * r.bmFrac).toFixed(1)} % mean nJet ${r.meanNJet.toFixed(1)}`);

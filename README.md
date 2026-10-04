@@ -205,7 +205,14 @@ intensity; band, regime, n₀ and r_g join the geometry key; no jet bookmarks in
 the five visible hashes unchanged; a verify-gpu app check opens `#p=sgra&b=mm`. Performance (RTX 3050 Laptop,
 1280×720): live 132 ms/frame in mm vs 59 visible; cached 3.4 ms (exact, so a playing still view is fast); interaction
 in mm is the slow path. Visible frames against `main`, interleaved: +2–5 % at 720p, +2–11 % at 1080p, inside the ±10 %
-run-to-run drift (the flow accumulator is two scalars so visible frames carry little extra state).
+run-to-run drift (the flow accumulator is two scalars so visible frames carry little extra state). **perf/mm-live (2026-10-04):**
+live mm frames ~15 % faster (bench minima, interleaved: 130-139 -> 110-114 ms at 720p on a throttling RTX laptop):
+outgoing rays end at r = 50 M instead of 1.2 r_obs (exact: nothing emits beyond, no sky at 1.3 mm, no turning point
+outside the potential barrier; mm golden bit-identical), the ISCO orbit is computed once per ray instead of per
+sample (exact), and the flow is sampled once per step beyond 8 M (flux changed 2e-6). Rejected: ending infalling rays
+at 1.3 r_+ (flux -0.2 to -0.4 %, pixels up to 2.7 %). What remains is the integrator's near-field step count
+(~100 steps within 2 r_+ and ~255 inside 50 M per ray), shared with the visible view. Golden mm hashes re-recorded
+(sgra-mm f298812a, m87-mm 3ea2d532); visible hashes unchanged.
 
 **Current gates (feat/hot-flow-mm):** `npm test` 239 passed, 7 skipped; `?parity` PASS 1.654e-4 over 337 (hot flow
 0.245 of tolerance); `?shadow` PASS; `?golden` PASS (visible 914d238f/62578f82/a78f2dcc/97ea770a/f1496f01 unchanged,
