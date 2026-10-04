@@ -24,6 +24,11 @@ const CHECKS: Check[] = [
   { ...SCENES[2], name: "starfield", skyStrength: 0, starfield: true },
   // Cygnus X-1's jet: optically thick over the disk, so the cached frame must attenuate the cached disk exactly
   withSky({ name: "xrb-thick", a: 0.998, inclDeg: 27, time: 7, frame: 3, jetStrength: 1, skyStrength: 0, obj: { massSun: 21.2, lambda: 0.02 } }),
+  // 1.3 mm (spec 2026-10-04): the cache stores each pixel's steady hot-flow intensity (Sgr A*, M87*), and a thin disk
+  // is re-shaded as T_b = g T (Cygnus X-1 at 1.3 mm, its jet off as in the app).
+  SCENES.find((s) => s.name === "sgra-mm")!,
+  SCENES.find((s) => s.name === "m87-mm")!,
+  { name: "xrb-mm", a: 0.998, inclDeg: 27, time: 7, frame: 3, jetStrength: 0, skyStrength: 0, obj: { massSun: 21.2, lambda: 0.02 }, band: "mm" },
 ];
 const TIMES = [0, 137.5];
 const rel = (a: number, b: number) => Math.abs(a - b) / Math.max(Math.abs(a), 1e-3);

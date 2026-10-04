@@ -420,10 +420,8 @@ fn iscoJ(a: f32) -> f32 { // prograde ISCO (Bardeen, Press & Teukolsky 1972; twi
   `f[36] = u.band ?? 0; f[37] = u.hotFlow ?? 0; f[38] = u.flowN0 ?? 0;`. Every WGSL `Uniforms` struct that declares
   `timeEpoch` gains `band: f32, hotFlow: f32, flowN0: f32,` after it; `present.wgsl`'s shorter struct is extended with
   all fields through `flowN0` (copy the order from `raytrace.wgsl`) so it can read `U.band`.
-- [ ] **Step 2b: jet at 230 GHz (spec §2.5, added in Task 3)** — `hot-flow.ts`: `jetAtMm(a, b0): boolean` = 230e9 >
-  ν_B · max B over the jet base wall (`jetField(funnelEdge(JET.zBase), JET.zBase, a, b0)` with `LN_NUB0`); test: M87*
-  true, Cyg X-1 and GRS 1915+105 false (b0 from `jetEnergetics`). `main.ts`: in mm with `!jetAtMm`, the jet strength
-  uniform is 0 (the jet is off, and the cache rebuilds as for any jet toggle).
+- [x] **Step 2b: no jet at 1.3 mm (spec §2.5, added in Tasks 3/5)** — `main.ts` sends jet strength 0 in mm (first a
+  per-object `jetAtMm` gyrofrequency test, then dropped when `?hotflow` measured M87*'s model jet at 5.6× its ring).
 - [ ] **Step 3: traceRay** (`raytrace.wgsl`):
   - `let mmFlow = U.band > 0.5 && U.hotFlow > 0.5;` and a second accumulator `var flow: JetOut` (use `.x` channels).
   - Each step, when `mmFlow` and the step's chord comes within `HF_RMAX` (reuse `jetSubCount`/`jetSample` sub-sampling;

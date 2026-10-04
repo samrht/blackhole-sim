@@ -70,6 +70,7 @@ if (process.env.RECORD_GOLDEN === "1") {
 }
 await checkAny("/?golden", ["GOLDEN PASS", "GOLDEN SKIP"]);
 await checkAny("/?cachecheck", ["CACHECHECK PASS"], 600000);
+await checkAny("/?hotflow", ["HOTFLOW PASS"], 300000);
 
 }
 
@@ -297,6 +298,34 @@ if (!reachOk) failed = true;
   const shareDiag = diagSince(dShare);
   console.log(`${ok && !shareDiag ? "✓ PASS" : "✗ FAIL"}  shareable links: ${sSteps.join(", ")}${shareDiag}`);
   if (!ok || shareDiag) failed = true;
+}
+
+// 1.3 mm view (spec 2026-10-04): a link to Sgr A* at 1.3 mm opens the hot flow, reaches `cached`, and shows a bright
+// ring around a darker centre (brightness profile through the canvas centre; the panel overlays the left edge).
+{
+  const dMm = diags.length;
+  await page.goto(BASE + "/#p=sgra&b=mm", { waitUntil: "load", timeout: 20000 });
+  const band = await page.evaluate(() => document.getElementById("band").value);
+  const cached = await waitMode("cached");
+  await page.waitForTimeout(1500);
+  const vp = page.viewportSize(), cx = Math.round(vp.width / 2), cy = Math.round(vp.height / 2), R = 180;
+  const b64 = (await page.screenshot({ clip: { x: cx - R, y: cy - R, width: 2 * R, height: 2 * R } })).toString("base64");
+  const prof = await page.evaluate(async ([data, R]) => {
+    const img = new Image(); img.src = "data:image/png;base64," + data; await img.decode();
+    const c = document.createElement("canvas"); c.width = img.width; c.height = img.height;
+    const g = c.getContext("2d"); g.drawImage(img, 0, 0);
+    const d = g.getImageData(0, 0, c.width, c.height).data, s = c.width / (2 * R);
+    let max = 0, centre = 0, n = 0;
+    for (let y = 0; y < c.height; y++) for (let x = 0; x < c.width; x++) {
+      const k = (y * c.width + x) * 4, v = (d[k] + d[k + 1] + d[k + 2]) / 3, rr = Math.hypot(x / s - R, y / s - R);
+      max = Math.max(max, v); if (rr < 20) { centre += v; n++; }
+    }
+    return { max, centre: centre / n };
+  }, [b64, R]);
+  const mmOk = band === "mm" && cached && prof.max > 120 && prof.centre < 0.6 * prof.max;
+  const mmDiag = diagSince(dMm);
+  console.log(`${mmOk && !mmDiag ? "✓ PASS" : "✗ FAIL"}  1.3 mm view: band ${band}, cached ${cached}, ring max ${prof.max.toFixed(0)}, centre ${prof.centre.toFixed(0)}${mmDiag}`);
+  if (!mmOk || mmDiag) failed = true;
 }
 
 await browser.close();

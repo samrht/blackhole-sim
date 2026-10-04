@@ -55,6 +55,14 @@ export function ringDiameterUas(I: Float64Array, N: number, half: number, uasPer
   for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
     const b = Math.hypot(-half + px * (i + 0.5), -half + px * (j + 0.5)), k = Math.floor((b / half) * nb);
     if (k < nb) { prof[k] += img[j * N + i]; cnt[k]++; } }
-  let kmax = 0; for (let k = 1; k < nb; k++) if (cnt[k] && prof[k] / cnt[k] > prof[kmax] / Math.max(cnt[kmax], 1)) kmax = k;
-  return 2 * ((kmax + 0.5) / nb) * half * uasPerM;
+  const m = (k: number) => (cnt[k] ? prof[k] / cnt[k] : 0);
+  let kmax = 0; for (let k = 1; k < nb; k++) if (cnt[k] && m(k) > m(kmax)) kmax = k;
+  // Sub-bin peak: a parabola through the peak bin and its neighbours (the bin centre alone quantised the diameter to
+  // 2 half / nb, ~2.3 uas for Sgr A*, enough to move it by one bin between frames and resolutions).
+  let dk = 0;
+  if (kmax > 0 && kmax < nb - 1 && cnt[kmax - 1] && cnt[kmax + 1]) {
+    const y0 = m(kmax - 1), y1 = m(kmax), y2 = m(kmax + 1), den = y0 - 2 * y1 + y2;
+    if (den < 0) dk = Math.max(-0.5, Math.min(0.5, (0.5 * (y0 - y2)) / den));
+  }
+  return 2 * ((kmax + 0.5 + dk) / nb) * half * uasPerM;
 }

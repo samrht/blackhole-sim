@@ -4,6 +4,7 @@ import { SHARE_FIELDS, encodeShare, decodeShare, type ShareLimit } from "../src/
 // The panel's real ranges (index.html) for the fields under test.
 const LIMITS: Record<string, ShareLimit> = {
   p: { kind: "select", options: ["default", "custom", "m87", "sgra"] },
+  b: { kind: "select", options: ["vis", "mm"] },
   a: { kind: "range", min: 0, max: 0.998, step: 0.001 },
   i: { kind: "range", min: 1, max: 89, step: 1 },
   m: { kind: "range", min: 0, max: 10, step: 0.01 },
@@ -47,6 +48,11 @@ describe("shareable links (#hash)", () => {
   });
   it("checkboxes are 0/1", () => {
     expect(decodeShare("#jet=0&play=1", LIMITS)).toEqual({ jet: "0", play: "1" });
+  });
+  it("the band (1.3 mm view) follows the preset, as a select (spec 2026-10-04)", () => {
+    expect(SHARE_FIELDS[1]).toEqual({ key: "b", id: "band", kind: "select" });
+    expect(decodeShare("#p=sgra&b=mm", LIMITS)).toEqual({ p: "sgra", b: "mm" });
+    expect(decodeShare("#b=radio", LIMITS)).toEqual({});
   });
   it("percent-encoded values decode", () => {
     expect(decodeShare("#x=%2D2.5", LIMITS)).toEqual({ x: "-2.5" });

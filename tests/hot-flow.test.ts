@@ -1,7 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { HOTFLOW, mahadevanM, flowDensity, flowTemperature, flowField, iscoEL, flowVelocity, flowCoeffs, isHotFlow, flowN0, jetAtMm } from "../src/physics/hot-flow";
-import { jetEnergetics, jetField, LN_NUB0 } from "../src/physics/synchrotron";
-import { funnelEdge, JET } from "../src/physics/jet";
+import { HOTFLOW, mahadevanM, flowDensity, flowTemperature, flowField, iscoEL, flowVelocity, flowCoeffs, isHotFlow, flowN0 } from "../src/physics/hot-flow";
+import { ringDiameterUas } from "../src/physics/hot-flow-image";
 import { metricLower } from "../src/physics/kerr";
 import { iscoRadius } from "../src/physics/orbits";
 import { PRESETS } from "../src/physics/presets";
@@ -53,18 +52,17 @@ describe("hot flow (spec 2026-10-04)", () => {
   });
 });
 
-describe("the jet at 230 GHz (spec 2.5)", () => {
-  it("is drawn only where 230 GHz is above the gyrofrequency of the jet base: M87* yes, the X-ray binaries no", () => {
-    const want: Record<string, boolean> = { m87: true, cygx1: false, grs1915: false };
-    for (const [id, yes] of Object.entries(want)) {
-      const p = PRESETS.find((q) => q.id === id)!;
-      expect(jetAtMm(p.a, jetEnergetics(p.massSun, p.a, p.lambda).b0)).toBe(yes);
+describe("ring diameter measure (hot-flow-image.ts)", () => {
+  // A thin Gaussian ring of radius R M; the measure must not depend on the frame or the pixel grid (the 60-bin profile
+  // alone quantised it to ~2.3 uas: 46.0 vs 48.2 at 48^2 vs 96^2, 47.1 on the GPU's 28 M frame vs 48.2 on the CPU's 26 M).
+  // Grids as fine as the gates use (CPU 96^2, GPU 512^2); at 48^2 the 0.54 M pixels are coarser than the bins.
+  it("recovers a ring's diameter to 0.05 M (0.26 uas for Sgr A*) for any frame and resolution", () => {
+    for (const R of [4.35, 4.6, 4.83, 5.1]) for (const [N, half] of [[96, 13], [128, 14], [512, 14]]) {
+      const I = new Float64Array(N * N), px = (2 * half) / N;
+      for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
+        const b = Math.hypot(-half + px * (i + 0.5), -half + px * (j + 0.5)); I[j * N + i] = Math.exp(-((b - R) ** 2) / (2 * 0.6 ** 2));
+      }
+      expect(Math.abs(ringDiameterUas(I, N, half, 1) - 2 * R)).toBeLessThan(0.05);
     }
-  });
-  it("switches exactly where nu_B of the strongest base field crosses 230 GHz", () => {
-    const B = (b0: number) => jetField(funnelEdge(JET.zBase), JET.zBase, 0.9, b0);
-    const b0Edge = 230e9 / (Math.exp(LN_NUB0) * B(1)); // B is linear in b0
-    expect(jetAtMm(0.9, b0Edge * 0.999)).toBe(true);
-    expect(jetAtMm(0.9, b0Edge * 1.001)).toBe(false);
   });
 });

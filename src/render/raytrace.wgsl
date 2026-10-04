@@ -511,7 +511,9 @@ fn replayJet(bm: State, nJet: u32) -> JetOut {
   let y = U.rowStart + gid.y;
   if (gid.x >= u32(U.res.x) || y >= U.rowEnd || y >= u32(U.res.y)) { return; }
   let idx = y * u32(U.res.x) + gid.x;
-  let t = traceRay(vec2<u32>(gid.x, y), fixedJitter(U.setIndex), true);
+  // No jet bookmarks at 1.3 mm: the jet is not drawn there (spec 2.5), and recording them overflowed the bookmark buffer
+  // for face-on M87* (half its pixels fell back to live traces in every cached frame).
+  let t = traceRay(vec2<u32>(gid.x, y), fixedJitter(U.setIndex), !bandMm());
   var word = t.kind | (BM_NONE << 2u);
   if (t.hasBm) {
     let b = atomicAdd(&bmCount, 1u);

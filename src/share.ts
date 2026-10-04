@@ -11,6 +11,7 @@ export type ShareLimit = { kind: "range"; min: number; max: number; step: number
  *  customOnly fields are implied by a preset, so they are written only for a Custom view. */
 export const SHARE_FIELDS: ShareField[] = [
   { key: "p", id: "preset", kind: "select" },
+  { key: "b", id: "band", kind: "select" },
   { key: "a", id: "spin", kind: "range", customOnly: true },
   { key: "i", id: "incl", kind: "range", customOnly: true },
   { key: "m", id: "mass", kind: "range", customOnly: true },

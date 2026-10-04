@@ -14,7 +14,7 @@ import { jetUniforms, ETA_DEFAULT } from "./physics/synchrotron";
 import { formatLength, formatDuration } from "./physics/units";
 import { advanceSimTime, splitTime } from "./render/sim-clock";
 import { sigmaForFlicker, FLICKER_DEFAULT, type HotSpot } from "./physics/emission";
-import { isHotFlow, flowN0, jetAtMm } from "./physics/hot-flow";
+import { isHotFlow, flowN0 } from "./physics/hot-flow";
 
 const canvas = document.getElementById("c") as HTMLCanvasElement;
 
@@ -36,6 +36,12 @@ PARITY ${ok ? "PASS" : "FAIL"} — maxRelErr=${res.maxErr.toExponential(3)} over
 SHADOW ${res.ok ? "PASS" : "FAIL"} — critical curve: ${res.gates.map((x) => `${x.name} (a ${x.a}, ${x.inclDeg}°) ${x.g.pass ? "ok" : "FAILED"}: off-curve mismatches ${x.g.offBand}, on-curve ${x.g.inBand}, unresolved ${x.g.unresolved} (off-curve ${x.g.unresolvedOffBand}), other ${x.g.other}, area ratio ${x.g.areaRatio.toFixed(4)}`).join("; ")}
 structural ${res.structural ? "ok" : "FAILED"} — centred dark shadow=${res.hasShadow}, ringed by disk=${res.hasDisk}; apparent radius ≈ ${res.shadowRadiusM} M against the analytic critical curve ${res.analyticRadiusM} M = ${res.calibration} (the disk-lit image shows the emitter's lensed inner edge, not the critical curve; see README)</pre>`;
   console.log("shadow", res);
+} else if (location.search.includes("hotflow")) {
+  // Validation entry: the GPU's 1.3 mm image of Sgr A* (flux + EHT ring gate) and M87* (reported), spec 2026-10-04.
+  const { runHotFlow } = await import("./test/hotflow.browser");
+  const res = await runHotFlow(canvas);
+  document.body.innerHTML = `<pre style="color:${res.ok ? "#6f6" : "#f66"};font-size:15px;padding:20px">HOTFLOW ${res.ok ? "PASS" : "FAIL"}\n${res.lines.join("\n")}</pre>`;
+  console.log("hotflow", res);
 } else if (location.search.includes("cachecheck")) {
   // Validation entry: cached frames equal live frames (spec 2026-10-01 3.6).
   const { runCacheCheck } = await import("./test/cachecheck.browser");
@@ -89,7 +95,7 @@ structural ${res.structural ? "ok" : "FAILED"} — centred dark shadow=${res.has
   let geoKey = "", cachedFrame = 0, wasCached = false, liveScale = r.scale;
   let dtEma = 0, lastFpsShow = 0; // display rate (what the user sees): EMA of rAF deltas, shown <= 2x/s
 
-  const state = { a: 0.9, incl: 72, exposure: -1.0, timeScale: 1.0, flicker: FLICKER_DEFAULT, breatheAmp: 0.0, playing: true, flareScale: 0.0, jetOn: true, jetGamma: 2.0, jetEta: ETA_DEFAULT, jetLength: 60.0, fluxVar: 1.0, skyStrength: 1.0, maxSteps: 4800, massSun: CUSTOM_DEFAULT.massSun, lambda: CUSTOM_DEFAULT.lambda, lightDelay: true, band: 0 };
+  const state = { a: 0.9, incl: 72, exposure: -1.0, timeScale: 1.0, flicker: FLICKER_DEFAULT, breatheAmp: 0.0, playing: true, flareScale: 0.0, jetOn: true, jetGamma: 2.0, jetEta: ETA_DEFAULT, jetLength: 60.0, fluxVar: 1.0, skyStrength: 1.0, maxSteps: 4800, massSun: CUSTOM_DEFAULT.massSun, lambda: CUSTOM_DEFAULT.lambda, lightDelay: true, band: "vis" as "vis" | "mm" };
   const SPEED = 20;        // coordinate-time M per real second at Motion 1 (Motion = playback speed)
   const EMA_BLEND = 0.15;  // trailing-window weight while animating
   let simTime = 0, lastNow = 0;
@@ -248,6 +254,10 @@ structural ${res.structural ? "ok" : "FAILED"} — centred dark shadow=${res.has
     if (p) applyPreset(p);
   });
 
+  // Band (spec 2026-10-04): visible or the EHT's 1.3 mm; it enters the geometry key, so the cache rebuilds.
+  const bandSel = $("band") as HTMLSelectElement;
+  bandSel.addEventListener("change", () => { state.band = bandSel.value === "mm" ? "mm" : "vis"; reset(); });
+
   const sky = $("sky") as HTMLInputElement, skyv = $("skyv");
   sky.addEventListener("input", () => { state.skyStrength = +sky.value; skyv.textContent = state.skyStrength.toFixed(2); reset(); });
 
@@ -347,13 +357,14 @@ structural ${res.structural ? "ok" : "FAILED"} — centred dark shadow=${res.has
     if (dt > 0 && dt < 250) dtEma = dtEma ? dtEma + 0.1 * (dt - dtEma) : dt;
     if (now - lastFpsShow >= 500 && dtEma > 0) { fpsEl.textContent = (1000 / dtEma).toFixed(0); lastFpsShow = now; }
     // 1.3 mm view (spec 2026-10-04): the hot flow replaces the disk below 1 % of Eddington; its n0 is the preset's calibrated
-    // value, or scaled from Sgr A*'s; the jet is drawn at 230 GHz only where its model holds there (spec 2.5).
-    const hot = state.band === 1 && isHotFlow(state.lambda) ? 1 : 0;
+    // value, or scaled from Sgr A*'s. The jet is not drawn at 1.3 mm (spec 2.5: below the gyrofrequency for the X-ray
+    // binaries; for M87* its optical anchor would put 2.8 Jy in view where the EHT sees the jet base at <~10 % of the ring).
+    const mm = state.band === "mm" ? 1 : 0, hot = mm && isHotFlow(state.lambda) ? 1 : 0;
     const n0 = hot ? flowN0(state.massSun, state.lambda, presetSel.value) : 0;
-    const jetDrawn = state.jetOn && (state.band === 0 || jetAtMm(state.a, jetU.jetB0));
+    const jetDrawn = state.jetOn && !mm;
     const geo = geometryKey({ a: state.a, incl: state.incl, fovScale: 14, rObs: 1000, rIn, rOut,
       maxSteps: state.maxSteps, jetLength: state.jetLength, displayW: r.displayW, displayH: r.displayH, epoch: r.cacheEpoch,
-      band: state.band, hotFlow: hot, flowN0: n0, flowRg: hot ? jetU.rgCm : 0 });
+      band: mm, hotFlow: hot, flowN0: n0, flowRg: hot ? jetU.rgCm : 0 });
     if (geo !== geoKey) { geoKey = geo; sched.reset(r.cacheSets, r.displayH); r.resetCache(); }
     // One background build slice per playing frame (the cache is only used while playing).
     const slice = state.playing && cacheOn ? sched.next() : null;
@@ -391,7 +402,7 @@ structural ${res.structural ? "ok" : "FAILED"} — centred dark shadow=${res.has
       jetStrength: jetDrawn ? 1 : 0, jetGamma: state.jetGamma, jetB0: jetU.jetB0, jetQ0: jetU.jetQ0, rgCm: jetU.rgCm,
       jetLength: state.jetLength, fluxVar: state.fluxVar,
       skyStrength: skyReady ? state.skyStrength : 0, setIndex,
-      band: state.band, hotFlow: hot, flowN0: n0,
+      band: mm, hotFlow: hot, flowN0: n0,
     };
     r.frame(u, {
       cachedSet: mode === "cached" ? setIndex : undefined,
