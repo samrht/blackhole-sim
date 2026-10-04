@@ -291,8 +291,9 @@ fn jetStep(s: State, sNew: State, dl: f32, accIn: JetOut) -> JetOut {
 
 // Hot flow at 230 GHz along one step (spec 2026-10-04): the jet's quadrature (samples <= JET_DL apart on the step's
 // chord, each a uniform slab of plasma-frame path r_g D dl / n), inside r < HF_RMAX and outside 1.01 r_+ (as the CPU
-// calibration in hot-flow-image.ts). The flow is steady and axisymmetric: no time, no azimuth. Only .x is used.
-fn flowStep(s: State, sNew: State, dl: f32, rh: f32, accIn: JetOut) -> JetOut {
+// calibration in hot-flow-image.ts). The flow is steady and axisymmetric: no time, no azimuth. One channel, carried as
+// acc = (I_nu, tau) so visible frames hold two floats through the ray loop, not two vec3 (the jet's slab, scalar).
+fn flowStep(s: State, sNew: State, dl: f32, rh: f32, accIn: vec2<f32>) -> vec2<f32> {
   let p0 = cartOf(s.x);
   let dvec = cartOf(sNew.x) - p0;
   if (dot(dvec, dvec) <= 1e-12 || chordMisses(p0, dvec, HF_RMAX)) { return accIn; }
@@ -304,7 +305,11 @@ fn flowStep(s: State, sNew: State, dl: f32, rh: f32, accIn: JetOut) -> JetOut {
     let D = flowShiftJ(q.x, q.y, mix(s.p, sNew.p, f32(k) / f32(n)), U.a);
     if (D > 1e-6) {
       let c = flowCoeffsJ(q.x, q.y, HF_LNNU + log(D), U.flowN0);
-      if (c.x > 0.0) { acc = jetSlabJ(acc, vec3<f32>(c.x / (D * D * D)), vec3<f32>(c.y), U.rgCm * D * dl / f32(n)); }
+      if (c.x > 0.0) {
+        let ds = U.rgCm * D * dl / f32(n); let dt = c.y * ds;
+        let fac = select((1.0 - exp(-dt)) / max(dt, 1e-30), 1.0 - 0.5 * dt, dt < 1e-4);
+        acc = vec2<f32>(acc.x + c.x / (D * D * D) * ds * fac * exp(-acc.y), min(acc.y + dt, 1e30));
+      }
     }
   }
   return acc;
@@ -374,7 +379,7 @@ fn traceRay(pix: vec2<u32>, jit: vec2<f32>, record: bool) -> TraceOut {
   var resolved = false; // set by each real termination; false => the step budget ran out
   var jet: JetOut; jet.I = vec3<f32>(0.0); jet.tau = vec3<f32>(0.0); // synchrotron light and optical depth along the ray
   var firstJ = 0u; var lastJ = 0u;
-  var flow: JetOut; flow.I = vec3<f32>(0.0); flow.tau = vec3<f32>(0.0); // hot flow (mm): .x only
+  var flow = vec2<f32>(0.0); // hot flow (mm): (I_nu, tau)
 
   for (var step = 0u; step < U.maxSteps; step++) {
     // dl > 0 with p_r < 0 integrates INWARD along the reversed worldline.
@@ -458,7 +463,7 @@ fn traceRay(pix: vec2<u32>, jit: vec2<f32>, record: bool) -> TraceOut {
       out.kind = KIND_SKY; out.payload = dir;
     }
   }
-  out.color = color; out.jet = jet; out.flowI = flow.I.x;
+  out.color = color; out.jet = jet; out.flowI = flow.x;
   if (out.hasBm) { out.nJet = lastJ - firstJ + 1u; }
   return out;
 }
