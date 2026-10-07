@@ -369,5 +369,39 @@ if (!reachOk) failed = true;
   if (!ok || hsDiag) failed = true;
 }
 
+// Zoom (src/render/zoom.ts): scrolling the wheel up over the image zooms in (slider, readout and share link follow), the
+// view rebuilds its cache and returns to `cached` with a different image; the 0 key resets to 1x.
+{
+  const dZ = diags.length, zSteps = [];
+  const zStep = (name, ok) => { zSteps.push(`${name} ${ok ? "ok" : "FAILED"}`); return ok; };
+  await page.evaluate(() => { location.hash = ""; }); await page.reload({ waitUntil: "load" });
+  let ok = zStep("cached at 1x", await waitMode("cached"));
+  ok = zStep("pan inputs hidden", await page.evaluate(() => ["panx", "pany"].every((id) => document.getElementById(id).getBoundingClientRect().height === 0))) && ok;
+  const shot = async () => (await page.screenshot({ clip: { x: 440, y: 120, width: 360, height: 300 } })).toString("base64");
+  await page.waitForTimeout(800); const before = await shot();
+  const vp = page.viewportSize(); await page.mouse.move(Math.round(vp.width * 0.65), Math.round(vp.height / 2));
+  await page.mouse.wheel(0, -400); await page.waitForTimeout(400);
+  const z = await page.evaluate(() => ({ v: +document.getElementById("zoom").value, t: document.getElementById("zoomv").textContent, h: location.hash, px: +document.getElementById("panx").value }));
+  ok = zStep(`wheel -> zoom ${z.v} (${z.t}x)`, z.v > 0.5 && z.v < 0.7 && z.t === (2 ** z.v).toFixed(2)) && ok;
+  ok = zStep(`share ${z.h}`, /(^#|&)z=0\.6/.test(z.h) && /&px=/.test(z.h)) && ok;
+  ok = zStep(`toward the pointer (pan ${z.px.toFixed(3)} M)`, z.px > 0.5) && ok; // pointer right of centre: the view moves right
+  ok = zStep("re-cached", await waitMode("live", 5000) && await waitMode("cached")) && ok;
+  await page.waitForTimeout(800); const after = await shot();
+  const changed = await page.evaluate(async ([a, b]) => {
+    const px = async (d) => { const img = new Image(); img.src = "data:image/png;base64," + d; await img.decode();
+      const c = document.createElement("canvas"); c.width = img.width; c.height = img.height; const g = c.getContext("2d");
+      g.drawImage(img, 0, 0); return g.getImageData(0, 0, c.width, c.height).data; };
+    const x = await px(a), y = await px(b); let n = 0;
+    for (let i = 0; i < x.length; i += 4) if (Math.abs(x[i] - y[i]) + Math.abs(x[i + 1] - y[i + 1]) + Math.abs(x[i + 2] - y[i + 2]) > 60) n++;
+    return n / (x.length / 4);
+  }, [before, after]);
+  ok = zStep(`image changed ${(100 * changed).toFixed(0)} %`, changed > 0.1) && ok;
+  await page.mouse.click(Math.round(vp.width * 0.65), Math.round(vp.height / 2)); await page.keyboard.press("0"); await page.waitForTimeout(200);
+  ok = zStep("0 resets", await page.evaluate(() => +document.getElementById("zoom").value === 0 && +document.getElementById("panx").value === 0 && +document.getElementById("pany").value === 0)) && ok;
+  const zDiag = diagSince(dZ);
+  console.log(`${ok && !zDiag ? "✓ PASS" : "✗ FAIL"}  zoom: ${zSteps.join(", ")}${zDiag}`);
+  if (!ok || zDiag) failed = true;
+}
+
 await browser.close();
 process.exit(failed ? 1 : 0);

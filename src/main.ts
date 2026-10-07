@@ -5,6 +5,7 @@ import { SHARE_FIELDS, encodeShare, decodeShare, type ShareLimit } from "./share
 import type { UniformValues } from "./render/uniforms";
 import { ScaleController } from "./render/scale";
 import { geometryKey, BuildScheduler, chooseMode } from "./render/cache-plan";
+import { ZOOM, fovForZoom, clampZoom, wheelZoom, pinchZoom, formatZoom, clampPan, zoomAbout } from "./render/zoom";
 import { describeGpu, isIntegratedGpu } from "./render/gpuinfo";
 import { buildTempLUT, buildVisibleLUT } from "./physics/lookups";
 import { iscoRadius, photonOrbit } from "./physics/orbits";
@@ -96,7 +97,7 @@ structural ${res.structural ? "ok" : "FAILED"} — centred dark shadow=${res.has
   let geoKey = "", cachedFrame = 0, wasCached = false, liveScale = r.scale;
   let dtEma = 0, lastFpsShow = 0; // display rate (what the user sees): EMA of rAF deltas, shown <= 2x/s
 
-  const state = { a: 0.9, incl: 72, exposure: -1.0, timeScale: 1.0, flicker: FLICKER_DEFAULT, breatheAmp: 0.0, playing: true, flareScale: 0.0, jetOn: true, jetGamma: 2.0, jetEta: ETA_DEFAULT, jetLength: 60.0, fluxVar: 1.0, skyStrength: 1.0, maxSteps: 4800, massSun: CUSTOM_DEFAULT.massSun, lambda: CUSTOM_DEFAULT.lambda, lightDelay: true, band: "vis" as "vis" | "mm" };
+  const state = { a: 0.9, incl: 72, exposure: -1.0, timeScale: 1.0, flicker: FLICKER_DEFAULT, breatheAmp: 0.0, playing: true, flareScale: 0.0, jetOn: true, jetGamma: 2.0, jetEta: ETA_DEFAULT, jetLength: 60.0, fluxVar: 1.0, skyStrength: 1.0, maxSteps: 4800, massSun: CUSTOM_DEFAULT.massSun, lambda: CUSTOM_DEFAULT.lambda, lightDelay: true, band: "vis" as "vis" | "mm", zoom: 0, panX: 0, panY: 0 };
   const SPEED = 20;        // coordinate-time M per real second at Motion 1 (Motion = playback speed)
   const EMA_BLEND = 0.15;  // trailing-window weight while animating
   let simTime = 0, lastNow = 0;
@@ -155,6 +156,38 @@ structural ${res.structural ? "ok" : "FAILED"} — centred dark shadow=${res.has
   spin.addEventListener("input", () => {
     state.a = +spin.value; spinv.textContent = state.a.toFixed(3);
     rebuildLUTs(); markCustom(); physicsChanged(); // spin changes T_peak too (eta(a), flux profile)
+  });
+  // Zoom (src/render/zoom.ts): log2 of the factor on the slider; the wheel, a pinch and the + / - / 0 keys set the slider
+  // and fire its own input event, so the readout, the cache rebuild and the share link follow from one place.
+  // The pan (image-plane offset, M) lives in two hidden inputs so share links carry it like any control; it is clamped to
+  // the 1x frame (zoom.ts clampPan), so zooming back to 1x re-centres.
+  const zoom = $("zoom") as HTMLInputElement, zoomv = $("zoomv"), panx = $("panx") as HTMLInputElement, pany = $("pany") as HTMLInputElement;
+  const aspect = () => r.displayW / Math.max(1, r.displayH);
+  const applyPan = (p: [number, number]) => {
+    const c = clampPan(p, state.zoom, aspect()); state.panX = c[0]; state.panY = c[1]; panx.value = String(c[0]); pany.value = String(c[1]);
+  };
+  zoom.addEventListener("input", () => {
+    state.zoom = clampZoom(+zoom.value); applyPan([state.panX, state.panY]); zoomv.textContent = formatZoom(state.zoom); reset();
+  });
+  for (const el of [panx, pany]) el.addEventListener("input", () => { applyPan([+panx.value, +pany.value]); reset(); });
+  /** Zoom to z about the screen point ndc (x right, y down, in [-1, 1]; the centre by default). */
+  const setZoom = (z: number, ndc: [number, number] = [0, 0]) => {
+    const c = clampZoom(z);
+    if (c === state.zoom) return;
+    const p = zoomAbout(state.zoom, c, [state.panX, state.panY], ndc, aspect());
+    state.panX = p[0]; state.panY = p[1]; panx.value = String(p[0]); pany.value = String(p[1]);
+    zoom.value = String(c); zoom.dispatchEvent(new Event("input", { bubbles: true }));
+  };
+  const ndcOf = (x: number, y: number): [number, number] => {
+    const b = canvas.getBoundingClientRect(); return [((x - b.left) / b.width) * 2 - 1, ((y - b.top) / b.height) * 2 - 1];
+  };
+  canvas.addEventListener("wheel", (e) => { e.preventDefault(); setZoom(wheelZoom(state.zoom, e.deltaY, e.deltaMode), ndcOf(e.clientX, e.clientY)); }, { passive: false });
+  addEventListener("keydown", (e) => {
+    const t = e.target as HTMLElement | null;
+    if (e.ctrlKey || e.metaKey || e.altKey || (t && /^(INPUT|SELECT|TEXTAREA)$/.test(t.tagName) && (t as HTMLInputElement).type !== "range")) return;
+    if (e.key === "+" || e.key === "=") setZoom(state.zoom + ZOOM.key);
+    else if (e.key === "-" || e.key === "_") setZoom(state.zoom - ZOOM.key);
+    else if (e.key === "0") setZoom(0);
   });
   incl.addEventListener("input", () => {
     state.incl = +incl.value; inclv.textContent = String(state.incl); markCustom(); reset();
@@ -268,10 +301,29 @@ structural ${res.structural ? "ok" : "FAILED"} — centred dark shadow=${res.has
   detail.addEventListener("input", () => { state.maxSteps = +detail.value; detailv.textContent = String(state.maxSteps); reset(); });
 
   // Drag vertically to tilt the camera (inclination); keeps the slider + readouts in sync.
+  // Two pointers (a pinch) zoom instead: the distance between them against its value when the second one went down.
   let dragging = false, lastY = 0;
-  canvas.addEventListener("pointerdown", (e) => { dragging = true; lastY = e.clientY; canvas.classList.add("drag"); canvas.setPointerCapture(e.pointerId); });
-  canvas.addEventListener("pointerup", (e) => { dragging = false; canvas.classList.remove("drag"); canvas.releasePointerCapture(e.pointerId); });
+  const pts = new Map<number, { x: number; y: number }>();
+  let pinch: { z0: number; d0: number } | null = null;
+  const spread = () => { const [p, q] = [...pts.values()]; return Math.hypot(p.x - q.x, p.y - q.y); };
+  canvas.addEventListener("pointerdown", (e) => {
+    pts.set(e.pointerId, { x: e.clientX, y: e.clientY }); canvas.setPointerCapture(e.pointerId);
+    if (pts.size === 2) { dragging = false; canvas.classList.remove("drag"); pinch = { z0: state.zoom, d0: spread() }; }
+    else if (pts.size === 1) { dragging = true; lastY = e.clientY; canvas.classList.add("drag"); }
+  });
+  const pointerEnd = (e: PointerEvent) => {
+    pts.delete(e.pointerId); if (pts.size < 2) pinch = null;
+    if (pts.size === 0) { dragging = false; canvas.classList.remove("drag"); }
+    if (canvas.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId);
+  };
+  canvas.addEventListener("pointerup", pointerEnd);
+  canvas.addEventListener("pointercancel", pointerEnd);
   canvas.addEventListener("pointermove", (e) => {
+    if (pts.has(e.pointerId)) pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pinch && pts.size === 2) {
+      const [p, q] = [...pts.values()];
+      setZoom(pinchZoom(pinch.z0, pinch.d0, spread()), ndcOf(0.5 * (p.x + q.x), 0.5 * (p.y + q.y))); return;
+    }
     if (!dragging) return;
     const next = Math.min(89, Math.max(1, state.incl + (e.clientY - lastY) * 0.25));
     lastY = e.clientY;
@@ -369,7 +421,7 @@ structural ${res.structural ? "ok" : "FAILED"} — centred dark shadow=${res.has
     // fluxVar 0, which in mm drives only the hotspots (no jet at 1.3 mm), so live frames skip the hotspot code exactly.
     const hsLive = hot === 1 && hotspotAliveWindow(simTime, state.fluxVar, state.a, HOTSPOT.pad);
     const jetDrawn = state.jetOn && !mm;
-    const geo = geometryKey({ a: state.a, incl: state.incl, fovScale: 14, rObs: 1000, rIn, rOut,
+    const geo = geometryKey({ a: state.a, incl: state.incl, fovScale: fovForZoom(state.zoom), panX: state.panX, panY: state.panY, rObs: 1000, rIn, rOut,
       maxSteps: state.maxSteps, jetLength: mm ? 0 : state.jetLength, displayW: r.displayW, displayH: r.displayH, epoch: r.cacheEpoch,
       band: mm, hotFlow: hot, flowN0: n0, flowRg: hot ? jetU.rgCm : 0 });
     if (geo !== geoKey) { geoKey = geo; sched.reset(r.cacheSets, r.displayH); r.resetCache(); }
@@ -402,7 +454,7 @@ structural ${res.structural ? "ok" : "FAILED"} — centred dark shadow=${res.has
     const clock = splitTime(simTime); // f32-safe: epoch + small remainder (sim-clock.ts)
     const u: UniformValues = {
       resW: r.width, resH: r.height, outW: r.displayW, outH: r.displayH, a: state.a, incl: state.incl * Math.PI / 180,
-      rObs: 1000, fovScale: 14, rIn, rOut, Tpeak: phys.tPeakK, lumNorm: phys.lumNorm, lightDelay: state.lightDelay ? 1 : 0, exposure: state.exposure,
+      rObs: 1000, fovScale: fovForZoom(state.zoom), panX: state.panX, panY: state.panY, rIn, rOut, Tpeak: phys.tPeakK, lumNorm: phys.lumNorm, lightDelay: state.lightDelay ? 1 : 0, exposure: state.exposure,
       time: clock.rel, timeEpoch: clock.epoch, frame: sample, reset: sample === 0 ? 1 : 0, maxSteps: state.maxSteps,
       blend, timeScale: state.timeScale, turbAmp: sigmaForFlicker(state.flicker),
       breatheAmp: state.breatheAmp, nSpots: baseSpots.length,

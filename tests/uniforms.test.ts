@@ -3,7 +3,7 @@ import { packUniforms, UNIFORM_SIZE, type UniformValues } from "../src/render/un
 
 describe("uniforms packing", () => {
   it("is 160 bytes and packs all fields (incl. display size) at the expected offsets", () => {
-    expect(UNIFORM_SIZE).toBe(160);
+    expect(UNIFORM_SIZE).toBe(176);
     const u: UniformValues = {
       resW: 100, resH: 50, a: 0.9, incl: 1.2, rObs: 1000, fovScale: 14, rIn: 5, rOut: 40,
       Tpeak: 3e4, exposure: 1.6, time: 7, frame: 3, reset: 0, maxSteps: 1200,
@@ -11,9 +11,12 @@ describe("uniforms packing", () => {
       jetStrength: 1.0, jetGamma: 5.0, jetLength: 60.0, fluxVar: 0.7,
       skyStrength: 0.6, outW: 200, outH: 100, lumNorm: 2.5, lightDelay: 1,
       jetB0: 632.4, jetQ0: 0.1465, rgCm: 9.6e14,
+      panX: -3.25, panY: 1.5,
     };
     const dv = new DataView(packUniforms(u));
     expect(dv.getFloat32(0, true)).toBeCloseTo(100);   // resW
+    expect(dv.getFloat32(156, true)).toBeCloseTo(-3.25); // panX (index 39, zoom toward the cursor)
+    expect(dv.getFloat32(160, true)).toBeCloseTo(1.5);   // panY (index 40)
     expect(dv.getFloat32(40, true)).toBeCloseTo(7);     // time (index 10)
     expect(dv.getUint32(44, true)).toBe(3);             // frame (index 11)
     expect(dv.getFloat32(56, true)).toBeCloseTo(0.15);  // blend (index 14)

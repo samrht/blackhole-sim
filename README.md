@@ -12,6 +12,7 @@ This isn't a stylized visualization — it's a real general-relativistic ray tra
 - Novikov–Thorne / Page–Thorne relativistic disk flux (correct zero-torque inner boundary — flux peaks just outside the ISCO, not at it)
 - Combined gravitational + Doppler redshift (g-factor), producing physically correct approaching/receding disk asymmetry
 - Blackbody emission → CIE XYZ → linear sRGB (Wyman et al. color-matching fit) — colour and brightness are the blackbody's visible-band radiance at the observed temperature, not an artist's gradient
+- Zoom — 0.25x (the whole disk) to 16x (the photon ring), by the Zoom slider, the mouse wheel or a two-finger pinch (both toward the pointer) or the + / - / 0 keys; share links carry it
 - Real-object presets — M87\*, Sagittarius A\*, Cygnus X-1, GRS 1915+105, TON 618, Phoenix A and Interstellar's Gargantua with published mass, spin and viewing angle, physically derived disk temperature, and a caption with sources and caveats
 - Physical units — Mass and Accretion (fraction of Eddington) sliders; horizon, ISCO and photon orbit in km/AU, disk peak temperature, ISCO orbital period, playback time scale
 - Synchrotron jet — magnetically arrested field, M87's measured acceleration, electrons injected with M87's core spectrum and cooled by their own radiation, exact cyclo-synchrotron emission and self-absorption transferred in general relativity along the geodesics, brightness from energy conservation (the electrons radiate η × the Blandford–Znajek power) in the same units as the disk
@@ -213,6 +214,13 @@ sample (exact), and the flow is sampled once per step beyond 8 M (flux changed 2
 at 1.3 r_+ (flux -0.2 to -0.4 %, pixels up to 2.7 %). What remains is the integrator's near-field step count
 (~100 steps within 2 r_+ and ~255 inside 50 M per ray), shared with the visible view. Golden mm hashes re-recorded
 (sgra-mm f298812a, m87-mm 3ea2d532); visible hashes unchanged.
+
+**Zoom (2026-10-07):** the camera's field of view, fovScale = 14 M / 2^z with z (log2 of the factor) from -2 to 4
+(`src/render/zoom.ts`). The wheel and a pinch zoom toward the pointer: an image-plane offset (panX, panY, two new
+uniforms; pixelImpact adds them to every pixel's impact parameters) keeps the point under the pointer fixed, clamped so the
+view stays inside the 1x frame (zooming back to 1x re-centres). Zoom and pan are in the geometry key (the cache rebuilds,
+as for a tilt) and in share links (z, px, py). Camera only: the physics and every validation route are unchanged (golden
+bit-identical). Touch: one finger tilts, two pinch (the canvas has touch-action: none).
 
 **TON 618 and Phoenix A presets (2026-10-07):** two of the most massive black holes known, both quasars accreting at
 ~5 % of Eddington, so both are thin disks (and nearly dark at 1.3 mm, T_b ~ 10⁴ K). TON 618: 6.6 × 10¹⁰ M☉ from Hβ

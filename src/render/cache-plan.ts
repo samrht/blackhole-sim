@@ -25,10 +25,12 @@ export interface GeometryInputs {
    *  mode the cache stores each pixel's flow intensity, which depends on the density scale n0 and on r_g (the plasma
    *  path), so those join the key too. main.ts passes flowN0 = flowRg = 0 outside that mode. */
   band: number; hotFlow: number; flowN0: number; flowRg: number;
+  /** Zoom toward the cursor: the view's image-plane offset (M); with fovScale it sets every pixel's ray. */
+  panX: number; panY: number;
 }
 /** Everything a ray's path depends on. Shading-only inputs are deliberately absent. */
 export function geometryKey(g: GeometryInputs): string {
-  return [g.a, g.incl, g.fovScale, g.rObs, g.rIn, g.rOut, g.maxSteps, g.jetLength, g.displayW, g.displayH, g.epoch, g.band, g.hotFlow, g.flowN0, g.flowRg].join("|");
+  return [g.a, g.incl, g.fovScale, g.rObs, g.rIn, g.rOut, g.maxSteps, g.jetLength, g.displayW, g.displayH, g.epoch, g.band, g.hotFlow, g.flowN0, g.flowRg, g.panX, g.panY].join("|");
 }
 
 export interface CachePlan { nSets: number; entryBytes: number; bookmarkCapacity: number; }
