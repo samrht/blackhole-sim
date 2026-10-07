@@ -56,7 +56,7 @@ structural ${res.structural ? "ok" : "FAILED"} — centred dark shadow=${res.has
   if (location.search.includes("record")) {
     document.body.innerHTML = `<pre>GOLDEN RECORD</pre><pre id="json">${JSON.stringify(got)}</pre>`;
   } else {
-    const lines = Object.keys(want.hashes).map((k) => `${k}: want ${want.hashes[k]} got ${got.hashes[k]}`);
+    const lines = Object.keys(got.hashes).map((k) => `${k}: want ${want.hashes[k] ?? "(not recorded)"} got ${got.hashes[k]}${got.nonFinite?.[k] ? ` NON-FINITE ${got.nonFinite[k]}` : ""}`);
     const verdict = judgeGolden(want, got);
     document.body.innerHTML = `<pre style="color:${verdict === "FAIL" ? "#f66" : "#6f6"};font-size:16px;padding:20px">GOLDEN ${verdict} (${got.adapter}; recorded on ${want.adapter})\n${lines.join("\n")}</pre>`;
   }

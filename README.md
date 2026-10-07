@@ -237,7 +237,10 @@ light curve adds 0.300 Jy to Sgr A*, averaged over four orbital phases. Other ob
 units of M. The cache stores the steady flow, so frames trace live while a hotspot can be in view: alive within
 ±100 M of the clock (the measured bound on the light-travel delay of rays through the blob region: 77.9 M for
 Sgr A*, 68.8 M for Gargantua, 48²); otherwise mm frames send `fluxVar = 0`, which in mm drives only the hotspots, so
-hotspot-free live frames skip that code exactly. Gates: `?parity` adds 825 hotspot cases (state on the f32 epoch split
+hotspot-free live frames skip that code exactly. **The cost:** hotspots (with their window) are present about 55 % of the time at any Flux variability
+above 0 (the slider sets their brightness, not how often they come; 54.7 % for Sgr A*, 53.5 % at a = 0), so more than half
+of 1.3 mm playback renders at the live rate and the render scale drops while it does; Flux variability 0 turns hotspots
+off and keeps the view cached. The faster integrator (in progress) is the planned fix for the live rate. Gates: `?parity` adds 825 hotspot cases (state on the f32 epoch split
 up to t = 7.5e6 M, profile, Doppler factor; worst 0.354 of tolerance; σ = 2.6 fails at 149×); `?hotflow` renders Sgr A*
 at the peak of eruption 0's hotspot and gates the flux it adds and its centroid against the CPU twin (light delay on:
 0.212 vs 0.214 Jy at (−1.49, −4.37) vs (−1.49, −4.37) M; off: 0.597 vs 0.602 Jy, centroid within 0.01 M); golden adds

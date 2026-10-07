@@ -17,9 +17,16 @@ describe.skipIf(!RUN)("hotspot calibration and the live-window bound (48^2 CPU t
     console.log(`hotspot adds ${add.toFixed(3)} Jy (target 0.3)`);
     expect(Math.abs(add / 0.3 - 1)).toBeLessThan(0.05);
   }, 600000);
-  for (const id of ["sgra", "gargantua"]) {
+  // The presets with hot flows, and the spin / inclination extremes a Custom view can reach. Rays through the blob region
+  // with longer delays are higher-order photon-ring images: demagnified ~e^-pi per half orbit, and at the window's edges
+  // the light curve L is already ~0 (it rises over 0.1 P and ends smoothly by 3 P), so they carry no visible hotspot light.
+  const VIEWS: [string, number, number][] = [
+    ...["sgra", "gargantua", "m87"].map((id): [string, number, number] => { const p = PRESETS.find((q) => q.id === id)!; return [id, p.a, p.inclDeg]; }),
+    ["custom a=0.998 i=1", 0.998, 1], ["custom a=0.998 i=89", 0.998, 89],
+  ];
+  for (const [id, a, incl] of VIEWS) {
     it(`${id}: every ray through the blob region has |light-travel delay| < HOTSPOT.pad`, () => {
-      const p = PRESETS.find((q) => q.id === id)!, smp = traceFlowSamples(p.a, p.inclDeg, 48, 14);
+      const smp = traceFlowSamples(a, incl, 48, 14);
       let worst = 0;
       for (const q of smp.rays) for (let k = 0; k < q.length; k += 6) {
         const r = q[k], th = q[k + 1], t = q[k + 5];
