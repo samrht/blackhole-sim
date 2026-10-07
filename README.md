@@ -12,6 +12,7 @@ This isn't a stylized visualization — it's a real general-relativistic ray tra
 - Novikov–Thorne / Page–Thorne relativistic disk flux (correct zero-torque inner boundary — flux peaks just outside the ISCO, not at it)
 - Combined gravitational + Doppler redshift (g-factor), producing physically correct approaching/receding disk asymmetry
 - Blackbody emission → CIE XYZ → linear sRGB (Wyman et al. color-matching fit) — colour and brightness are the blackbody's visible-band radiance at the observed temperature, not an artist's gradient
+- Zoom — 0.25x (the whole disk) to 16x (the photon ring), by the Zoom slider, the mouse wheel or a two-finger pinch (both toward the pointer) or the + / - / 0 keys; share links carry it
 - Real-object presets — M87\*, Sagittarius A\*, Cygnus X-1, GRS 1915+105, TON 618, Phoenix A and Interstellar's Gargantua with published mass, spin and viewing angle, physically derived disk temperature, and a caption with sources and caveats
 - Physical units — Mass and Accretion (fraction of Eddington) sliders; horizon, ISCO and photon orbit in km/AU, disk peak temperature, ISCO orbital period, playback time scale
 - Synchrotron jet — magnetically arrested field, M87's measured acceleration, electrons injected with M87's core spectrum and cooled by their own radiation, exact cyclo-synchrotron emission and self-absorption transferred in general relativity along the geodesics, brightness from energy conservation (the electrons radiate η × the Blandford–Znajek power) in the same units as the disk
@@ -214,6 +215,13 @@ at 1.3 r_+ (flux -0.2 to -0.4 %, pixels up to 2.7 %). What remains is the integr
 (~100 steps within 2 r_+ and ~255 inside 50 M per ray), shared with the visible view. Golden mm hashes re-recorded
 (sgra-mm f298812a, m87-mm 3ea2d532); visible hashes unchanged.
 
+**Zoom (2026-10-07):** the camera's field of view, fovScale = 14 M / 2^z with z (log2 of the factor) from -2 to 4
+(`src/render/zoom.ts`). The wheel and a pinch zoom toward the pointer: an image-plane offset (panX, panY, two new
+uniforms; pixelImpact adds them to every pixel's impact parameters) keeps the point under the pointer fixed, clamped so the
+view stays inside the 1x frame (zooming back to 1x re-centres). Zoom and pan are in the geometry key (the cache rebuilds,
+as for a tilt) and in share links (z, px, py). Camera only: the physics and every validation route are unchanged (golden
+bit-identical). Touch: one finger tilts, two pinch (the canvas has touch-action: none).
+
 **TON 618 and Phoenix A presets (2026-10-07):** two of the most massive black holes known, both quasars accreting at
 ~5 % of Eddington, so both are thin disks (and nearly dark at 1.3 mm, T_b ~ 10⁴ K). TON 618: 6.6 × 10¹⁰ M☉ from Hβ
 (Shemmer et al. 2004; C IV gives 4.07 × 10¹⁰, Ge et al. 2019), L_bol ≈ 4 × 10⁴⁷ erg/s → λ 0.048, peak **20,000 K**, radio-loud
@@ -237,7 +245,10 @@ light curve adds 0.300 Jy to Sgr A*, averaged over four orbital phases. Other ob
 units of M. The cache stores the steady flow, so frames trace live while a hotspot can be in view: alive within
 ±100 M of the clock (the measured bound on the light-travel delay of rays through the blob region: 77.9 M for
 Sgr A*, 68.8 M for Gargantua, 48²); otherwise mm frames send `fluxVar = 0`, which in mm drives only the hotspots, so
-hotspot-free live frames skip that code exactly. Gates: `?parity` adds 825 hotspot cases (state on the f32 epoch split
+hotspot-free live frames skip that code exactly. **The cost:** hotspots (with their window) are present about 55 % of the time at any Flux variability
+above 0 (the slider sets their brightness, not how often they come; 54.7 % for Sgr A*, 53.5 % at a = 0), so more than half
+of 1.3 mm playback renders at the live rate and the render scale drops while it does; Flux variability 0 turns hotspots
+off and keeps the view cached. The faster integrator (in progress) is the planned fix for the live rate. Gates: `?parity` adds 825 hotspot cases (state on the f32 epoch split
 up to t = 7.5e6 M, profile, Doppler factor; worst 0.354 of tolerance; σ = 2.6 fails at 149×); `?hotflow` renders Sgr A*
 at the peak of eruption 0's hotspot and gates the flux it adds and its centroid against the CPU twin (light delay on:
 0.212 vs 0.214 Jy at (−1.49, −4.37) vs (−1.49, −4.37) M; off: 0.597 vs 0.602 Jy, centroid within 0.01 M); golden adds

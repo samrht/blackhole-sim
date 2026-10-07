@@ -12,6 +12,9 @@ export type ShareLimit = { kind: "range"; min: number; max: number; step: number
 export const SHARE_FIELDS: ShareField[] = [
   { key: "p", id: "preset", kind: "select" },
   { key: "b", id: "band", kind: "select" },
+  { key: "z", id: "zoom", kind: "range" },
+  { key: "px", id: "panx", kind: "range" },
+  { key: "py", id: "pany", kind: "range" },
   { key: "a", id: "spin", kind: "range", customOnly: true },
   { key: "i", id: "incl", kind: "range", customOnly: true },
   { key: "m", id: "mass", kind: "range", customOnly: true },

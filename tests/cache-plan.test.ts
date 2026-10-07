@@ -5,7 +5,7 @@ import {
 } from "../src/render/cache-plan";
 
 const G: GeometryInputs = { a: 0.9, incl: 72, fovScale: 14, rObs: 1000, rIn: 2.32, rOut: 40, maxSteps: 4800, jetLength: 60, displayW: 1920, displayH: 1080, epoch: 0,
-  band: 0, hotFlow: 0, flowN0: 0, flowRg: 0 };
+  band: 0, hotFlow: 0, flowN0: 0, flowRg: 0, panX: 0, panY: 0 };
 const MB = 2 ** 20;
 
 describe("jitter sets", () => {

@@ -5,6 +5,7 @@ import { SHARE_FIELDS, encodeShare, decodeShare, type ShareLimit } from "../src/
 const LIMITS: Record<string, ShareLimit> = {
   p: { kind: "select", options: ["default", "custom", "m87", "sgra"] },
   b: { kind: "select", options: ["vis", "mm"] },
+  z: { kind: "range", min: -2, max: 4, step: 0.01 },
   a: { kind: "range", min: 0, max: 0.998, step: 0.001 },
   i: { kind: "range", min: 1, max: 89, step: 1 },
   m: { kind: "range", min: 0, max: 10, step: 0.01 },
@@ -53,6 +54,12 @@ describe("shareable links (#hash)", () => {
     expect(SHARE_FIELDS[1]).toEqual({ key: "b", id: "band", kind: "select" });
     expect(decodeShare("#p=sgra&b=mm", LIMITS)).toEqual({ p: "sgra", b: "mm" });
     expect(decodeShare("#b=radio", LIMITS)).toEqual({});
+  });
+  it("zoom travels with every view (not Custom-only), right after the band; clamped and snapped", () => {
+    expect(SHARE_FIELDS[2]).toEqual({ key: "z", id: "zoom", kind: "range" });
+    expect(decodeShare("#p=sgra&z=1.5", LIMITS)).toEqual({ p: "sgra", z: "1.5" });
+    expect(decodeShare("#z=9", LIMITS)).toEqual({ z: "4" });
+    expect(decodeShare("#z=0.123", LIMITS)).toEqual({ z: "0.12" });
   });
   it("percent-encoded values decode", () => {
     expect(decodeShare("#x=%2D2.5", LIMITS)).toEqual({ x: "-2.5" });

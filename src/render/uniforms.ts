@@ -9,6 +9,7 @@
 //         + jetB0, jetQ0, rgCm (3, synchrotron jet)                     -> 27 floats
 //         + timeEpoch (1; `time` is then the remainder: t = timeEpoch + time) -> 28 floats
 //         + band, hotFlow, flowN0 (3, 1.3 mm view and hot flow)       -> 31 floats
+//         + panX, panY (2, zoom toward the cursor: image-plane offset, M) -> 33 floats
 // uint:   frame,reset,maxSteps (3) + nSpots (1)                        -> 4 uints
 //         + jitterMode,setIndex,rowStart,rowEnd (4, geodesic cache)    -> 8 uints
 export interface UniformValues {
@@ -31,13 +32,15 @@ export interface UniformValues {
   /** 1.3 mm view (spec 2026-10-04 hot flow): band 0 visible / 1 mm; hotFlow 1 = draw the hot flow (mm, lambda < 0.01);
    *  flowN0 = its density scale (cm^-3). Omitted = 0. */
   band?: number; hotFlow?: number; flowN0?: number;
+  /** Zoom toward the cursor (src/render/zoom.ts): image-plane offset of the view's centre (M). Omitted = 0. */
+  panX?: number; panY?: number;
   /** Geodesic cache (spec 2026-10-01): 0 = per-frame hash jitter, 1 = fixed jitter set `setIndex`. */
   jitterMode?: number; setIndex?: number;
   /** Build pass row slice [rowStart, rowEnd). */
   rowStart?: number; rowEnd?: number;
 }
-export const UNIFORM_FLOATS = 31, UNIFORM_UINTS = 8;
-export const UNIFORM_SIZE = Math.ceil((UNIFORM_FLOATS + UNIFORM_UINTS) / 4) * 16; // -> 160 bytes
+export const UNIFORM_FLOATS = 33, UNIFORM_UINTS = 8;
+export const UNIFORM_SIZE = Math.ceil((UNIFORM_FLOATS + UNIFORM_UINTS) / 4) * 16; // -> 176 bytes
 
 export function packUniforms(u: UniformValues): ArrayBuffer {
   const buf = new ArrayBuffer(UNIFORM_SIZE);
@@ -57,5 +60,6 @@ export function packUniforms(u: UniformValues): ArrayBuffer {
   f[32] = u.jetB0; f[33] = u.jetQ0; f[34] = u.rgCm;
   f[35] = u.timeEpoch ?? 0;
   f[36] = u.band ?? 0; f[37] = u.hotFlow ?? 0; f[38] = u.flowN0 ?? 0;
+  f[39] = u.panX ?? 0; f[40] = u.panY ?? 0;
   return buf;
 }

@@ -29,7 +29,8 @@ export const SCENES: Scene[] = [
   // 1.3 mm: the hot flows of Sgr A* and M87* (no jet at 1.3 mm, spec 2.5).
   mmScene("sgra-mm", "sgra", 0, 0),
   mmScene("m87-mm", "m87", 0, 37),
-  // Sgr A* at the peak of eruption 0's hotspot, light delay on (spec 2026-10-04 mm hotspots; ?hotflow's hotspot gate).
+  // Sgr A* at the peak TIME of eruption 0's hotspot, light delay on (spec 2026-10-04 mm hotspots; ?hotflow's hotspot gate).
+  // The light seen left a few M earlier, so the frame shows the hotspot still rising (0.21 Jy vs 0.60 with the delay off).
   { ...mmScene("sgra-mm-hotspot", "sgra", 0, hotspotPeakTime(0, preset("sgra").a)), lightDelay: 1 },
 ];
 const SPOTS = new Float32Array([8, 0, 1.2, 1.8, 12, 2.1, 1.6, 1.2, 16, 4.3, 2.0, 0.9]);

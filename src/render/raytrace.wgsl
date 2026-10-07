@@ -10,6 +10,7 @@ struct Uniforms {
   jetB0: f32, jetQ0: f32, rgCm: f32,   // synchrotron jet (CPU: jetUniforms in synchrotron.ts)
   timeEpoch: f32,                      // clock epoch: absolute time = timeEpoch + time (sim-clock.ts)
   band: f32, hotFlow: f32, flowN0: f32, // 1.3 mm view: band 0/1, hot flow 0/1, its density scale (cm^-3)
+  panX: f32, panY: f32,                 // zoom toward the cursor: the view's image-plane offset (M; uniforms.ts)
 };
 @group(0) @binding(0) var<uniform> U: Uniforms;
 @group(0) @binding(1) var<storage, read_write> accum: array<vec4<f32>>;
@@ -363,7 +364,7 @@ fn inJetEnvelope(r: f32, th: f32) -> bool {
 fn pixelImpact(pix: vec2<u32>, jit: vec2<f32>) -> vec2<f32> {
   let aspect = U.res.x / U.res.y;
   let ndc = (vec2<f32>(f32(pix.x), f32(pix.y)) + 0.5 + jit) / U.res * 2.0 - 1.0;
-  return vec2<f32>(ndc.x * U.fovScale * aspect, -ndc.y * U.fovScale);
+  return vec2<f32>(ndc.x * U.fovScale * aspect + U.panX, -ndc.y * U.fovScale + U.panY);
 }
 
 struct TraceOut {

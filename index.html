@@ -15,7 +15,7 @@
   *{box-sizing:border-box}
   html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);
     font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;overflow:hidden}
-  #c{position:fixed;inset:0;width:100vw;height:100vh;display:block;cursor:grab}
+  #c{position:fixed;inset:0;width:100vw;height:100vh;display:block;cursor:grab;touch-action:none} /* drag tilts, pinch zooms: the browser must not pan or zoom the page */
   #c.drag{cursor:grabbing}
 
   /* observatory instrument panel */
@@ -99,6 +99,12 @@
     <div class="ctrl">
       <div class="row"><label>Inclination</label><span class="val"><b id="inclv">72</b>°</span></div>
       <input id="incl" type="range" min="1" max="89" step="1" value="72">
+    </div>
+    <div class="ctrl" title="Zoom: the camera's field of view (also the mouse wheel, a two-finger pinch, or the + / - / 0 keys). 1x shows 28 M across the image height; the wheel and a pinch zoom toward the pointer, the slider and keys about the centre; zoom in toward the photon ring, out to see the whole disk.">
+      <div class="row"><label>Zoom</label><span class="val"><b id="zoomv">1.00</b>×</span></div>
+      <input id="zoom" type="range" min="-2" max="4" step="0.01" value="0">
+      <input id="panx" type="range" min="-60" max="60" step="0.001" value="0" hidden aria-hidden="true" style="display:none">
+      <input id="pany" type="range" min="-60" max="60" step="0.001" value="0" hidden aria-hidden="true" style="display:none">
     </div>
     <div class="ctrl">
       <div class="row"><label>Mass</label><span class="val"><b id="massv">1.00e8</b> M☉</span></div>
