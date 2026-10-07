@@ -71,6 +71,9 @@ if (process.env.RECORD_GOLDEN === "1") {
 await checkAny("/?golden", ["GOLDEN PASS", "GOLDEN SKIP"]);
 await checkAny("/?cachecheck", ["CACHECHECK PASS"], 600000);
 await checkAny("/?hotflow", ["HOTFLOW PASS"], 300000);
+// Whole-ray accuracy of the shipped integrator against the converged CPU reference and, per pixel, the pre-Mino renderer
+// recorded on the same adapter (src/test/accuracy-old.json); SKIP on another adapter (like ?golden).
+await checkAny("/?accuracy", ["ACCURACY PASS", "ACCURACY SKIP"], 900000);
 
 }
 

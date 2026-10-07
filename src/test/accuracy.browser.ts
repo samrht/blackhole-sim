@@ -5,7 +5,10 @@
 // scripts/build-accuracy-ref.ts) and, per pixel, against the pre-Mino renderer's entries recorded on the same adapter
 // (src/test/accuracy-old.json, `?accuracy&record` before the swap): no fate flips and no pixel worse than the old
 // renderer beyond the floors (r, delay 1e-5 relative; phi 1e-5 rad; sky 0.01 px through the lensing Jacobian; intensity
-// max(1e-5, 2 q) relative, q the renderer rule's own quadrature error along the exact path).
+// max(1e-5, 2 q) relative, q the renderer rule's own quadrature error along the exact path), each raised to the pixel's
+// own f32 input conditioning where that is larger (row.s, src/test/accuracy-sens.ts: how far the converged answer moves
+// under a 1-ulp nudge of the f32 alpha or beta; near the critical curve 2-4e-4 in rHit, for the old and the new renderer
+// alike). A fate flip counts unless such a nudge flips the reference's own fate (s = 1e9).
 // A different adapter than the recording's reports SKIP for the per-pixel comparison (like ?golden).
 import { Renderer } from "../render/gpu";
 import { BuildScheduler } from "../render/cache-plan";
@@ -13,7 +16,7 @@ import { prepareScene, sceneUniforms, type Scene } from "./scenes";
 import { PRESETS } from "../physics/presets";
 import { wrapAngle, pxError } from "../physics/trace-reference";
 
-type RefRow = { f: string; c: number; r?: number; p?: number; d?: number; v?: number[]; J?: number[][]; I?: number; q?: number };
+type RefRow = { f: string; c: number; r?: number; p?: number; d?: number; v?: number[]; J?: number[][]; I?: number; q?: number; s?: number[] };
 type RefScene = { name: string; a: number; inclDeg: number; rIn: number; flow: { n0: number; rg: number } | null; rays: RefRow[] };
 type Fixture = { N: number; fov: number; scenes: RefScene[] };
 export type Entries = Record<string, number[][]>; // per scene: per pixel [kind, p0, p1, p2]
@@ -69,13 +72,15 @@ export async function runAccuracy(canvas: HTMLCanvasElement): Promise<{ verdict:
       if (!row.c) return;
       scored++;
       const en = errors(row, E[k]), eo = O ? errors(row, O[k]) : null;
-      if (!en) { if (!O || eo) { flips++; if (examples.length < 4) examples.push(`#${k} fate ${E[k][0]} vs ref ${row.f}`); } return; }
+      const edge = !!row.s && row.s[0] >= 1e9; // a 1-ulp nudge flips the reference's fate
+      if (!en) { if ((!O || eo) && !edge) { flips++; if (examples.length < 4) examples.push(`#${k} fate ${E[k][0]} vs ref ${row.f}`); } return; }
       for (const q of ["r", "p", "d", "px", "I"] as const) {
         if (!Number.isFinite(en[q])) continue;
         maxNew[q] = Math.max(maxNew[q], en[q]);
         if (eo && Number.isFinite(eo[q])) maxOld[q] = Math.max(maxOld[q], eo[q]);
         // 1.3 mm: the renderer's 0.25 M left-sample rule has its own error q along the exact path (plan Task 2 ruling)
-        const floor = q === "I" && row.q !== undefined ? Math.max(FLOOR.I, (2 * row.q) / Math.max(row.I!, 1e-300)) : FLOOR[q];
+        const sens = row.s ? { r: row.s[0], p: row.s[1], d: row.s[2], px: row.s[3], I: 0 }[q] : 0;
+        const floor = Math.max(sens, q === "I" && row.q !== undefined ? Math.max(FLOOR.I, (2 * row.q) / Math.max(row.I!, 1e-300)) : FLOOR[q]);
         if (O && en[q] > Math.max(eo ? eo[q] : Infinity, floor)) { worse[q]++; if (examples.length < 4) examples.push(`#${k} ${q} ${en[q].toExponential(2)} > old ${eo![q].toExponential(2)}`); }
       }
     });

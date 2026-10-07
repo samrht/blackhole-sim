@@ -11,6 +11,7 @@ import { flowN0 } from "../src/physics/hot-flow";
 import { jetUniforms, ETA_DEFAULT } from "../src/physics/synchrotron";
 import { PRESETS } from "../src/physics/presets";
 import { JITTER } from "../src/render/cache-plan";
+import { pixelSens } from "../src/test/accuracy-sens";
 
 export const ACC_N = 40, ACC_FOV = 14;
 const PX = (2 * ACC_FOV) / 720;
@@ -52,6 +53,8 @@ for (const sc of ACC_SCENES) {
         if (d1.fate === "escaped" && d2.fate === "escaped") row.J = [d1.dir!.map((v, k) => sig(v - ref.dir![k])), d2.dir!.map((v, k) => sig(v - ref.dir![k]))];
       }
     }
+    // f32 input conditioning (src/test/accuracy-sens.ts): the gate's per-pixel floor
+    if (converged && (ref.fate === "disk" || ref.fate === "escaped")) row.s = pixelSens(al, be, sc.a, sc.inclDeg, rIn, row.J as number[][] | undefined).map((x) => (Number.isFinite(x) ? sig(x) : 1e9));
     rays.push(row);
   }
   (out.scenes as unknown[]).push({ name: sc.name, a: sc.a, inclDeg: sc.inclDeg, rIn, flow: fl ?? null, rays });

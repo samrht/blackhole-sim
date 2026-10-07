@@ -3,7 +3,7 @@ import { screenToState } from "../src/physics/camera";
 import { photonOrbit } from "../src/physics/orbits";
 import { criticalXiEta, photonShellRange } from "../src/physics/shadow";
 import { traceRay } from "../src/physics/trace";
-import { minoRay, minoInit, minoStep, minoDense, minoPlane, minoToState, minoRw, MINO_TOL, MINO_UFRAC, MINO_CTOL } from "../src/physics/trace-mino";
+import { minoRay, minoInit, minoStep, minoDense, minoPlane, minoSegWMax, minoToState, minoL, minoDl, minoSphere, minoRw, MINO_TOL, MINO_UFRAC, MINO_CTOL } from "../src/physics/trace-mino";
 import { flowN0, HOTFLOW } from "../src/physics/hot-flow";
 import { PRESETS } from "../src/physics/presets";
 import { SHIP, REF1, REF_ROBS, REF_ROUT, refTrace, convergedRef, skyDirCPU, flowSlab, flowAccum, flowMid, refFlowPath, flowReference,
@@ -36,19 +36,20 @@ const cart = (s: Float64Array) => [s[1] * Math.sin(s[2]) * Math.cos(s[3]), s[1] 
 function minoLocal(ray: Ray, tol: number, uFrac: number, wantPath = false, ctol = MINO_CTOL): Res {
   const { a, rIn, al, be, incl } = ray, rh = 1 + Math.sqrt(Math.max(0, 1 - a * a)), fl = ray.flow, I = [0, 0], path: PathSeg[] = [];
   const xi = -al * Math.sin(incl), ci = Math.cos(incl), si = Math.sin(incl);
-  const c = minoRay(a, xi, be * be + (xi * xi * ci * ci) / Math.max(si * si, 1e-8) - a * a * ci * ci);
+  const c = minoRay(a, xi, be * be + (xi * xi * ci * ci) / Math.max(si * si, 1e-8) - a * a * ci * ci, REF_ROBS);
   let y = minoInit(REF_ROBS, incl, be, c), h = 50 / (REF_ROBS * REF_ROBS), f: Float64Array | undefined, att = 0, drift = 0;
   for (let step = 1; step <= MAXSTEPS; step++) {
     const st = minoStep(y, h, c, tol, uFrac, f, ctol); att += st.attempts;
     drift = Math.max(drift, Math.abs(st.y[5] * st.y[5] - minoRw(st.y[1], c)));
     const rA = 1 / y[1], rB = 1 / st.y[1];
-    if (fl && Math.min(rA, rB) < HOTFLOW.rMax + 5) {
-      const dl = st.y[4] - y[4], dense = (th: number) => minoDense(st.y0, st.y, st.f0, st.f1, st.h, th);
-      const n = Math.min(32, Math.max(1, Math.ceil(dl / (0.25 * Math.max(1, Math.min(rA, rB) / 8)))));
+    if (fl && 1 / minoSegWMax(st.y0, st.y, st.f0, st.f1, st.h) <= HOTFLOW.rMax) { // the renderer's exact skip (flowSeg)
+      const dl = minoDl(st.y0, st.y), dense = (th: number) => minoDense(st.y0, st.y, st.f0, st.f1, st.h, th);
+      // raytrace.wgsl flowSeg: composite midpoint, FLOW_DL 0.125 x max(1, r_end / 8), at most 64 per step
+      const n = Math.min(64, Math.max(1, Math.ceil(dl / (0.125 * Math.max(1, Math.min(rA, rB) / 8)))));
       let dk = st.y0;
       for (let k = 0; k < n; k++) {
-        const dn = dense((k + 1) / n), s = minoToState(dk, c);
-        const [dI, dT] = flowSlab(s[1], s[2], [s[4], s[5], s[6], s[7]], a, rh, dn[4] - dk[4], fl); flowAccum(I, dI, dT);
+        const dn = dense((k + 1) / n), s = minoToState(dense((k + 0.5) / n), c);
+        const [dI, dT] = flowSlab(s[1], s[2], [s[4], s[5], s[6], s[7]], a, rh, minoDl(dk, dn), fl); flowAccum(I, dI, dT);
         dk = dn;
       }
       if (wantPath) {
@@ -56,7 +57,7 @@ function minoLocal(ray: Ray, tol: number, uFrac: number, wantPath = false, ctol 
         let q0 = st.y0, s0 = minoToState(st.y0, c);
         for (let k = 1; k <= m; k++) {
           const q1 = dense(k / m), s1 = minoToState(q1, c);
-          path.push({ l0: q0[4], l1: q1[4], x0: cart(s0), x1: cart(s1), p0: [s0[4], s0[5], s0[6], s0[7]], p1: [s1[4], s1[5], s1[6], s1[7]] });
+          path.push({ l0: minoL(q0, c), l1: minoL(q1, c), x0: cart(s0), x1: cart(s1), p0: [s0[4], s0[5], s0[6], s0[7]], p1: [s1[4], s1[5], s1[6], s1[7]] });
           q0 = q1; s0 = s1;
         }
       }
@@ -65,13 +66,14 @@ function minoLocal(ray: Ray, tol: number, uFrac: number, wantPath = false, ctol 
       const d = minoPlane(st, c, rIn, REF_ROUT);
       if (d) {
         const rHit = 1 / d[1];
-        if (rHit >= rIn && rHit <= REF_ROUT) return { fate: "disk", steps: step, retries: att - step, rHit, phiHit: minoToState(d, c)[3], tHit: d[0], drift };
+        if (rHit >= rIn && rHit <= REF_ROUT) return { fate: "disk", steps: step, retries: att - step, rHit, phiHit: minoToState(d, c)[3], tHit: minoToState(d, c)[0], drift };
       }
     }
     const wPrev = y[1]; y = st.y; h = st.hNext; f = st.f1;
     if (y[1] >= 1 / (rh * 1.005)) return { fate: "captured", steps: step, retries: att - step, I: I[0], drift, path };
     if (fl && 1 / y[1] > HOTFLOW.rMax && y[1] < wPrev) return { fate: "escaped", steps: step, retries: att - step, I: I[0], drift, path };
-    if (y[1] < 1 / (REF_ROBS * 1.2)) return { fate: "escaped", steps: step, retries: att - step, dir: skyDirCPU(minoToState(y, c), a), I: I[0], drift, path };
+    const esc = minoSphere(st, c, 1 / (REF_ROBS * 1.2));
+    if (esc) return { fate: "escaped", steps: step, retries: att - step, dir: skyDirCPU(minoToState(esc, c), a), I: I[0], drift, path };
   }
   return { fate: "budget", steps: MAXSTEPS, retries: att - MAXSTEPS, I: I[0], drift, path };
 }
@@ -133,7 +135,8 @@ function sets(): { name: string; rays: Ray[] }[] {
 
 describe.skipIf(!SWEEP)("Mino integrator accuracy sweep (SWEEP=1)", () => {
   it("prints the table; the shipped tolerance has no new flips and no worse rays", () => {
-    const t0 = Date.now(), S = sets();
+    // SETS=i,j,... scores a subset (exploration only; the gate is the full run). ROWS="tol,uFrac,ctol;..." replaces the grid.
+    const t0 = Date.now(), pick = process.env.SETS?.split(",").map(Number), S = sets().filter((_, i) => !pick || pick.includes(i));
     // 1) the OLD replica IS the shipped loop
     for (const set of S) for (const r of set.rays) if (!r.flow) {
       const loc = refTrace(r.s0, r.a, r.rIn, SHIP), ship = traceRay(r.s0, r.a, { rIn: r.rIn, rOut: REF_ROUT, rObs: REF_ROBS, maxSteps: MAXSTEPS });
@@ -214,8 +217,8 @@ describe.skipIf(!SWEEP)("Mino integrator accuracy sweep (SWEEP=1)", () => {
     };
     console.log("tol      uFrac  ctol   newFlips  worse  maxDrift   max err: r(rel) phi(rad) t(rel) sky(px) I-path I-rule   cost NEW/OLD per set");
     const rows: [number, number, number][] = [];
-    for (const tol of [3e-5, 1e-5, 3e-6]) for (const ctol of [1e-3, 3e-4, 1e-4]) rows.push([tol, 0.25, ctol]);
-    rows.push([1e-5, 0.5, 3e-4]);
+    if (process.env.ROWS) for (const r of process.env.ROWS.split(";")) rows.push(r.split(",").map(Number) as [number, number, number]);
+    else { for (const tol of [3e-5, 1e-5, 3e-6]) for (const ctol of [1e-3, 3e-4, 1e-4]) rows.push([tol, 0.25, ctol]); rows.push([1e-5, 0.5, 3e-4]); }
     if (!rows.some(([t, u, k]) => t === MINO_TOL && u === MINO_UFRAC && k === MINO_CTOL)) rows.push([MINO_TOL, MINO_UFRAC, MINO_CTOL]);
     let shipped: ReturnType<typeof score> | null = null;
     for (const [tol, uf, ctol] of rows) {

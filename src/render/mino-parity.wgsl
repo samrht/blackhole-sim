@@ -14,7 +14,7 @@ struct MOut { q: vec4<f32>, v: vec4<f32>, info: vec4<f32>, sx: vec4<f32>, sp: ve
 @compute @workgroup_size(1) fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   if (gid.x >= arrayLength(&inp)) { return; }
   let m = inp[gid.x];
-  let c = minoRay(m.c.x, m.c.y, m.c.z);
+  let c = minoRay(m.c.x, m.c.y, m.c.z, 1000.0);
   let y = Mino(m.q, m.v);
   let o = minoStep(y, minoRhs(y, c), m.c.w, c);
   let s = minoToState(o.y, c);

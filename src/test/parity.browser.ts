@@ -444,7 +444,7 @@ export async function runParity(): Promise<{ maxErr: number; rows: number; jetLo
   };
   /** Walk the CPU twin from the camera until pred holds BEFORE a step; that state and its proposal are the case. */
   const caseAt = (label: string, r: ReturnType<typeof mkRay>, pred: (y: Float64Array, prev: Float64Array) => boolean, mul = 1) => {
-    const c = minoRay(r.a, r.xi, r.eta); let y = minoInit(1000, r.th0, r.be, c), prev = y, f = minoRhs(y, c), h = 50 / 1e6;
+    const c = minoRay(r.a, r.xi, r.eta, 1000); let y = minoInit(1000, r.th0, r.be, c), prev = y, f = minoRhs(y, c), h = 50 / 1e6;
     for (let k = 0; k < 4000 && !pred(y, prev); k++) { const o = minoStep(y, h, c, undefined, undefined, f); prev = y; y = o.y; f = o.f1; h = o.hNext; }
     mcases.push({ label, y: Float64Array.from(y, Math.fround), a: r.a, xi: r.xi, eta: r.eta, h: Math.fround(h * mul) });
   };
@@ -460,7 +460,7 @@ export async function runParity(): Promise<{ maxErr: number; rows: number; jetLo
   caseAt("near south pole", mkRay(-0.52, 13.48, 0.9, 1), (y) => y[7] < 0 && Math.sin(y[2]) ** 2 < 1e-3);
   if (!mcases.some((m) => m.label === "past equator" && m.y[2] > Math.PI / 2)) throw new Error("mino parity: no past-equator case");
   { // the state whose step crosses the plane (the landing step's case)
-    const r = mkRay(8, 3, 0.9, 72), c = minoRay(r.a, r.xi, r.eta); let y = minoInit(1000, r.th0, r.be, c), f = minoRhs(y, c), h = 50 / 1e6;
+    const r = mkRay(8, 3, 0.9, 72), c = minoRay(r.a, r.xi, r.eta, 1000); let y = minoInit(1000, r.th0, r.be, c), f = minoRhs(y, c), h = 50 / 1e6;
     for (let k = 0; k < 4000; k++) {
       const o = minoStep(y, h, c, undefined, undefined, f);
       if (minoCrossing(o.y0, o.y, o.f0, o.f1, o.h) >= 0) { mcases.push({ label: "plane crossing", y: Float64Array.from(y, Math.fround), a: r.a, xi: r.xi, eta: r.eta, h: Math.fround(h) }); break; }
@@ -500,13 +500,13 @@ export async function runParity(): Promise<{ maxErr: number; rows: number; jetLo
     // the 4th digit; the state is compared against ONE CPU attempt at the GPU's own h, and the two h are compared.
     // eps = 2^-23: the expectation models the f32 GPU's drift-noise floor (MINO_EPS)
     // the step mirrors a past-equator start into the south frame first (minoHemi); the expectation starts from that state
-    const c = minoRay(m.a, m.xi, m.eta), o = minoStep(m.y, m.h, c, undefined, undefined, undefined, undefined, 2 ** -23), y0 = minoHemi(m.y), f0 = minoRhs(y0, c), tr = minoTry(y0, g[29], c, f0, undefined, undefined, 2 ** -23);
+    const c = minoRay(m.a, m.xi, m.eta, 1000), o = minoStep(m.y, m.h, c, undefined, undefined, undefined, undefined, 2 ** -23), y0 = minoHemi(m.y), f0 = minoRhs(y0, c), tr = minoTry(y0, g[29], c, f0, undefined, undefined, 2 ** -23);
     const st = minoToState(tr.y1, c), d = minoDense(y0, tr.y1, f0, tr.f1, g[29], 0.37);
     mset(i, "h used", g[29], o.h, 1e-2 * o.h); // after a reject h derives from the rejected attempt's f32 error norm
     const cmpY = (base: number, yy: Float64Array, tag: string) => {
       mset(i, tag + "t", g[base], yy[0], 1e-5 * Math.max(1, Math.abs(yy[0]))); mset(i, tag + "w", g[base + 1], yy[1], 1e-5 * yy[1]);
       mset(i, tag + "theta", g[base + 2], yy[2], 1e-5 * Math.max(1, Math.abs(yy[2]))); mset(i, tag + "phi", g[base + 3], yy[3], 1e-5 * Math.max(1, Math.abs(yy[3])));
-      mset(i, tag + "l", g[base + 4], yy[4], 1e-5 * Math.max(1, Math.abs(yy[4]))); mset(i, tag + "w'", g[base + 5], yy[5], 1e-5 * Math.max(Math.abs(yy[5]), yy[1]));
+      mset(i, tag + "ell", g[base + 4], yy[4], 1e-5 * Math.max(1, Math.abs(yy[4]))); mset(i, tag + "w'", g[base + 5], yy[5], 1e-5 * Math.max(Math.abs(yy[5]), yy[1]));
       mset(i, tag + "theta'", g[base + 6], yy[6], 1e-5 * Math.max(1, Math.abs(yy[6])));
       mset(i, tag + "sigma", g[base + 7], yy[7], 1e-6); // hemisphere sign, exactly +-1
     };

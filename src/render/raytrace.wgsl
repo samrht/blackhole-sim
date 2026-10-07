@@ -20,7 +20,7 @@ struct Uniforms {
 @group(0) @binding(6) var skySamp: sampler;
 // Geodesic cache (spec 2026-10-01). One Entry per pixel per jitter set; bookmarks are sparse.
 struct Entry { word: u32, p0: f32, p1: f32, p2: f32 };        // word = kind | bookmark index << 2; DISK p = (rHit, phiHit, delay)
-struct Bookmark { x: vec4<f32>, p: vec4<f32>, nJet: u32 };      // 48 bytes (vec4 alignment)
+struct Bookmark { q: vec4<f32>, v: vec4<f32>, nJet: u32, h: f32 }; // 48 bytes (vec4 alignment): Mino state + its step's h0
 @group(0) @binding(7) var<storage, read_write> entries: array<Entry>;
 @group(0) @binding(8) var<storage, read_write> bookmarks: array<Bookmark>;
 @group(0) @binding(9) var<storage, read_write> bmCount: atomic<u32>;
@@ -225,106 +225,104 @@ fn mmFlow() -> bool { return U.band > 0.5 && U.hotFlow > 0.5; }
 // precision per pixel at any session length; every time-dependent term takes (U.timeEpoch, emitRel(...)).
 fn emitRel(delay: f32) -> f32 { return U.time - U.lightDelay * delay; }
 
-// The jet quadrature is a left Riemann sum along the ray with samples at most JET_DL apart,
-// independent of the geodesic stride: a step longer than JET_DL is split into n = ceil(dl / JET_DL)
-// samples along its Cartesian chord, each weighted dl / n (n = 1 is the original single sample at
-// the step's start). The chord is the path to well under a sub-sample at these lengths. Before
-// 2026-10-01 the jet was sampled once per step, so its accuracy followed the geodesic stride; the
-// longer far strides (K_FAR) lost the emission of steps entering the jet's top from r > 1.5 rOut.
-// 0.25 against a fine-step GPU reference (face-on jet scene, pixels > 5 % off: 116 per-step,
-// 29 at 1.0, 7 at 0.5, 2 at 0.25). Steps whose chord stays outside the jet's bounding sphere are
-// skipped exactly, so rays that never come near the jet pay nothing.
+// One integrator step as the emitters see it (Mino time, spec 2026-10-07): the step's cubic Hermite dense output between
+// its start state AS USED (y0, mirrored into the step's hemisphere frame) and its end, plus the ray's constants c.
+struct Seg { y0: Mino, y1: Mino, f0: Mino, f1: Mino, h: f32 };
+fn segOf(st: MinoStepOut) -> Seg { return Seg(st.y0, st.y, st.f0, st.f1, st.h); }
+fn segAt(sg: Seg, th: f32) -> Mino { return minoDense(sg.y0, sg.y1, sg.f0, sg.f1, sg.h, th); }
+// Smallest radius of the step's dense path (exact for the cubic), for the bounding skips below.
+fn segRMin(sg: Seg) -> f32 { return 1.0 / minoSegWMax(sg.y0, sg.y1, sg.f0, sg.f1, sg.h); }
+
+// The jet quadrature is a composite midpoint rule along the ray with sub-intervals at most JET_DL long in affine length: a
+// step is split into n sub-intervals at equal fractions of its Mino-time span, sub-interval k sampled at its middle
+// ((k + 1/2) / n) and weighted by its dense affine length l((k+1)/n) - l(k/n) (minoDl). (Pre-Mino: left samples on each
+// step's chord; the midpoint rule's error is second order, measured 4x smaller per sample on the 1.3 mm flow.) dl/d(lambda) = Sigma = r^2 + a^2 cos^2 is largest at the step's outer end (a
+// photon's only radial turning point is a periapsis), so n = ceil(h (1/w_min^2 + a^2) / JET_DL) keeps every spacing <=
+// JET_DL.
+// Before 2026-10-01 the jet was sampled once per step (its accuracy followed the geodesic stride); 0.25 against a
+// fine-step GPU reference (face-on jet scene, pixels > 5 % off: 116 per-step, 29 at 1.0, 7 at 0.5, 2 at 0.25). Steps whose
+// dense path stays outside the jet's bounding sphere are skipped exactly, so rays that never come near the jet pay nothing.
 const JET_DL = 0.25;
-const JET_NSUB_MAX = 32u;
-// The jet sample points of one step, shared by jetStep (what it sums) and jetTouches (what the
-// geodesic cache bookmarks), so the two cannot disagree. Sample k of n sits at k/n along the
-// step's Cartesian chord; k = 0 is the step's start state itself.
-fn jetSubCount(dl: f32) -> u32 { return clamp(u32(ceil(dl / JET_DL)), 1u, JET_NSUB_MAX); }
-// Sample k of n: (r, theta, phi). k = 0 is the step's start state itself (its phi may be unwrapped; the
-// filaments use it modulo 2 pi); interior samples take phi from the chord's Cartesian point.
-fn jetSample(s: State, p0: vec3<f32>, dvec: vec3<f32>, k: u32, n: u32) -> vec3<f32> {
-  if (k == 0u) { return vec3<f32>(s.x.y, s.x.z, s.x.w); }
-  let p = p0 + dvec * (f32(k) / f32(n));
-  let r = length(p);
-  return vec3<f32>(r, acos(clamp(p.z / r, -1.0, 1.0)), atan2(p.y, p.x));
+const FLOW_DL = 0.125;         // the hot flow's sub-interval (x max(1, r / 8)): half the pre-Mino 0.25, see flowSeg
+const FLOW_NSUB_MAX = 64u;
+const JET_NSUB_MAX_JET = 256u; // the jet's: Mino steps are long, and the jet's spacing bound must hold at any length
+// The jet sample count of one step, shared by jetSeg (what it sums) and jetSegTouches (what the geodesic cache
+// bookmarks), so the two cannot disagree.
+fn jetSegCount(sg: Seg) -> u32 {
+  let wMin = min(sg.y0.q.y, sg.y1.q.y);
+  return clamp(u32(ceil(sg.h * (1.0 / (wMin * wMin) + U.a * U.a) / JET_DL)), 1u, JET_NSUB_MAX_JET);
 }
-// Exact skip: the emitter lies inside |z| <= jetLength, rho <= JET_ENV_Q funnelEdge(jetLength), so a
-// chord whose closest approach to the hole is beyond that bounding sphere sees no jet (its first
-// sample, the only one when n = 1, is then outside too and jetShapeJ would return 0).
+fn jetBoundR() -> f32 { let fe = JET_ENV_Q * funnelEdgeJ(U.jetLength); return sqrt(U.jetLength * U.jetLength + fe * fe); }
+// Exact skip radius test for a chord p0 -> p0 + dvec (kept for other emitters).
 fn chordMisses(p0: vec3<f32>, dvec: vec3<f32>, R: f32) -> bool {
   let tc = clamp(-dot(p0, dvec) / dot(dvec, dvec), 0.0, 1.0);
   return length(p0 + dvec * tc) > R;
 }
-fn jetChordMisses(p0: vec3<f32>, dvec: vec3<f32>) -> bool {
-  let fe = JET_ENV_Q * funnelEdgeJ(U.jetLength);
-  return chordMisses(p0, dvec, sqrt(U.jetLength * U.jetLength + fe * fe));
-}
 
-// Synchrotron emission and absorption along one integrator step (spec 2026-10-02 2.4): each sub-sample
-// is a uniform slab of plasma-frame path ds' = r_g D dl / n, with D = nu' / nu_obs from the photon
-// momentum (interpolated across the step like the position and time) and the local flow.
-fn jetStep(s: State, sNew: State, dl: f32, accIn: JetOut) -> JetOut {
+// Synchrotron emission and absorption along one integrator step (spec 2026-10-02 2.4): each sub-sample is a uniform slab
+// of plasma-frame path ds' = r_g D dl_k, with D = nu' / nu_obs from the photon momentum at the sample (dense output).
+fn jetSeg(sg: Seg, c: MinoRay, accIn: JetOut) -> JetOut {
   // a = 0: no Blandford-Znajek power, so the energy budget injects no electrons (q0 = 0): skip before
   // log(q0), which WGSL leaves undefined at 0. Without the coefficient table (1x1 placeholder) nothing either.
   if (U.jetQ0 <= 0.0 || !synchReady()) { return accIn; }
-  let p0 = cartOf(s.x);
-  let dvec = cartOf(sNew.x) - p0;                           // inward step (camera -> hole)
-  if (dot(dvec, dvec) <= 1e-12) { return accIn; }
-  if (jetChordMisses(p0, dvec)) { return accIn; }
-  let n = jetSubCount(dl);
+  if (segRMin(sg) > jetBoundR()) { return accIn; }
+  let n = jetSegCount(sg);
   var acc = accIn;
+  var dk = sg.y0;
   for (var k = 0u; k < n; k++) {
-    let q = jetSample(s, p0, dvec, k, n);
-    let f = f32(k) / f32(n);
-    let tS = select(s.x.x + (sNew.x.x - s.x.x) * f, s.x.x, k == 0u);
-    let shape = jetShapeJ(q.x, q.y, q.z, U.timeEpoch, emitRel(-tS - U.rObs), U.jetLength, U.fluxVar, U.jetGamma, U.a);
+    let dn = segAt(sg, f32(k + 1u) / f32(n)); let dm = segAt(sg, (f32(k) + 0.5) / f32(n));
+    let sk = minoToState(dm, c); let dl = minoDl(dk, dn);
+    let shape = jetShapeJ(sk.x.y, sk.x.z, sk.x.w, U.timeEpoch, emitRel(minoDelay(dm)), U.jetLength, U.fluxVar, U.jetGamma, U.a);
     if (shape > 0.0) {
-      let D = plasmaShiftJ(q.x, q.y, mix(s.p, sNew.p, f), U.a, jetGammaAt(q.x * cos(q.y), U.jetGamma));
+      let D = plasmaShiftJ(sk.x.y, sk.x.z, sk.p, U.a, jetGammaAt(sk.x.y * cos(sk.x.z), U.jetGamma));
       if (D > 1e-6) {                                       // never divide by D -> 0
-        let so = synchSampleJ(select(JET_LNNU, vec3<f32>(HF_LNNU), bandMm()), q.x, q.y, D, U.a, U.jetB0, U.jetQ0, shape, U.jetGamma, U.rgCm);
-        acc = jetSlabJ(acc, so.j, so.a, U.rgCm * D * dl / f32(n));
+        let so = synchSampleJ(select(JET_LNNU, vec3<f32>(HF_LNNU), bandMm()), sk.x.y, sk.x.z, D, U.a, U.jetB0, U.jetQ0, shape, U.jetGamma, U.rgCm);
+        acc = jetSlabJ(acc, so.j, so.a, U.rgCm * D * dl);
       }
     }
+    dk = dn;
   }
   return acc;
 }
 
-// Hot flow at 230 GHz along one step (spec 2026-10-04): the jet's quadrature (samples on the step's chord, each a
-// uniform slab of plasma-frame path r_g D dl / n), inside r < HF_RMAX and outside 1.01 r_+ (as the CPU calibration in
-// hot-flow-image.ts). Samples are <= JET_DL apart inside 8 M and JET_DL r / 8 beyond, where the flow is faint (perf/mm-live:
-// one sample per step out there, ~190 fewer per ray; flux changed 2e-6, worst pixel 2e-6 of the peak, sgra-mm/m87-mm). The flow is steady and axisymmetric: no time, no azimuth. One channel, carried as
-// acc = (I_nu, tau) so visible frames hold two floats through the ray loop, not two vec3 (the jet's slab, scalar).
-// Hotspots (spec 2026-10-04 mm hotspots) add their boosted coefficients to the same slab on live frames (hs).
-fn flowStep(s: State, sNew: State, dl: f32, rh: f32, orb: vec3<f32>, accIn: vec2<f32>, hs: bool) -> vec2<f32> {
-  let p0 = cartOf(s.x);
-  let dvec = cartOf(sNew.x) - p0;
-  if (dot(dvec, dvec) <= 1e-12 || chordMisses(p0, dvec, HF_RMAX)) { return accIn; }
-  let n = clamp(u32(ceil(dl / (JET_DL * max(1.0, min(s.x.y, sNew.x.y) / 8.0)))), 1u, JET_NSUB_MAX);
+// Hot flow at 230 GHz along one step (spec 2026-10-04): the jet's midpoint quadrature (sub-intervals at equal Mino-time
+// fractions of the step, each a uniform slab of plasma-frame path r_g D dl_k sampled at its middle), inside r < HF_RMAX and
+// outside 1.01 r_+ (as the CPU calibration in hot-flow-image.ts). n = ceil(dl / (FLOW_DL max(1, r_end / 8))) with r_end
+// the smaller END radius, capped at FLOW_NSUB_MAX. FLOW_DL = 0.125 (half the pre-Mino left rule's 0.25): at 0.25 the
+// midpoint rule was still above the old renderer on ~1 % of Sgr A* pixels (2.6e-4 vs 2.1e-4 relative), at 0.125 it is
+// 3-30x below on every pixel examined. This is the rule the sweep's I(rule) gate scores (tests/sweep-mino.test.ts). The flow is steady and axisymmetric: no time, no azimuth. One
+// channel, carried as acc = (I_nu, tau). Hotspots (spec 2026-10-04 mm hotspots) add their boosted coefficients to the
+// same slab on live frames (hs).
+fn flowSeg(sg: Seg, c: MinoRay, rh: f32, orb: vec3<f32>, accIn: vec2<f32>, hs: bool) -> vec2<f32> {
+  let rMin = segRMin(sg);
+  if (rMin > HF_RMAX) { return accIn; }
+  let dlStep = minoDl(sg.y0, sg.y1);
+  let n = clamp(u32(ceil(dlStep / (FLOW_DL * max(1.0, min(1.0 / sg.y0.q.y, 1.0 / sg.y1.q.y) / 8.0)))), 1u, FLOW_NSUB_MAX);
   // Hotspot only on live frames (hs; the cache stores the steady flow), with the slider on (main.ts sends fluxVar 0 in mm
-  // while no hotspot can be in view), and only on steps whose chord passes within HS_REACH of the hole.
-  let hsOn = hs && U.fluxVar > 0.0 && !chordMisses(p0, dvec, HS_REACH);
+  // while no hotspot can be in view), and only on steps whose dense path passes within HS_REACH of the hole.
+  let hsOn = hs && U.fluxVar > 0.0 && rMin <= HS_REACH;
   var acc = accIn;
+  var dk = sg.y0;
   for (var k = 0u; k < n; k++) {
-    let q = jetSample(s, p0, dvec, k, n);
-    if (q.x >= HF_RMAX || q.x <= rh * 1.01) { continue; }
-    let f = f32(k) / f32(n);
-    let pk = mix(s.p, sNew.p, f);
+    let dn = segAt(sg, f32(k + 1u) / f32(n)); let dm = segAt(sg, (f32(k) + 0.5) / f32(n));
+    let sk = minoToState(dm, c); let dl = minoDl(dk, dn); let r = sk.x.y; let th = sk.x.z; let delayK = minoDelay(dm);
+    dk = dn;
+    if (r >= HF_RMAX || r <= rh * 1.01) { continue; }
     var jE = 0.0; var dTau = 0.0; // this sample's observed emission and optical depth (flow + hotspot, one slab)
-    let D = flowShiftOrbJ(q.x, q.y, pk, U.a, orb);
+    let D = flowShiftOrbJ(r, th, sk.p, U.a, orb);
     if (D > 1e-6) {
-      let c = flowCoeffsJ(q.x, q.y, HF_LNNU + log(D), U.flowN0);
-      if (c.x > 0.0) { let ds = U.rgCm * D * dl / f32(n); jE = c.x / (D * D * D) * ds; dTau = c.y * ds; }
+      let cf = flowCoeffsJ(r, th, HF_LNNU + log(D), U.flowN0);
+      if (cf.x > 0.0) { let ds = U.rgCm * D * dl; jE = cf.x / (D * D * D) * ds; dTau = cf.y * ds; }
     }
-    if (hsOn && q.x < HS_REACH && abs(q.x * cos(q.y)) < HS_CUT * HS_SIGMA) {
-      let tS = select(s.x.x + (sNew.x.x - s.x.x) * f, s.x.x, k == 0u);
-      let st = hotspotStateJ(U.timeEpoch, emitRel(-tS - U.rObs), U.fluxVar, U.a);
+    if (hsOn && r < HS_REACH && abs(r * cos(th)) < HS_CUT * HS_SIGMA) {
+      let st = hotspotStateJ(U.timeEpoch, emitRel(delayK), U.fluxVar, U.a);
       if (st.w > 0.0) {
-        let b = st.z * hotspotBoostJ(q.x, q.y, q.z, st.x, st.y);
+        let b = st.z * hotspotBoostJ(r, th, sk.x.w, st.x, st.y);
         if (b > 0.0) {
-          let Dh = hotspotShiftJ(q.x, q.y, pk, U.a, 1.0 / (pow(st.x, 1.5) + U.a));
+          let Dh = hotspotShiftJ(r, th, sk.p, U.a, 1.0 / (pow(st.x, 1.5) + U.a));
           if (Dh > 1e-6) {
-            let ch = flowCoeffsJ(q.x, q.y, HF_LNNU + log(Dh), U.flowN0);
-            let dsh = U.rgCm * Dh * dl / f32(n);
+            let ch = flowCoeffsJ(r, th, HF_LNNU + log(Dh), U.flowN0);
+            let dsh = U.rgCm * Dh * dl;
             jE += b * ch.x / (Dh * Dh * Dh) * dsh; dTau += b * ch.y * dsh;
           }
         }
@@ -338,17 +336,15 @@ fn flowStep(s: State, sNew: State, dl: f32, rh: f32, orb: vec3<f32>, accIn: vec2
   return acc;
 }
 
-// Geometric (independent of the jet switch and brightness): can this step's jetStep be non-zero at
-// SOME time? True iff one of its sample points is inside the jet envelope -- jetShapeJ is zero
-// outside it. The geodesic cache bookmarks exactly these steps, so its replay sums the same samples.
-fn jetTouches(s: State, sNew: State, dl: f32) -> bool {
-  let p0 = cartOf(s.x);
-  let dvec = cartOf(sNew.x) - p0;
-  if (dot(dvec, dvec) <= 1e-12 || jetChordMisses(p0, dvec)) { return false; }
-  let n = jetSubCount(dl);
+// Geometric (independent of the jet switch and brightness): can this step's jetSeg be non-zero at SOME time? True iff one
+// of its sample points is inside the jet envelope -- jetShapeJ is zero outside it. The geodesic cache bookmarks exactly
+// these steps, so its replay sums the same samples.
+fn jetSegTouches(sg: Seg, c: MinoRay) -> bool {
+  if (segRMin(sg) > jetBoundR()) { return false; }
+  let n = jetSegCount(sg);
   for (var k = 0u; k < n; k++) {
-    let q = jetSample(s, p0, dvec, k, n);
-    if (inJetEnvelope(q.x, q.y)) { return true; }
+    let sk = minoToState(segAt(sg, (f32(k) + 0.5) / f32(n)), c); // jetSeg's sample points
+    if (inJetEnvelope(sk.x.y, sk.x.z)) { return true; }
   }
   return false;
 }
@@ -374,7 +370,8 @@ struct TraceOut {
   color: vec3<f32>, jet: JetOut,
   flowI: f32,                      // mm hot-flow mode: the flow's observed I_nu (cgs) along the ray; else 0
   kind: u32, payload: vec3<f32>,   // DISK: (rHit, phiHit, delay); SKY: asymptotic direction; else 0
-  hasBm: bool, bm: State, nJet: u32, // record only: first state inside the jet envelope, steps through the last
+  hasBm: bool, bm: Mino, bmH: f32, nJet: u32, // record only: the state (and proposed h) before the first step that
+                                               // touches the jet envelope; steps through the last
   resolved: bool,                    // false: the step budget ran out (kind then comes from the classifier)
 };
 
@@ -391,13 +388,15 @@ fn traceRay(pix: vec2<u32>, jit: vec2<f32>, record: bool, hs: bool) -> TraceOut 
   let xe = cameraXiEta(alpha, beta, a, i);
   let xi = xe.x; let eta = xe.y;
 
-  // initial state at (rObs, i, 0), E=1. Past-directed momentum -- see cameraMomenta().
-  let r0 = U.rObs; let th0 = i;
-  let gU = gUp(r0, th0, a);
-  let p0 = cameraMomenta(xi, beta, gU[0], gU[1], gU[2], gU[3], gU[4]);
-  var s = State(vec4<f32>(0.0, r0, th0, 0.0), p0);
+  // Carter constants of the ray (p_t = 1, past-directed); the integrator works in Mino time (integrator-shared.wgsl).
+  let r0 = U.rObs;
+  let c = minoRay(a, xi, eta, r0);
+  var y = minoInit(r0, i, beta, c);
+  var f = minoRhs(y, c);
+  var h = 50.0 / (r0 * r0);
 
   let rh = 1.0 + sqrt(max(0.0, 1.0 - a*a)); // horizon
+  let wCap = 1.0 / (rh * 1.005); let wEsc = 1.0 / (r0 * 1.2);
   var color = vec3<f32>(0.0);
   var resolved = false; // set by each real termination; false => the step budget ran out
   var jet: JetOut; jet.I = vec3<f32>(0.0); jet.tau = vec3<f32>(0.0); // synchrotron light and optical depth along the ray
@@ -406,63 +405,56 @@ fn traceRay(pix: vec2<u32>, jit: vec2<f32>, record: bool, hs: bool) -> TraceOut 
   let orb = iscoOrbitJ(a);   // the flow's ISCO orbit, once per ray
 
   for (var step = 0u; step < U.maxSteps; step++) {
-    // dl > 0 with p_r < 0 integrates INWARD along the reversed worldline.
-    let r = s.x.y;
-    let far = r > U.rOut * 1.5; // same threshold as the far branch of stepSize: monitor OFF out there
-    let st = stepGeodesic(s, a, stepSize(s, rh, U.rOut), select(H_TOL, H_TOL_FAR, far));
-    // On retry exhaustion the smallest-step attempt is accepted and the ray proceeds; st.ok is
-    // informational. Breaking to the (xi, eta) classifier here painted starfield over disk hits
-    // for near-axis rays (it can only answer captured/escaped) -- a dark seam on the alpha = 0
-    // column. A genuinely diverging ray still winds to budget exhaustion and reaches the
-    // classifier below as before; a NaN state still ends in the `usable` guard.
-    let dl = st.dl; let sNew = st.s;
+    // One accepted DP5(4) step inward along the reversed worldline (w = 1/r grows toward the hole). On reject exhaustion
+    // the last attempt is accepted and the ray proceeds; a genuinely diverging ray winds to budget exhaustion and reaches
+    // the (xi, eta) classifier below; a NaN state ends in the `usable` guard.
+    let st = minoStep(y, f, h, c);
+    let sg = segOf(st);
 
     // Synchrotron jet: emission and absorption along the ray. The disk hit below still `break`s
     // (opaque), so jet segments behind the disk/horizon are occluded.
-    if (U.jetStrength > 0.0) { jet = jetStep(s, sNew, dl, jet); }
+    if (U.jetStrength > 0.0) { jet = jetSeg(sg, c, jet); }
     // Hot flow (mm): a volume emitter the ray crosses; it does not stop at the plane. Jet and flow are separate
     // accumulators (neither absorbs the other's light; the jet is faint at 1.3 mm).
-    if (mmFlow()) { flow = flowStep(s, sNew, dl, rh, orb, flow, hs); }
-    // Cache bookmark: the first step whose jet samples can see the envelope, through the last one.
-    if (record && jetTouches(s, sNew, dl)) {
-      if (!out.hasBm) { out.hasBm = true; out.bm = s; firstJ = step; }
+    if (mmFlow()) { flow = flowSeg(sg, c, rh, orb, flow, hs); }
+    // Cache bookmark: the state before the first step whose jet samples can see the envelope, through the last one.
+    if (record && jetSegTouches(sg, c)) {
+      if (!out.hasBm) { out.hasBm = true; out.bm = y; out.bmH = h; firstJ = step; }
       lastJ = step;
     }
 
-    // disk crossing: equatorial plane th = PI/2 (take the first hit -> optically-thick top surface).
-    // A step that moved theta by more than 0.5 rad is not a plane crossing (a legitimate near-field
-    // step moves theta by <= ~0.07 rad): it is a diverged state that reflectAxis's single-crossing
-    // reduction cannot have made sense of, and interpolating a disk hit from it would be garbage.
-    let f0 = s.x.z - PI*0.5; let f1 = sNew.x.z - PI*0.5;
-    if (!mmFlow() && f0 * f1 < 0.0 && abs(sNew.x.z - s.x.z) < 0.5) {
-      let frac = f0 / (f0 - f1);
-      let rHit = mix(s.x.y, sNew.x.y, frac);
-      if (rHit >= U.rIn && rHit <= U.rOut) {
-        let g = diskG(rHit, xi, a);
-        let phiHit = mix(s.x.w, sNew.x.w, frac);     // azimuth of the emitting matter
-        let delay = -mix(s.x.x, sNew.x.x, frac) - U.rObs;
-        if (bandMm()) { color = shadeDiskMm(rHit, phiHit, g, a, emitRel(delay)); }
-        else { color = shadeDisk(rHit, phiHit, g, a, emitRel(delay)); }
-        out.kind = KIND_DISK; out.payload = vec3<f32>(rHit, phiHit, delay);
-        resolved = true;
-        break;
+    // disk crossing: the equatorial plane (take the first hit -> optically-thick top surface), found on the step's dense
+    // output and landed on with a DP5 step (minoPlane), so the hit carries the step's own accuracy.
+    if (!mmFlow()) {
+      let hit = minoPlane(st, c, U.rIn, U.rOut);
+      if (hit.ok) {
+        let rHit = 1.0 / hit.y.q.y;
+        if (rHit >= U.rIn && rHit <= U.rOut) {
+          let g = diskG(rHit, xi, a);
+          let phiHit = minoToState(hit.y, c).x.w;    // azimuth of the emitting matter
+          let delay = minoDelay(hit.y);              // -t - rObs, from the regularised time
+          if (bandMm()) { color = shadeDiskMm(rHit, phiHit, g, a, emitRel(delay)); }
+          else { color = shadeDisk(rHit, phiHit, g, a, emitRel(delay)); }
+          out.kind = KIND_DISK; out.payload = vec3<f32>(rHit, phiHit, delay);
+          resolved = true;
+          break;
+        }
       }
     }
-    s = sNew;
-    // captured -> shadow. The margin must exceed one integration step (dl_min = 0.002 moves r by
-    // ~4.2e-3 M at a=0.9), otherwise RK4's intermediate stages sample r < r_+, where Delta < 0
-    // flips the metric signature and the state explodes to garbage that can pass the escape test
-    // and paint starfield inside the shadow.
-    if (s.x.y <= rh * 1.005) { color = vec3(0.0); resolved = true; break; }
+    let wPrev = y.q.y;
+    y = st.y; f = st.f1; h = st.hNext;
+    // captured -> shadow (tested in w: a long outgoing step may carry w past 0, where 1/w would read as captured)
+    if (y.q.y >= wCap) { color = vec3(0.0); resolved = true; break; }
     // 1.3 mm hot flow: a ray leaving r = HF_RMAX outward has collected all it will (no emitter beyond, no sky at 1.3 mm,
     // and outside Kerr's potential barrier, r <~ 4 M, an outgoing ray cannot turn back). Ending it here instead of at
     // 1.2 rObs gives the same image and skips the long outbound leg.
-    if (mmFlow() && s.x.y > HF_RMAX && sNew.x.y > r) { out.kind = KIND_SKY; resolved = true; break; }
-    if (s.x.y > r0 * 1.2) {
-      // escaped: sample the background along the ray's (bent) asymptotic direction.
-      // The deflected direction makes the starfield appear gravitationally lensed —
-      // warped and magnified into a ring around the shadow.
-      let dir = skyDir(s, a);
+    if (mmFlow() && y.q.y < 1.0 / HF_RMAX && y.q.y < wPrev) { out.kind = KIND_SKY; resolved = true; break; }
+    let esc = minoSphere(st, c, wEsc);
+    if (esc.ok) {
+      // escaped: sample the background along the ray's (bent) asymptotic direction, read ON the cutoff sphere
+      // r = 1.2 rObs (a long last step can carry w past 0). The deflected direction makes the starfield appear
+      // gravitationally lensed — warped and magnified into a ring around the shadow.
+      let dir = skyDir(minoToState(esc.y, c), a);
       if (!bandMm()) { color = skyColor(dir); } // no sky at 1.3 mm (the CMB's 2.7 K is nothing here)
       out.kind = KIND_SKY; out.payload = dir;
       resolved = true;
@@ -476,12 +468,12 @@ fn traceRay(pix: vec2<u32>, jit: vec2<f32>, record: bool, hs: bool) -> TraceOut 
   // effectively random for a winding ray and would produce salt-and-pepper noise.
   out.resolved = resolved;
   if (!resolved) {
+    let s = minoToState(y, c);
     let th = s.x.z; let ph = s.x.w;
-    // RK4 can diverge for rays near the critical impact parameter, leaving s.x non-finite when the
-    // step budget runs out. Reading that state into `dir` would emit a NaN colour into the EMA
-    // accumulator below, and bloom.wgsl's separable blur would then smear that single NaN pixel
-    // across a whole neighbourhood. NaN comparisons are always false, so this range test rejects
-    // non-finite th/ph without needing a bitcast/isnan helper, and we just treat the ray as captured.
+    // A diverged state can be non-finite when the step budget runs out. Reading it into `dir` would emit a NaN colour
+    // into the EMA accumulator below, and bloom.wgsl's separable blur would then smear that single NaN pixel across a
+    // whole neighbourhood. NaN comparisons are always false, so this range test rejects non-finite th/ph without needing
+    // a bitcast/isnan helper, and we just treat the ray as captured.
     let usable = th > -1e6 && th < 1e6 && ph > -1e6 && ph < 1e6;
     if (classifyCaptured(xi, eta, a) || !usable) {
       color = vec3<f32>(0.0);
@@ -524,17 +516,16 @@ fn storeComposite(idx: u32, color: vec3<f32>, jet: JetOut, flowI: f32) {
   storeComposite(idx, t.color, t.jet, t.flowI);
 }
 
-// Re-integrate a bookmarked jet stretch: the same steps, in the same order, as traceRay took from
-// the bookmark through the last step whose jet samples touched the envelope (jetTouches).
-fn replayJet(bm: State, nJet: u32) -> JetOut {
-  let a = U.a;
-  let rh = 1.0 + sqrt(max(0.0, 1.0 - a*a));
-  var s = bm; var acc: JetOut; acc.I = vec3<f32>(0.0); acc.tau = vec3<f32>(0.0);
+// Re-integrate a bookmarked jet stretch: the same steps, in the same order, as traceRay took from the bookmark (the
+// state before the first step that touched the envelope, with that step's proposed h) through the last such step. The
+// FSAL derivative there is minoRhs of the same state with the same constants, so the steps repeat bit for bit.
+fn replayJet(bq: vec4<f32>, bv: vec4<f32>, bh: f32, nJet: u32, c: MinoRay) -> JetOut {
+  var y = Mino(bq, bv); var f = minoRhs(y, c); var h = bh;
+  var acc: JetOut; acc.I = vec3<f32>(0.0); acc.tau = vec3<f32>(0.0);
   for (var k = 0u; k < nJet; k++) {
-    let far = s.x.y > U.rOut * 1.5;
-    let st = stepGeodesic(s, a, stepSize(s, rh, U.rOut), select(H_TOL, H_TOL_FAR, far));
-    acc = jetStep(s, st.s, st.dl, acc);
-    s = st.s;
+    let st = minoStep(y, f, h, c);
+    acc = jetSeg(segOf(st), c, acc);
+    y = st.y; f = st.f1; h = st.hNext;
   }
   return acc;
 }
@@ -551,7 +542,7 @@ fn replayJet(bm: State, nJet: u32) -> JetOut {
   if (t.hasBm) {
     let b = atomicAdd(&bmCount, 1u);
     if (b < arrayLength(&bookmarks)) {
-      bookmarks[b] = Bookmark(t.bm.x, t.bm.p, t.nJet);
+      bookmarks[b] = Bookmark(t.bm.q, t.bm.v, t.nJet, t.bmH);
       word = t.kind | (b << 2u);
     } else {
       word = KIND_LIVE | (BM_NONE << 2u); // bookmark buffer full: shade traces this pixel in full
@@ -598,7 +589,8 @@ fn replayJet(bm: State, nJet: u32) -> JetOut {
   let bi = e.word >> 2u;
   if (U.jetStrength > 0.0 && bi != BM_NONE) {
     let b = bookmarks[bi];
-    jet = replayJet(State(b.x, b.p), b.nJet);
+    let ab = pixelImpact(gid.xy, fixedJitter(U.setIndex)); let xe = cameraXiEta(ab.x, ab.y, U.a, U.incl);
+    jet = replayJet(b.q, b.v, b.h, b.nJet, minoRay(U.a, xe.x, xe.y, U.rObs));
   }
   storeComposite(idx, color, jet, flowI);
 }

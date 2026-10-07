@@ -192,8 +192,8 @@ fn sinCosP(x: f32) -> vec2<f32> {
 }
 // ---- Mino-time integrator (spec 2026-10-07 mino integrator; twin: src/physics/trace-mino.ts) -----------------------
 // Carter's separated null-geodesic equations in Mino time (d lambda = dl / Sigma) with w = 1/r (w'' = R~'(w)/2) and the
-// polar angle theta itself (theta'' = Theta'(theta)/2); t, phi and l (affine) as quadratures. Per ray: p_t = 1
-// (camera-normalised, past-directed), xi = -p_phi, eta (Carter). Dormand-Prince 5(4) with the twin's error norm, the
+// polar angle theta itself (theta'' = Theta'(theta)/2); tau = t + r0 + F(w, w') (regularised time), phi and l (affine) as
+// quadratures. Per ray: p_t = 1 (camera-normalised, past-directed), xi = -p_phi, eta (Carter). Dormand-Prince 5(4) with the twin's error norm, the
 // first-integral drift check, the polar-oscillation guard and bounded rejects; cubic Hermite dense output. See
 // trace-mino.ts for why w = 1/r and theta (not r, not cos theta). Trig through sinCosP (above), never the built-ins.
 // Hemisphere (twin: minoHemi): the stored angle v is measured from the NEARER pole, sigma = v.w = +1 north / -1 south;
@@ -206,17 +206,26 @@ const MINO_CTOL = 1e-3;
 const MINO_LAND_ITERS = 2u;      // Newton iterations of the plane landing step (minoLand)
 const MINO_LAND_BAND = 0.01;     // relative widening of [rIn, rOut] before landing (minoPlane)
 const MINO_EPS = 1.1920929e-7;    // f32 machine epsilon: the drift check's rounding-noise floor
-struct MinoRay { a: f32, xi: f32, eta: f32, K: f32, A1: f32, omMax: f32 };
-struct Mino { q: vec4<f32>, v: vec4<f32> };   // q = (t, w, v, phi), v = (l, w', v', sigma); theta = v or pi - v
-fn minoRay(a: f32, xi: f32, eta: f32) -> MinoRay {
+// r0: the camera radius (tau's origin); c2..c4: R~(w) = 1 + c2 w^2 + c3 w^3 + c4 w^4; tpA, tpB: P(w)'s coefficients
+// w^0..w^2, w^3..w^5 (tau' below; twin: minoRay).
+struct MinoRay { a: f32, xi: f32, eta: f32, K: f32, A1: f32, omMax: f32, r0: f32, c2: f32, c3: f32, c4: f32, tpA: vec3<f32>, tpB: vec3<f32> };
+struct Mino { q: vec4<f32>, v: vec4<f32> };   // q = (tau, w, v, phi), v = (ell, w', v', sigma); theta = v or pi - v;
+                                              // tau = t + r0 + F, ell = l - r0 + w'/w (regularised; twin header)
+fn minoRay(a: f32, xi: f32, eta: f32, r0: f32) -> MinoRay {
   let om2 = max(0.0, eta + xi * xi - a * a) + 6.0 * a * a;
-  return MinoRay(a, xi, eta, eta + (xi - a) * (xi - a), a * a - a * xi, sqrt(om2));
+  let K = eta + (xi - a) * (xi - a); let A1 = a * a - a * xi; let a2 = a * a; let a4 = a2 * a2; let A12 = A1 * A1;
+  let tpA = vec3<f32>(A1 - K - 4.0, 2.0 * K + 2.0 * a2, A12 + A1 * a2 - 8.0 * A1 - 2.0 * K * a2 + 4.0 * K);
+  let tpB = vec3<f32>(4.0 * A1 * a2 - 8.0 * K, A12 * a2 - 4.0 * A12 - K * a4 + 8.0 * K * a2, 2.0 * A12 * a2 - 2.0 * K * a4);
+  return MinoRay(a, xi, eta, K, A1, sqrt(om2), r0, 2.0 * A1 - K, 2.0 * K, A12 - K * a2, tpA, tpB);
 }
 fn minoRw(w: f32, c: MinoRay) -> f32 { let Q = 1.0 + c.A1 * w * w; return Q * Q - c.K * w * w * (1.0 - 2.0 * w + c.a * c.a * w * w); }
 // Camera at (r0, th0) with screen beta: w' = +sqrt(R~) (r decreasing), theta' = p_theta = -beta.
 fn minoInit(r0: f32, th0: f32, beta: f32, c: MinoRay) -> Mino {
-  let w0 = 1.0 / r0;
-  return minoHemi(Mino(vec4<f32>(0.0, w0, th0, 0.0), vec4<f32>(0.0, sqrt(max(0.0, minoRw(w0, c))), -beta, 1.0)));
+  let w0 = 1.0 / r0; let wp = sqrt(max(0.0, minoRw(w0, c)));
+  // tau0 = r0 (1 - w0') + 2 w0' ln w0, r0 (1 - w0') = -w0 (c2 + c3 w0 + c4 w0^2) / (1 + w0') (no cancellation; twin: minoInit)
+  let tau0 = -w0 * (c.c2 + w0 * (c.c3 + w0 * c.c4)) / (1.0 + wp) + 2.0 * wp * log(w0);
+  let ell0 = w0 * (c.c2 + w0 * (c.c3 + w0 * c.c4)) / (1.0 + wp); // r0 (w0' - 1)
+  return minoHemi(Mino(vec4<f32>(tau0, w0, th0, 0.0), vec4<f32>(ell0, wp, -beta, 1.0)));
 }
 // Mirror a state past the equator into the other hemisphere's frame (identity otherwise).
 fn minoHemi(y: Mino) -> Mino {
@@ -228,9 +237,12 @@ fn minoRhs(y: Mino, c: MinoRay) -> Mino {
   let sc = sinCosP(y.q.z); let s = sc.x; let co = sc.y; let s2 = max(s * s, 1e-30);
   let Q = 1.0 + c.A1 * w2;                       // P w^2
   let Dw = 1.0 - 2.0 * w + a2 * w2;              // Delta w^2
+  let P = c.tpA.x + w * (c.tpA.y + w * (c.tpA.z + w * (c.tpB.x + w * (c.tpB.y + w * c.tpB.z))));
+  let rp = c.c2 + w * (1.5 * c.c3 + w * 2.0 * c.c4); // R~'(w) / (2 w)
+  // q.x: tau' = t' + dF/dlambda (regularised time, twin header): bounded from the camera to near the horizon
   return Mino(
-    vec4<f32>(-((1.0 + a2 * w2) * Q / (w2 * Dw) + a * (xi - a * s2)), y.v.y, y.v.z, -(a * Q / Dw - a + xi / s2)),
-    vec4<f32>(1.0 / w2 + a2 * co * co, 2.0 * c.A1 * w * Q - c.K * (w - 3.0 * w2 + 2.0 * a2 * w2 * w),
+    vec4<f32>(P / Dw + rp * (2.0 * w * log(w) - 1.0) - a * (xi - a * s2), y.v.y, y.v.z, -(a * Q / Dw - a + xi / s2)),
+    vec4<f32>(a2 * co * co + w * (0.5 * c.c3 + w * c.c4), 2.0 * c.A1 * w * Q - c.K * (w - 3.0 * w2 + 2.0 * a2 * w2 * w),
               co * (xi * xi / (s2 * s) - a2 * s), 0.0));   // sigma' = 0: mStage keeps v.w
 }
 fn mStage(y: Mino, h: f32, k1: Mino, c1: f32, k2: Mino, c2: f32, k3: Mino, c3: f32, k4: Mino, c4: f32, k5: Mino, c5: f32, k6: Mino, c6: f32) -> Mino {
@@ -323,6 +335,19 @@ fn minoCrossing(y0: Mino, y1: Mino, f0: Mino, f1: Mino, h: f32) -> f32 {
   }
   return 0.5 * (lo + hi);
 }
+// Largest w (smallest r) of the step's dense w(theta) over [0, 1]: endpoints and the cubic's interior extrema (twin:
+// minoSegWMax). Exact for the curve the emitters sample, so the renderer's bounding skips never miss a sample.
+fn minoSegWMax(y0: Mino, y1: Mino, f0: Mino, f1: Mino, h: f32) -> f32 {
+  let w0 = y0.q.y; let w1 = y1.q.y; let d0 = h * f0.q.y; let d1 = h * f1.q.y;
+  let A = 6.0 * (w0 - w1) + 3.0 * (d0 + d1); let B = -6.0 * (w0 - w1) - 4.0 * d0 - 2.0 * d1; let C = d0;
+  var m = max(w0, w1);
+  var t1 = -1.0; var t2 = -1.0;
+  if (abs(A) > 1e-30) { let D = B * B - 4.0 * A * C; if (D >= 0.0) { let q = sqrt(D); t1 = (-B + q) / (2.0 * A); t2 = (-B - q) / (2.0 * A); } }
+  else if (abs(B) > 1e-30) { t1 = -C / B; }
+  if (t1 > 0.0 && t1 < 1.0) { m = max(m, minoDense(y0, y1, f0, f1, h, t1).q.y); }
+  if (t2 > 0.0 && t2 < 1.0) { m = max(m, minoDense(y0, y1, f0, f1, h, t2).q.y); }
+  return m;
+}
 // The state ON the equatorial plane within the step (y0, f0, h) whose dense crossing is at fraction th: a DP5 step of
 // size s from y0, s refined by safeguarded Newton on cos(theta) (bisection inside the sign bracket when Newton leaves it).
 // The cubic Hermite crossing is only 4th order; the landing step carries the step's own accuracy to the plane (twin:
@@ -338,7 +363,31 @@ fn minoLand(y0: Mino, f0: Mino, h: f32, th: f32, c: MinoRay) -> Mino {
   }
   return minoTry(y0, f0, s, c).y1;
 }
+// The state ON the sphere w = wT within a step that crosses it (dense crossing at fraction th): a DP5 step from y0 with its
+// size refined by safeguarded Newton on w - wT (twin: minoLandW). The sky direction is read ON the escape sphere.
+fn minoLandW(y0: Mino, f0: Mino, h: f32, th: f32, c: MinoRay, wT: f32) -> Mino {
+  let g0 = y0.q.y - wT;
+  var lo = 0.0; var hi = h; var s = th * h;
+  for (var k = 0u; k < MINO_LAND_ITERS; k++) {
+    let t = minoTry(y0, f0, s, c); let g = t.y1.q.y - wT;
+    if (g * g0 > 0.0) { lo = s; } else { hi = s; }
+    let sn = s - g / t.f1.q.y;
+    s = select(0.5 * (lo + hi), sn, sn > lo && sn < hi);
+  }
+  return minoTry(y0, f0, s, c).y1;
+}
 struct MinoHit { ok: bool, y: Mino };
+// Escape test of one step (twin: minoSphere): ok when the step ends outside the sphere w = wT, with the state landed ON it.
+fn minoSphere(st: MinoStepOut, c: MinoRay, wT: f32) -> MinoHit {
+  if (!(st.y.q.y < wT)) { return MinoHit(false, st.y); }
+  if (!(st.y0.q.y >= wT)) { return MinoHit(true, st.y0); }
+  var lo = 0.0; var hi = 1.0;
+  for (var k = 0u; k < 24u; k++) {
+    let m = 0.5 * (lo + hi);
+    if (minoDense(st.y0, st.y, st.f0, st.f1, st.h, m).q.y >= wT) { lo = m; } else { hi = m; }
+  }
+  return MinoHit(true, minoLandW(st.y0, st.f0, st.h, 0.5 * (lo + hi), c, wT));
+}
 // Disk test of one step (twin: minoPlane): the landed plane state when the step crosses the plane with the dense crossing
 // radius inside [rIn, rOut] widened by MINO_LAND_BAND; the caller tests the landed radius against [rIn, rOut].
 fn minoPlane(st: MinoStepOut, c: MinoRay, rIn: f32, rOut: f32) -> MinoHit {
@@ -348,6 +397,12 @@ fn minoPlane(st: MinoStepOut, c: MinoRay, rIn: f32, rOut: f32) -> MinoHit {
   if (!(r >= rIn * (1.0 - MINO_LAND_BAND) && r <= rOut * (1.0 + MINO_LAND_BAND))) { return MinoHit(false, st.y); }
   return MinoHit(true, minoLand(st.y0, st.f0, st.h, th, c));
 }
+// F(w, w') = w' (2 ln w - 1/w): tau - F = t + r0. minoDelay = F - tau = -t - r0, the light-travel delay from the camera
+// as a difference of O(10-100) numbers (twin: minoF, minoDelay).
+fn minoF(w: f32, wp: f32) -> f32 { return wp * (2.0 * log(w) - 1.0 / w); }
+fn minoDelay(y: Mino) -> f32 { return minoF(y.q.y, y.v.y) - y.q.x; }
+// Affine length from state ya to state yb (twin: minoDl): l = ell + r0 - w'/w, as a difference of small numbers.
+fn minoDl(ya: Mino, yb: Mino) -> f32 { return (yb.v.x - ya.v.x) - (yb.v.y / yb.q.y - ya.v.y / ya.q.y); }
 // Today's State (x = (t, r, theta, phi), p = (p_t, p_r, p_theta, p_phi)): p_r = -w' / (1 - 2w + a^2 w^2), p_theta = theta'
 // (theta = v, p_theta = v' north; pi - v, -v' south). theta is folded into [0, pi] (through a pole: theta -> 2 pi - theta,
 // phi + pi, p_theta -> -p_theta; the same point and direction).
@@ -356,5 +411,5 @@ fn minoToState(y: Mino, c: MinoRay) -> State {
   let th0 = select(y.q.z, PI - y.q.z, south);
   var th = th0 - 2.0 * PI * floor(th0 / (2.0 * PI)); var ph = y.q.w; var pth = select(y.v.z, -y.v.z, south);
   if (th > PI) { th = 2.0 * PI - th; ph = ph + PI; pth = -pth; }
-  return State(vec4<f32>(y.q.x, 1.0 / w, th, ph), vec4<f32>(1.0, -y.v.y / Dw, pth, -c.xi));
+  return State(vec4<f32>(y.q.x - c.r0 - minoF(w, y.v.y), 1.0 / w, th, ph), vec4<f32>(1.0, -y.v.y / Dw, pth, -c.xi));
 }

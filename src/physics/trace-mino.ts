@@ -1,7 +1,8 @@
 // Carter's separated null-geodesic equations in Mino time (spec 2026-10-07 mino integrator). Same Kerr geodesics as
 // trace.ts (which stays the reference); M = 1, camera-normalised past-directed p_t = 1, xi = -p_phi, eta = Carter's
-// constant. y = [t, w = 1/r, v, phi, l (affine), w', v', sigma] with ' = d/d(lambda), d(lambda) = dl / Sigma: v is the polar
-// angle measured from the NEARER pole (theta = v for sigma = +1, pi - v for sigma = -1).
+// constant. y = [tau, w = 1/r, v, phi, ell, w', v', sigma] with ' = d/d(lambda), d(lambda) = dl / Sigma: v is the
+// polar angle measured from the NEARER pole (theta = v for sigma = +1, pi - v for sigma = -1); tau is the regularised time
+// tau = t + r0 + F(w, w') and ell = l - r0 + w'/w (l the affine length from the camera) below.
 //
 // Radial variable w = 1/r, not r: the second-order form conserves (first integral) - (potential) only up to a constant
 // that integration error sets. In r that constant is fixed in the far field, where R(r) ~ r^4 ~ 1e12 at the camera, and
@@ -15,6 +16,18 @@
 // pi - theta at 7e-4: 2e-3 rad of phi on a GPU ray that grazed it). The equations are identical under theta -> pi - theta
 // (Theta, sin^2, cos^2 are even about the equator), so a step that starts past the equator first mirrors the state
 // (v -> pi - v, v' -> -v', sigma -> -sigma): v stays in [0, ~pi/2] with relative precision at both poles.
+// Time: t' = -[(r^2 + a^2) P / Delta + a (xi - a sin^2)] grows like r^2 = 1 / w^2 in the far field, so integrating t itself
+// spends ~1000 M of travel on a quadrature whose relative error (~tol per step) became 6e-4 M of light-travel delay (the
+// pre-Mino renderer's was ~1e-6 relative in many pixels). F(w, w') = w' g(w), g = -1/w + 2 ln w, has
+// dF/dlambda = w'' g + w'^2 g' = (R~'/2) g + R~ (1/w^2 + 2/w) along the ray (w'^2 = R~, w'' = R~'/2), which carries exactly
+// the 1/w^2 + 2/w growth; tau = t + r0 + F then obeys tau' = P(w) / Delta~ + rp(w) (2 w ln w - 1) - a (xi - a sin^2), with
+// P the polynomial [R~ (1 + 2w) Delta~ - (1 + a^2 w^2)(1 + A1 w^2)] / w^2 (exact division; sympy-checked) and
+// rp = R~' / (2w): bounded from the camera to the horizon's neighbourhood. t = tau - r0 - F exactly (the same t); the
+// delay the renderer needs, -t - r0 = F - tau (minoDelay), is a difference of O(10-100) numbers, not of O(1000) ones.
+// Affine length likewise: l' = Sigma = 1/w^2 + a^2 cos^2 grows the same way, and the emitters' weights are DIFFERENCES of
+// l (~1000 M from the camera: 2e-4 relative in f32 for a 0.25 M sample). d(w'/w)/dlambda = w''/w - w'^2/w^2 =
+// -(1/w^2 - c3 w / 2 - c4 w^2) along the ray, so ell = l - r0 + w'/w obeys ell' = a^2 cos^2 + c3 w / 2 + c4 w^2 and
+// l = ell + r0 - w'/w exactly (minoL; differences: minoDl).
 // WGSL twin: the Mino block of integrator-shared.wgsl (with camera-shared.wgsl's precise sinCosP).
 import type { Fate } from "./trace";
 
@@ -26,20 +39,38 @@ export const MINO_CTOL = 1e-3;
 export const MINO_LAND_ITERS = 2;  // Newton iterations of the plane landing step (minoLand)
 export const MINO_LAND_BAND = 0.01; // relative widening of [rIn, rOut] before landing (minoPlane)
 
-export interface MinoRay { a: number; xi: number; eta: number; K: number; A1: number; omMax: number }
-export function minoRay(a: number, xi: number, eta: number): MinoRay {
+/** Per-ray constants. r0: the camera radius (tau's origin); tp: P(w)'s coefficients (w^0..w^5); c2..c4: R~'s. */
+export interface MinoRay { a: number; xi: number; eta: number; K: number; A1: number; omMax: number; r0: number; tp: number[]; c2: number; c3: number; c4: number }
+export function minoRay(a: number, xi: number, eta: number, r0: number): MinoRay {
   // A bound on the polar oscillation's angular frequency near the equator (sqrt of eta + xi^2 - a^2 plus 6 a^2)
   const om2 = Math.max(0, eta + xi * xi - a * a) + 6 * a * a;
-  return { a, xi, eta, K: eta + (xi - a) * (xi - a), A1: a * a - a * xi, omMax: Math.sqrt(om2) };
+  const K = eta + (xi - a) * (xi - a), A1 = a * a - a * xi, a2 = a * a, a4 = a2 * a2, A12 = A1 * A1;
+  const tp = [A1 - K - 4, 2 * K + 2 * a2, A12 + A1 * a2 - 8 * A1 - 2 * K * a2 + 4 * K, 4 * A1 * a2 - 8 * K,
+    A12 * a2 - 4 * A12 - K * a4 + 8 * K * a2, 2 * A12 * a2 - 2 * K * a4];
+  return { a, xi, eta, K, A1, omMax: Math.sqrt(om2), r0, tp, c2: 2 * A1 - K, c3: 2 * K, c4: A12 - K * a2 };
 }
+/** F(w, w') = w' (2 ln w - 1/w): tau - F = t + r0 (see the header). */
+export function minoF(w: number, wp: number): number { return wp * (2 * Math.log(w) - 1 / w); }
+/** The light-travel delay from the camera, -t - r0 = F - tau (what the renderer's time-dependent emitters use). */
+export function minoDelay(y: Float64Array): number { return minoF(y[1], y[5]) - y[0]; }
+/** Affine length from the camera, l = ell + r0 - w'/w. */
+export function minoL(y: Float64Array, c: MinoRay): number { return y[4] + c.r0 - y[5] / y[1]; }
+/** Affine length from state ya to state yb (the emitters' weights): small differences only (twin: WGSL minoDl). */
+export function minoDl(ya: Float64Array, yb: Float64Array): number { return yb[4] - ya[4] - (yb[5] / yb[1] - ya[5] / ya[1]); }
 /** R~(w) = w^4 R(1/w): (dw/dlambda)^2 along the ray. */
 export function minoRw(w: number, c: MinoRay): number { const Q = 1 + c.A1 * w * w; return Q * Q - c.K * w * w * (1 - 2 * w + c.a * c.a * w * w); }
 /** Theta(theta) = (dtheta/dlambda)^2 along the ray. */
 export function minoTheta(th: number, c: MinoRay): number { const s = Math.sin(th), co = Math.cos(th); return c.eta + c.a * c.a * co * co - (c.xi * c.xi * co * co) / (s * s); }
 /** Camera at (r0, th0) with screen beta: w' = +sqrt(R~) (r decreasing), theta' = p_theta = -beta. */
 export function minoInit(r0: number, th0: number, beta: number, c: MinoRay): Float64Array {
-  const w0 = 1 / r0;
-  return minoHemi(new Float64Array([0, w0, th0, 0, 0, Math.sqrt(Math.max(0, minoRw(w0, c))), -beta, 1]));
+  if (r0 !== c.r0) throw new Error(`minoInit: r0 ${r0} differs from the ray's ${c.r0} (tau's origin)`);
+  const w0 = 1 / r0, wp = Math.sqrt(Math.max(0, minoRw(w0, c)));
+  // tau0 = 0 + r0 + F0 = r0 (1 - w0') + 2 w0' ln w0, with r0 (1 - w0') = -w0 (c2 + c3 w0 + c4 w0^2) / (1 + w0') (1 - R~ over
+  // 1 + sqrt(R~), no cancellation)
+  const tau0 = -w0 * (c.c2 + w0 * (c.c3 + w0 * c.c4)) / (1 + wp) + 2 * wp * Math.log(w0);
+  // ell0 = 0 - r0 + w0'/w0 = r0 (w0' - 1) = w0 (c2 + c3 w0 + c4 w0^2) / (1 + w0')
+  const ell0 = w0 * (c.c2 + w0 * (c.c3 + w0 * c.c4)) / (1 + wp);
+  return minoHemi(new Float64Array([tau0, w0, th0, 0, ell0, wp, -beta, 1]));
 }
 /** Mirror a state that is past the equator into the other hemisphere's frame (identity otherwise); exact. */
 // threshold = the f32 value of pi / 2 (the WGSL's 0.5 * PI), so both twins mirror the same f32 state; either frame is exact
@@ -53,12 +84,14 @@ export function minoRhs(y: Float64Array, c: MinoRay): Float64Array {
   const s = Math.sin(y[2]), co = Math.cos(y[2]), s2 = Math.max(s * s, 1e-30);
   const Q = 1 + c.A1 * w2;                 // P w^2
   const Dw = 1 - 2 * w + a2 * w2;          // Delta w^2
+  const tp = c.tp, P = tp[0] + w * (tp[1] + w * (tp[2] + w * (tp[3] + w * (tp[4] + w * tp[5]))));
+  const rp = c.c2 + w * (1.5 * c.c3 + w * 2 * c.c4); // R~'(w) / (2 w)
   return new Float64Array([
-    -((1 + a2 * w2) * Q / (w2 * Dw) + a * (xi - a * s2)), // t' = -[(r^2 + a^2) P / Delta + a (xi - a sin^2)]
+    P / Dw + rp * (2 * w * Math.log(w) - 1) - a * (xi - a * s2), // tau' = t' + dF/dlambda (header)
     y[5],                                                 // w'
     y[6],                                                 // theta'
     -(a * Q / Dw - a + xi / s2),                          // phi' = -[a P / Delta - a + xi / sin^2]
-    1 / w2 + a2 * co * co,                                // l' = Sigma
+    a2 * co * co + w * (0.5 * c.c3 + w * c.c4),             // ell' = Sigma + d(w'/w)/dlambda (header)
     2 * c.A1 * w * Q - c.K * (w - 3 * w2 + 2 * a2 * w2 * w), // w'' = R~'(w) / 2
     co * (xi * xi / (s2 * s) - a2 * s),                   // v'' = Theta'(v) / 2 = -a^2 sin cos + xi^2 cos / sin^3 (either hemisphere)
     0,                                                    // sigma is constant within a step
@@ -156,6 +189,19 @@ export function minoCrossing(y0: Float64Array, y1: Float64Array, f0: Float64Arra
   for (let k = 0; k < 40; k++) { const m = 0.5 * (lo + hi), cm = Math.cos(minoDense(y0, y1, f0, f1, h, m)[2]); if (cm * c0 > 0) lo = m; else hi = m; }
   return 0.5 * (lo + hi);
 }
+/** Largest w (smallest r) of the step's dense w(theta) over [0, 1]: the endpoints and the cubic's interior extrema (the
+ *  roots of its quadratic derivative). Exact for the curve the emitters sample, so a step whose dense path never comes
+ *  within radius R (1 / max w > R) is skipped without missing a sample. Twin: WGSL minoSegWMax. */
+export function minoSegWMax(y0: Float64Array, y1: Float64Array, f0: Float64Array, f1: Float64Array, h: number): number {
+  const w0 = y0[1], w1 = y1[1], d0 = h * f0[1], d1 = h * f1[1];
+  // w(t) = h00 w0 + h10 d0 + h01 w1 + h11 d1  =>  w'(t) = A t^2 + B t + C
+  const A = 6 * (w0 - w1) + 3 * (d0 + d1), B = -6 * (w0 - w1) - 4 * d0 - 2 * d1, C = d0;
+  let m = Math.max(w0, w1);
+  const at = (t: number) => { if (t > 0 && t < 1) m = Math.max(m, minoDense(y0, y1, f0, f1, h, t)[1]); };
+  if (Math.abs(A) > 1e-30) { const D = B * B - 4 * A * C; if (D >= 0) { const q = Math.sqrt(D); at((-B + q) / (2 * A)); at((-B - q) / (2 * A)); } }
+  else if (Math.abs(B) > 1e-30) at(-C / B);
+  return m;
+}
 /** The state ON the equatorial plane within the step (y0, f0, h) whose dense crossing is at fraction th: a DP5 step of
  *  size s from y0, s refined by safeguarded Newton on cos(theta) (two iterations; bisection inside the sign bracket when
  *  Newton leaves it, e.g. a grazing theta' ~ 0). The cubic Hermite crossing is only 4th order: its interpolation error
@@ -171,6 +217,30 @@ export function minoLand(y0: Float64Array, f0: Float64Array, h: number, th: numb
     s = sn > lo && sn < hi ? sn : 0.5 * (lo + hi);
   }
   return minoTry(y0, s, c, f0).y1;
+}
+/** The state ON the sphere w = wT within a step that crosses it (dense crossing at fraction th): a DP5 step from y0 with its
+ *  size refined by safeguarded Newton on w - wT (w' = f[1] is never 0 out there). The renderer reads the sky direction ON
+ *  the escape sphere r = 1.2 r_obs, as the pre-Mino loop did to within its last 50 M step: a long Mino step can carry w past
+ *  0 (r < 0), and the direction still turns by ~M b / r^2 beyond the cutoff. Twin: WGSL minoLandW. */
+export function minoLandW(y0: Float64Array, f0: Float64Array, h: number, th: number, c: MinoRay, wT: number): Float64Array {
+  const g0 = y0[1] - wT;
+  let lo = 0, hi = h, s = th * h;
+  for (let k = 0; k < MINO_LAND_ITERS; k++) {
+    const { y1: d, f1: fd } = minoTry(y0, s, c, f0), g = d[1] - wT;
+    if (g * g0 > 0) lo = s; else hi = s;
+    const sn = s - g / fd[1];
+    s = sn > lo && sn < hi ? sn : 0.5 * (lo + hi);
+  }
+  return minoTry(y0, s, c, f0).y1;
+}
+/** Escape test of one step: undefined unless the step ends outside the sphere w = wT, else the state landed ON it (the
+ *  crossing fraction by bisection on the dense w). Twin: WGSL minoSphere. */
+export function minoSphere(st: MinoStepOut, c: MinoRay, wT: number): Float64Array | undefined {
+  if (!(st.y[1] < wT)) return undefined;
+  if (!(st.y0[1] >= wT)) return st.y0; // started outside (cannot happen after a test at every step; kept total)
+  let lo = 0, hi = 1;
+  for (let k = 0; k < 40; k++) { const m = 0.5 * (lo + hi); if (minoDense(st.y0, st.y, st.f0, st.f1, st.h, m)[1] >= wT) lo = m; else hi = m; }
+  return minoLandW(st.y0, st.f0, st.h, 0.5 * (lo + hi), c, wT);
 }
 /** Disk test of one step: the landed plane state when the step crosses the plane with the dense crossing radius inside
  *  [rIn, rOut] widened by MINO_LAND_BAND (landing moves r by ~1e-5 relative at most), else undefined. The caller tests
@@ -190,14 +260,14 @@ export function minoToState(y: Float64Array, c: MinoRay): Float64Array {
   let th = (south ? Math.PI - y[2] : y[2]) % (2 * Math.PI), ph = y[3], pth = south ? -y[6] : y[6];
   if (th < 0) th += 2 * Math.PI;
   if (th > Math.PI) { th = 2 * Math.PI - th; ph += Math.PI; pth = -pth; }
-  return new Float64Array([y[0], 1 / w, th, ph, 1, -y[5] / Dw, pth, -c.xi]);
+  return new Float64Array([y[0] - c.r0 - minoF(w, y[5]), 1 / w, th, ph, 1, -y[5] / Dw, pth, -c.xi]);
 }
 export interface MinoTraceResult { fate: Fate; steps: number; attempts: number; rHit?: number; phiHit?: number; tHit?: number; s: Float64Array; drift: number }
 /** The render loop's termination order: disk crossing (cos theta = 0 root of the dense output), capture, escape, budget.
  *  drift is the largest |w'^2 - R~(w)| seen (the first integral, of order 1 along the whole ray). */
 export function minoTrace(al: number, be: number, a: number, inclDeg: number, o: { rIn: number; rOut: number; rObs: number; maxSteps?: number; tol?: number; uFrac?: number; ctol?: number }): MinoTraceResult {
   const incl = (inclDeg * Math.PI) / 180, xi = -al * Math.sin(incl), ci = Math.cos(incl), si = Math.sin(incl);
-  const c = minoRay(a, xi, be * be + (xi * xi * ci * ci) / Math.max(si * si, 1e-8) - a * a * ci * ci);
+  const c = minoRay(a, xi, be * be + (xi * xi * ci * ci) / Math.max(si * si, 1e-8) - a * a * ci * ci, o.rObs);
   const rh = 1 + Math.sqrt(Math.max(0, 1 - a * a)), maxSteps = o.maxSteps ?? 4800;
   let y = minoInit(o.rObs, incl, be, c), h = 50 / (o.rObs * o.rObs), f: Float64Array | undefined, attempts = 0, drift = 0;
   for (let step = 1; step <= maxSteps; step++) {
@@ -207,12 +277,13 @@ export function minoTrace(al: number, be: number, a: number, inclDeg: number, o:
     const d = minoPlane(st, c, o.rIn, o.rOut);
     if (d) {
       const rHit = 1 / d[1];
-      if (rHit >= o.rIn && rHit <= o.rOut) { const s = minoToState(d, c); return { fate: "disk", steps: step, attempts, rHit, phiHit: s[3], tHit: d[0], s, drift }; }
+      if (rHit >= o.rIn && rHit <= o.rOut) { const s = minoToState(d, c); return { fate: "disk", steps: step, attempts, rHit, phiHit: s[3], tHit: s[0], s, drift }; }
     }
     y = st.y; h = st.hNext; f = st.f1;
     // tests in w (a long outgoing step may carry w past 0, where 1/w would read as captured)
     if (y[1] >= 1 / (rh * 1.005)) return { fate: "captured", steps: step, attempts, s: minoToState(y, c), drift };
-    if (y[1] < 1 / (o.rObs * 1.2)) return { fate: "escaped", steps: step, attempts, s: minoToState(y, c), drift };
+    const esc = minoSphere(st, c, 1 / (o.rObs * 1.2));
+    if (esc) return { fate: "escaped", steps: step, attempts, s: minoToState(esc, c), drift };
   }
   return { fate: "budget", steps: maxSteps, attempts, s: minoToState(y, c), drift };
 }

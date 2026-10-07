@@ -3,17 +3,20 @@
 // tests/sweep-mino.test.ts, scripts/build-accuracy-ref.ts and the ?accuracy route. Geometry and the 1.3 mm flow
 // intensity only; no new physics (flowShift / flowCoeffs are hot-flow.ts's).
 import { metricUpper } from "./kerr";
+import { rk4 } from "./geodesic";
 import { stepGeodesic, F_AXIS, F_PHI, DL_FAR_MIN, H_TOL, H_TOL_FAR, MAX_RETRY, K_FAR, DL_FAR_MAX } from "./trace";
 import { flowShift, flowCoeffs, HOTFLOW } from "./hot-flow";
 
 export const REF_ROBS = 1000, REF_ROUT = 40;
-export type RefCfg = { K: number; MAXD: number; fAxis: number; fPhi: number; dlFarMin: number; nearCaps: boolean; hNear: number; hFar: number; maxRetry: number; maxSteps: number; dlCap?: number; scale?: number };
+export type RefCfg = { K: number; MAXD: number; fAxis: number; fPhi: number; dlFarMin: number; nearCaps: boolean; hNear: number; hFar: number; maxRetry: number; maxSteps: number; dlCap?: number; scale?: number; landEsc?: boolean };
 /** Today's shipped controller (trace.ts traceRay's), parameterised. */
 export const SHIP: RefCfg = { K: K_FAR, MAXD: DL_FAR_MAX, fAxis: F_AXIS, fPhi: F_PHI, dlFarMin: DL_FAR_MIN, nearCaps: true, hNear: H_TOL, hFar: H_TOL_FAR, maxRetry: MAX_RETRY, maxSteps: 4800 };
 // The far-monitor sweep's REF1/REF2 with every base step also scaled down (0.1x / 0.05x; RK4 error ~ h^4) and the
-// monitors at 1e-9 / 1e-10: converged to ~1e-6 relative, a tenth of the scoring floors.
-export const REF1: RefCfg = { K: 0.01, MAXD: 1.5, fAxis: 0.02, fPhi: 0.02, dlFarMin: 0.01, nearCaps: true, hNear: 1e-9, hFar: 1e-9, maxRetry: 24, maxSteps: 400000, scale: 0.1 };
-export const REF2: RefCfg = { K: 0.005, MAXD: 0.75, fAxis: 0.01, fPhi: 0.01, dlFarMin: 0.005, nearCaps: true, hNear: 1e-10, hFar: 1e-10, maxRetry: 28, maxSteps: 400000, scale: 0.05 };
+// monitors at 1e-9 / 1e-10: converged to ~1e-6 relative, a tenth of the scoring floors. landEsc: the sky direction is read ON
+// the escape sphere r = 1.2 r_obs (the renderer's cutoff; the direction still turns by ~M b / r^2 beyond it, 0.02 px over
+// one 50 M shipped far step), so references and the Mino renderer (minoSphere) compare the same quantity.
+export const REF1: RefCfg = { K: 0.01, MAXD: 1.5, fAxis: 0.02, fPhi: 0.02, dlFarMin: 0.01, nearCaps: true, hNear: 1e-9, hFar: 1e-9, maxRetry: 24, maxSteps: 400000, scale: 0.1, landEsc: true };
+export const REF2: RefCfg = { K: 0.005, MAXD: 0.75, fAxis: 0.01, fPhi: 0.01, dlFarMin: 0.005, nearCaps: true, hNear: 1e-10, hFar: 1e-10, maxRetry: 28, maxSteps: 400000, scale: 0.05, landEsc: true };
 
 export function skyDirCPU(s: Float64Array, a: number): number[] {
   const r = s[1], th = s[2], ph = s[3];
@@ -92,10 +95,17 @@ export function refTrace(s0: Float64Array, a: number, rIn: number, c: RefCfg, fl
         if (rHit >= rIn && rHit <= REF_ROUT) return { fate: "disk", steps: step, retries, rHit, phiHit: s[3] + frac * (sN[3] - s[3]), tHit: s[0] + frac * (sN[0] - s[0]) };
       }
     }
-    const rPrev = s[1]; s = sN;
+    const rPrev = s[1], sPrev = s; s = sN;
     if (s[1] <= rh * 1.005) return { fate: "captured", steps: step, retries, I: I[0] };
     if (fl && s[1] > HOTFLOW.rMax && s[1] > rPrev) return { fate: "escaped", steps: step, retries, I: I[0] };
-    if (s[1] > REF_ROBS * 1.2) return { fate: "escaped", steps: step, retries, dir: skyDirCPU(s, a), I: I[0] };
+    if (s[1] > REF_ROBS * 1.2) {
+      if (c.landEsc && !fl) { // bisect a single RK4 step from the last state inside onto r = 1.2 r_obs (steps here are <= 1.5 M)
+        let lo = 0, hi = o.dl;
+        for (let k = 0; k < 60; k++) { const m = 0.5 * (lo + hi); if (rk4(sPrev, a, m)[1] < REF_ROBS * 1.2) lo = m; else hi = m; }
+        s = rk4(sPrev, a, 0.5 * (lo + hi));
+      }
+      return { fate: "escaped", steps: step, retries, dir: skyDirCPU(s, a), I: I[0] };
+    }
   }
   return { fate: "budget", steps: c.maxSteps, retries, I: I[0] };
 }
