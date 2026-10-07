@@ -98,6 +98,10 @@ describe("BuildScheduler", () => {
 });
 
 describe("chooseMode", () => {
+  it("forceLive (a 1.3 mm hotspot can be in view) traces live even with a complete cache", () => {
+    expect(chooseMode(true, 4, true, true)).toBe("live");
+    expect(chooseMode(true, 4, true, false)).toBe("cached");
+  });
   it("is cached only while playing, enabled, with a complete set", () => {
     expect(chooseMode(true, 1, true)).toBe("cached");
     expect(chooseMode(true, 0, true)).toBe("live");   // still building set 0

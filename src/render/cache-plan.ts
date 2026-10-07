@@ -68,6 +68,8 @@ export class BuildScheduler {
 }
 
 export type Mode = "live" | "cached";
-export function chooseMode(playing: boolean, completedSets: number, enabled: boolean): Mode {
+/** forceLive: a 1.3 mm hotspot can be in view (main.ts, hotspotAliveWindow); the steady cache cannot show it. */
+export function chooseMode(playing: boolean, completedSets: number, enabled: boolean, forceLive = false): Mode {
+  if (forceLive) return "live";
   return playing && enabled && completedSets > 0 ? "cached" : "live";
 }
