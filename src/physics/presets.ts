@@ -1,4 +1,4 @@
-import { lambdaFromMdot, lambdaForPeakTemperature } from "./units";
+import { lambdaFromMdot, lambdaForPeakTemperature, eddingtonLuminosity } from "./units";
 
 export interface Preset {
   id: string; name: string;
@@ -38,6 +38,18 @@ export const PRESETS: readonly Preset[] = [
     // "Anemic" disk about as hot as the Sun's surface (Thorne, The Science of Interstellar).
     lambda: lambdaForPeakTemperature(1e8, 0.6, 5800), jet: false,
     caption: "Fictional. 100 million solar masses (Thorne, The Science of Interstellar); the film's disk was rendered at spin 0.6 for the visuals (James, von Tunzelmann, Franklin & Thorne 2015), an 'anemic' disk about as hot as the Sun's surface. The 85° view is our choice to resemble the film. The film removed Doppler colour and brightness shifts; this render keeps them, which is why one side is brighter here. An accretion rate this low is a hot flow's, so at 1.3 mm it shows as one (density scaled from Sgr A*'s calibration). At 1.3 mm hotspots flare at each flux eruption, scaled from Sgr A*'s (a model prediction).",
+  },
+  {
+    id: "ton618", name: "TON 618", massSun: 6.6e10, a: 0.9, inclDeg: 30,
+    // L_bol 4e40 W (4e47 erg/s; NED, via its absolute magnitude -30.7) over L_Edd: lambda ~0.05.
+    lambda: 4e40 / eddingtonLuminosity(6.6e10), jet: true,
+    caption: "A hyperluminous, radio-loud quasar at redshift 2.219, seen as it was 10.8 billion years ago. Mass 66 billion solar masses from the width of its Hβ line (Shemmer et al. 2004); the C IV line gives 40.7 billion (Ge et al. 2019), a line usually considered less reliable for masses. Its luminosity, ~4×10⁴⁷ erg/s, is about 5 % of Eddington: a thin disk, as drawn. Spin is not measured (0.9 is a common model value), nor is the inclination: broad-line quasars are seen within roughly 45° of their axis, and 30° is our choice. Its radio jet is real; the jet's brightness here follows from the energy budget (a fraction η of its jet power, the value fixed by M87's optical nucleus), a prediction rather than a measurement. At 1.3 mm its thin disk is nearly dark (brightness temperature ~10⁴ K against the hot flows' ~10¹⁰ K) and, as for every object, the jet is not drawn.",
+  },
+  {
+    id: "phoenixa", name: "Phoenix A", massSun: 1e11, a: 0.9, inclDeg: 70,
+    // Ueda et al. 2013: unabsorbed AGN power 6e47 erg/s (6e40 W) over L_Edd: lambda ~0.05.
+    lambda: 6e40 / eddingtonLuminosity(1e11), jet: true,
+    caption: "The central galaxy of the Phoenix cluster, at redshift 0.597. Its black hole's mass is not measured: Brockamp et al. 2016 model the galaxy's stellar core and find it 'might have a mass of the order of 10¹¹' solar masses, possibly more; 100 billion is drawn. Its nucleus is an obscured (type-2) quasar whose unabsorbed power, ~6×10⁴⁷ erg/s (Ueda et al. 2013, Suzaku and Chandra), is about 5 % of Eddington at this mass: a thin disk, as drawn. Spin is not measured (0.9 is a common model value), nor is the inclination: obscured quasars are seen nearer edge-on, and 70° is our choice. Its jets carve cavities in the cluster's hot gas; their brightness here follows from the energy budget (a fraction η of the jet power, the value fixed by M87's optical nucleus), a prediction rather than a measurement. At 1.3 mm its thin disk is nearly dark (brightness temperature ~10⁴ K against the hot flows' ~10¹⁰ K) and, as for every object, the jet is not drawn.",
   },
 ];
 

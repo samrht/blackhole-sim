@@ -12,7 +12,7 @@ This isn't a stylized visualization — it's a real general-relativistic ray tra
 - Novikov–Thorne / Page–Thorne relativistic disk flux (correct zero-torque inner boundary — flux peaks just outside the ISCO, not at it)
 - Combined gravitational + Doppler redshift (g-factor), producing physically correct approaching/receding disk asymmetry
 - Blackbody emission → CIE XYZ → linear sRGB (Wyman et al. color-matching fit) — colour and brightness are the blackbody's visible-band radiance at the observed temperature, not an artist's gradient
-- Real-object presets — M87\*, Sagittarius A\*, Cygnus X-1, GRS 1915+105 and Interstellar's Gargantua with published mass, spin and viewing angle, physically derived disk temperature, and a caption with sources and caveats
+- Real-object presets — M87\*, Sagittarius A\*, Cygnus X-1, GRS 1915+105, TON 618, Phoenix A and Interstellar's Gargantua with published mass, spin and viewing angle, physically derived disk temperature, and a caption with sources and caveats
 - Physical units — Mass and Accretion (fraction of Eddington) sliders; horizon, ISCO and photon orbit in km/AU, disk peak temperature, ISCO orbital period, playback time scale
 - Synchrotron jet — magnetically arrested field, M87's measured acceleration, electrons injected with M87's core spectrum and cooled by their own radiation, exact cyclo-synchrotron emission and self-absorption transferred in general relativity along the geodesics, brightness from energy conservation (the electrons radiate η × the Blandford–Znajek power) in the same units as the disk
 - Light-travel delay — each pixel shows its emitter at the time the light left it, so the photon-ring subimages echo the disk tens of M later (toggle in the panel)
@@ -213,6 +213,14 @@ sample (exact), and the flow is sampled once per step beyond 8 M (flux changed 2
 at 1.3 r_+ (flux -0.2 to -0.4 %, pixels up to 2.7 %). What remains is the integrator's near-field step count
 (~100 steps within 2 r_+ and ~255 inside 50 M per ray), shared with the visible view. Golden mm hashes re-recorded
 (sgra-mm f298812a, m87-mm 3ea2d532); visible hashes unchanged.
+
+**TON 618 and Phoenix A presets (2026-10-07):** two of the most massive black holes known, both quasars accreting at
+~5 % of Eddington, so both are thin disks (and nearly dark at 1.3 mm, T_b ~ 10⁴ K). TON 618: 6.6 × 10¹⁰ M☉ from Hβ
+(Shemmer et al. 2004; C IV gives 4.07 × 10¹⁰, Ge et al. 2019), L_bol ≈ 4 × 10⁴⁷ erg/s → λ 0.048, peak **20,000 K**, radio-loud
+(jet on). Phoenix A: ~10¹¹ M☉, a model estimate from the stellar core (Brockamp et al. 2016, "of the order of 10¹¹"),
+unabsorbed AGN power ≈ 6 × 10⁴⁷ erg/s (Ueda et al. 2013) → λ 0.048, peak **18,000 K**, jets carving the cluster cavities
+(jet on). Spin (0.9) and inclination (30° for the broad-line TON 618, 70° for the obscured Phoenix A) are not measured;
+the captions say so. The Mass slider now reaches 10^11.5 M☉. Jet brightness follows the energy budget, a prediction.
 
 **Hotspot flares at 1.3 mm (feat/mm-hotspots, 2026-10-07):** each horizon-flux eruption (the jet-knot history,
 `flux-history.ts`, about every 1500 M) launches a hotspot in the hot flow, after ALMA's Sgr A* hotspot following the
