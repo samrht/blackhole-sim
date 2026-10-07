@@ -214,7 +214,39 @@ at 1.3 r_+ (flux -0.2 to -0.4 %, pixels up to 2.7 %). What remains is the integr
 (~100 steps within 2 r_+ and ~255 inside 50 M per ray), shared with the visible view. Golden mm hashes re-recorded
 (sgra-mm f298812a, m87-mm 3ea2d532); visible hashes unchanged.
 
-**Current gates (feat/hot-flow-mm):** `npm test` 239 passed, 7 skipped; `?parity` PASS 1.654e-4 over 337 (hot flow
+**Hotspot flares at 1.3 mm (feat/mm-hotspots, 2026-10-07):** each horizon-flux eruption (the jet-knot history,
+`flux-history.ts`, about every 1500 M) launches a hotspot in the hot flow, after ALMA's Sgr A* hotspot following the
+X-ray flare of 2017 April 11 (Wielgus et al. 2022, A&A 665 L6: Keplerian at ~11 r_g, 74 ± 6 min, ≲ 0.3 Jy against
+2.4 Jy) and GRAVITY's near-infrared orbits (2018, A&A 618 L10: 6–10 r_g, ~45 min). Hotspot k orbits rigidly, prograde
+and Keplerian in the equatorial plane at r_c = 8 + 4 u_k r_g from a hashed azimuth; it is a Gaussian 6 r_g across
+(σ = 2.548 M, cut at 4σ) whose light curve rises over 0.1 P, e-folds in P and ends by 3 P (≤ 802 M, shorter than the
+1000 M minimum eruption gap, so at most one is alive). Inside it the flow's electrons are boosted by A_k L G at the
+flow's own temperature and field, radiating with the blob's own Doppler factor; flow and hotspot share one slab per
+sample (the blob is partly opaque, τ ~ 0.3, so adding a separate image would be wrong by 8 % in flux), each sample at
+its own emission time (light-travel delay). A_k = A₀ s δ_k/δ̄ with s the Flux-variability slider (0 turns hotspots
+off). A₀ = 9.22 (`scripts/calibrate-hotspot.ts`, 96² CPU twin): a mean-depth hotspot at r_c = 10 at the peak of its
+light curve adds 0.300 Jy to Sgr A*, averaged over four orbital phases. Other objects' hotspots are predictions in
+units of M. The cache stores the steady flow, so frames trace live while a hotspot can be in view: alive within
+±100 M of the clock (the measured bound on the light-travel delay of rays through the blob region: 77.9 M for
+Sgr A*, 68.8 M for Gargantua, 48²); otherwise mm frames send `fluxVar = 0`, which in mm drives only the hotspots, so
+hotspot-free live frames skip that code exactly. Gates: `?parity` adds 825 hotspot cases (state on the f32 epoch split
+up to t = 7.5e6 M, profile, Doppler factor; worst 0.354 of tolerance; σ = 2.6 fails at 149×); `?hotflow` renders Sgr A*
+at the peak of eruption 0's hotspot and gates the flux it adds and its centroid against the CPU twin (light delay on:
+0.212 vs 0.214 Jy at (−1.49, −4.37) vs (−1.49, −4.37) M; off: 0.597 vs 0.602 Jy, centroid within 0.01 M); golden adds
+`sgra-mm-hotspot` (fa9214e0) with every other hash unchanged; `?cachecheck` unchanged (cached frames never show a
+hotspot); an app check jumps the clock (dev-only `window.__bhSetTime`) into a hotspot, sees the mode go live and
+~19,000 pixels brighten, then back to cached within 3 s (no rebuild). Performance (bench minima, interleaved with
+`main`, 720p): hotspot-free mm frames 100–112 ms vs 105–115 on `main` (no cost); live frames with a hotspot about
++4 % (throttling noise is ±20 %). Limitations: rigid blob (real hotspots shear), electrons boosted at the flow's
+temperature (real ones are heated and partly non-thermal), no polarization (ALMA's loop is a polarization signature),
+radius range and A₀ from Sgr A* alone; hotspot frames render at the live rate.
+
+**Current gates (feat/mm-hotspots):** `npm test` 248 passed, 10 skipped; `?parity` PASS 1.654e-4 over 1162 (hot flow
+0.245, hotspots 0.354 of tolerance); `?shadow` PASS; `?golden` PASS (visible 914d238f/62578f82/a78f2dcc/97ea770a/f1496f01,
+sgra-mm f298812a, m87-mm 3ea2d532 unchanged; sgra-mm-hotspot fa9214e0); `?cachecheck` PASS 0.00e+0 everywhere; `?hotflow`
+PASS (incl. the hotspot twin, light delay on and off); every app check PASS, incl. the 1.3 mm hotspot.
+
+**Previous gates (feat/hot-flow-mm):** `npm test` 239 passed, 7 skipped; `?parity` PASS 1.654e-4 over 337 (hot flow
 0.245 of tolerance); `?shadow` PASS; `?golden` PASS (visible 914d238f/62578f82/a78f2dcc/97ea770a/f1496f01 unchanged,
 sgra-mm fa585842, m87-mm f358f238); `?cachecheck` PASS 0.00e+0 everywhere; `?hotflow` PASS; every app check PASS.
 

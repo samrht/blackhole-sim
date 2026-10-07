@@ -81,6 +81,9 @@ this file is the queue. Each item gets its own spec (and plan) before code, as e
   output present ignores); a cooling-aware T_e for dense
   hot flows (λ ≳ 1e-4); MAD compression for M87*'s ring; eruption flares (feat/eruption-flares) can now be revisited
   against the hot flow.
+- [x] **Hotspot flares at 1.3 mm** (2026-10-07; README "Hotspot flares at 1.3 mm"; spec
+  docs/specs/2026-10-04-mm-hotspots-design.md): an eruption-born Keplerian blob at 8–12 r_g, A₀ calibrated to ALMA's
+  +0.3 Jy for Sgr A*, live-traced while alive. Follow-ups: shearing blob; heated / non-thermal electrons; polarization.
 - [ ] **Mobile layout**: control panel as a collapsible sheet and a phone-sized default render
   scale (camera drag already works on touch: it uses pointer events).
 

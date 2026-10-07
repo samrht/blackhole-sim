@@ -1,7 +1,12 @@
 # Hotspot flares in the 1.3 mm view — design
 
 **Date:** 2026-10-04
-**Status:** design approved in conversation; this document awaits review
+**Status:** implemented (plan `docs/plans/2026-10-07-mm-hotspots.md`, 2026-10-07). Departures from this design:
+(1) the live-window half-width is measured, `HOTSPOT.pad` = 100 M (max light-travel delay through the blob region
+77.9 M for Sgr A*, 68.8 M for Gargantua), equal to the 100 M written in §3 but now backed by a gated sweep; (2) in mm,
+`main.ts` sends `fluxVar = 0` while no hotspot can be in view (in mm it drives only the hotspots), so hotspot-free live
+frames skip the hotspot code exactly; (3) a dev-only `window.__bhSetTime` hook lets the app check jump to a hotspot.
+Calibrated A₀ = 9.22.
 **Builds on:** `docs/specs/2026-10-04-hot-flow-mm-design.md` (the hot flow and the 1.3 mm view),
 `docs/specs/2026-10-03-flux-statistics-design.md` (the eruption history it reuses). Revives the intent of the shelved
 `feat/eruption-flares` (disk hotspots, invisible against the thin disk) on the hot flow, where they are visible.
