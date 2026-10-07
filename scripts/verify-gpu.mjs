@@ -306,6 +306,9 @@ if (!reachOk) failed = true;
   const dMm = diags.length;
   await page.goto(BASE + "/#p=sgra&b=mm", { waitUntil: "load", timeout: 20000 });
   const band = await page.evaluate(() => document.getElementById("band").value);
+  // A hash-only goto keeps the page, and its clock, from the earlier checks; at 1.3 mm a hotspot alive near that time
+  // forces live frames (spec 2026-10-04 mm hotspots). Clock 0 leaves 731 M (~36 s) before eruption 0's live window.
+  await page.evaluate(() => window.__bhSetTime(0));
   const cached = await waitMode("cached");
   await page.waitForTimeout(1500);
   const vp = page.viewportSize(), cx = Math.round(vp.width / 2), cy = Math.round(vp.height / 2), R = 180;
