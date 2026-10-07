@@ -25,7 +25,7 @@ import cameraParityWGSL from "../render/camera-parity.wgsl?raw";
 import { stepGeodesic, stepSize, H_TOL, H_TOL_FAR, MAX_RETRY, F_PHI, DL_FAR_MIN } from "../physics/trace";
 import integratorParityWGSL from "../render/integrator-parity.wgsl?raw";
 import minoParityWGSL from "../render/mino-parity.wgsl?raw";
-import { minoRay, minoInit, minoRhs, minoStep, minoTry, minoDense, minoToState, MINO_TOL as MINO_TOL_PARITY, MINO_MAX_REJECT as MINO_MAX_REJECT_PARITY, MINO_UFRAC as MINO_UFRAC_PARITY } from "../physics/trace-mino";
+import { minoRay, minoInit, minoRhs, minoStep, minoTry, minoDense, minoToState, minoHemi, minoCrossing, minoLand, MINO_TOL as MINO_TOL_PARITY, MINO_MAX_REJECT as MINO_MAX_REJECT_PARITY, MINO_UFRAC as MINO_UFRAC_PARITY } from "../physics/trace-mino";
 
 /** Runs the WGSL metric/orbit/g-factor helpers on fixed inputs and returns the max relative
  *  error vs the TypeScript core. f32 GPU vs f64 CPU keeps this in the ~1e-6..1e-4 range. */
@@ -262,7 +262,7 @@ export async function runParity(): Promise<{ maxErr: number; rows: number; jetLo
   device.queue.writeBuffer(cin, 0, carr);
   const cout = device.createBuffer({ size: ccases.length * 32, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
   const cread = device.createBuffer({ size: ccases.length * 32, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
-  const cmod = device.createShaderModule({ code: cameraSharedWGSL + cameraParityWGSL });
+  const cmod = device.createShaderModule({ code: integratorSharedWGSL + cameraSharedWGSL + cameraParityWGSL }); // sinCosP
   const cpipe = device.createComputePipeline({ layout: "auto", compute: { module: cmod, entryPoint: "main" } });
   const cbind = device.createBindGroup({ layout: cpipe.getBindGroupLayout(0), entries: [
     { binding: 0, resource: { buffer: cin } }, { binding: 1, resource: { buffer: cout } }] });
@@ -433,8 +433,9 @@ export async function runParity(): Promise<{ maxErr: number; rows: number; jetLo
   // --- Mino-time integrator (CPU trace-mino.ts vs the SHIPPED minoRhs / minoStep / minoDense / minoToState in
   // integrator-shared.wgsl): ONE step from an identical f32 state per case (see mino-parity.wgsl for why). States are
   // found by walking the CPU twin: the camera's first step at r = 1000; a ray at r ~ 60; near the horizon at a = 0.9 and
-  // 0.998; near the axis (xi = -0.001); at a radial turning point (photon-ring ray); and a forced reject (the r ~ 60
-  // state with its proposal x10).
+  // 0.998; near the axis (xi = -0.001); at a radial turning point (photon-ring ray); a forced reject (the r ~ 60
+  // state with its proposal x10); a state just past the equator (the step mirrors it into the south frame); and near the
+  // SOUTH pole in that frame (the i = 1 deg ray that grazes it).
   type MCase = { label: string; y: Float64Array; a: number; xi: number; eta: number; h: number };
   const mcases: MCase[] = [];
   const mkRay = (al: number, be: number, a: number, iDeg: number) => {
@@ -452,14 +453,27 @@ export async function runParity(): Promise<{ maxErr: number; rows: number; jetLo
   caseAt("r~60", def, (y) => 1 / y[1] < 60);
   caseAt("near-horizon a=0.9", mkRay(2, 0.5, 0.9, 90), (y) => 1 / y[1] < 1.6);
   caseAt("near-horizon a=0.998", mkRay(1.5, 0.5, 0.998, 90), (y) => 1 / y[1] < 1.15);
-  caseAt("near-axis", mkRay(0.0072, 6, 0, 8), (y) => (1 - y[2]) * (1 + y[2]) < 1e-3);
+  caseAt("near-axis", mkRay(0.0072, 6, 0, 8), (y) => Math.sin(y[2]) ** 2 < 1e-3);
   caseAt("turning point", mkRay(5.3, 0, 0, 90), (y, prev) => y[5] * prev[5] < 0);
   caseAt("forced reject", def, (y) => 1 / y[1] < 60, 10);
+  caseAt("past equator", mkRay(6, 0.5, 0.9, 80), (y) => y[2] > Math.PI / 2);
+  caseAt("near south pole", mkRay(-0.52, 13.48, 0.9, 1), (y) => y[7] < 0 && Math.sin(y[2]) ** 2 < 1e-3);
+  if (!mcases.some((m) => m.label === "past equator" && m.y[2] > Math.PI / 2)) throw new Error("mino parity: no past-equator case");
+  { // the state whose step crosses the plane (the landing step's case)
+    const r = mkRay(8, 3, 0.9, 72), c = minoRay(r.a, r.xi, r.eta); let y = minoInit(1000, r.th0, r.be, c), f = minoRhs(y, c), h = 50 / 1e6;
+    for (let k = 0; k < 4000; k++) {
+      const o = minoStep(y, h, c, undefined, undefined, f);
+      if (minoCrossing(o.y0, o.y, o.f0, o.f1, o.h) >= 0) { mcases.push({ label: "plane crossing", y: Float64Array.from(y, Math.fround), a: r.a, xi: r.xi, eta: r.eta, h: Math.fround(h) }); break; }
+      y = o.y; f = o.f1; h = o.hNext;
+    }
+    if (!mcases.some((m) => m.label === "plane crossing")) throw new Error("mino parity: no plane-crossing case");
+  }
+  if (!mcases.some((m) => m.label === "near south pole" && m.y[7] < 0 && Math.sin(m.y[2]) ** 2 < 1e-3)) throw new Error("mino parity: no south-pole case");
   const mIn = new Float32Array(mcases.length * 12);
-  mcases.forEach((m, i) => mIn.set([m.y[0], m.y[1], m.y[2], m.y[3], m.y[4], m.y[5], m.y[6], 0, m.a, m.xi, m.eta, m.h], i * 12));
+  mcases.forEach((m, i) => mIn.set([m.y[0], m.y[1], m.y[2], m.y[3], m.y[4], m.y[5], m.y[6], m.y[7], m.a, m.xi, m.eta, m.h], i * 12));
   const mInBuf = device.createBuffer({ size: mIn.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
   device.queue.writeBuffer(mInBuf, 0, mIn);
-  const MOUT = 32; // floats per MOut (8 vec4)
+  const MOUT = 44; // floats per MOut (11 vec4)
   const mOutBuf = device.createBuffer({ size: mcases.length * MOUT * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
   const mRead = device.createBuffer({ size: mcases.length * MOUT * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
   const mMod = device.createShaderModule({ code: integratorSharedWGSL + minoParityWGSL });
@@ -484,20 +498,29 @@ export async function runParity(): Promise<{ maxErr: number; rows: number; jetLo
     const g = Array.from(mGpu.subarray(i * MOUT, i * MOUT + MOUT));
     // After a rejected attempt the accepted h derives from the attempt's f32 error norm, so it differs from the CPU's in
     // the 4th digit; the state is compared against ONE CPU attempt at the GPU's own h, and the two h are compared.
-    const c = minoRay(m.a, m.xi, m.eta), o = minoStep(m.y, m.h, c), f0 = minoRhs(m.y, c), tr = minoTry(m.y, g[29], c, f0);
-    const st = minoToState(tr.y1, c), d = minoDense(m.y, tr.y1, f0, tr.f1, g[29], 0.37); // no case is an exact xi = 0 pole passage
-    mset(i, "h used", g[29], o.h, 1e-3 * o.h);
+    // eps = 2^-23: the expectation models the f32 GPU's drift-noise floor (MINO_EPS)
+    // the step mirrors a past-equator start into the south frame first (minoHemi); the expectation starts from that state
+    const c = minoRay(m.a, m.xi, m.eta), o = minoStep(m.y, m.h, c, undefined, undefined, undefined, undefined, 2 ** -23), y0 = minoHemi(m.y), f0 = minoRhs(y0, c), tr = minoTry(y0, g[29], c, f0, undefined, undefined, 2 ** -23);
+    const st = minoToState(tr.y1, c), d = minoDense(y0, tr.y1, f0, tr.f1, g[29], 0.37);
+    mset(i, "h used", g[29], o.h, 1e-2 * o.h); // after a reject h derives from the rejected attempt's f32 error norm
     const cmpY = (base: number, yy: Float64Array, tag: string) => {
       mset(i, tag + "t", g[base], yy[0], 1e-5 * Math.max(1, Math.abs(yy[0]))); mset(i, tag + "w", g[base + 1], yy[1], 1e-5 * yy[1]);
-      mset(i, tag + "u", g[base + 2], yy[2], 1e-5); mset(i, tag + "phi", g[base + 3], yy[3], 1e-5 * Math.max(1, Math.abs(yy[3])));
+      mset(i, tag + "theta", g[base + 2], yy[2], 1e-5 * Math.max(1, Math.abs(yy[2]))); mset(i, tag + "phi", g[base + 3], yy[3], 1e-5 * Math.max(1, Math.abs(yy[3])));
       mset(i, tag + "l", g[base + 4], yy[4], 1e-5 * Math.max(1, Math.abs(yy[4]))); mset(i, tag + "w'", g[base + 5], yy[5], 1e-5 * Math.max(Math.abs(yy[5]), yy[1]));
-      mset(i, tag + "u'", g[base + 6], yy[6], 1e-5 * Math.max(1, Math.abs(yy[6])));
+      mset(i, tag + "theta'", g[base + 6], yy[6], 1e-5 * Math.max(1, Math.abs(yy[6])));
+      mset(i, tag + "sigma", g[base + 7], yy[7], 1e-6); // hemisphere sign, exactly +-1
     };
     mset(i, "attempts", g[9], o.attempts, 1e-6);
     // 10 %: near the horizon of a = 0.998 the f32 estimate reads 8 % low (1/Delta cancellation); that moves the accepted h
     // by < 2 % (err ~ h^5). Whole-ray accuracy on the GPU is gated by ?accuracy.
-    mset(i, "err norm", g[10], o.en, 0.02 + 0.1 * o.en);
+    // + 0.1 absolute: far below 1 the f32 estimate is noise (first step: 0.054 vs 0.0007); acceptance is decided near 1 and
+    // the attempts, compared exactly above, prove those decisions agree.
+    mset(i, "err norm", g[10], o.en, 0.1 + 0.1 * o.en);
     cmpY(0, tr.y1, ""); cmpY(20, d, "dense ");
+    // the landing step at the GPU's crossing fraction (bisection on the dense f32 cos(theta): th agrees to ~1e-6)
+    const th = minoCrossing(y0, tr.y1, f0, tr.f1, g[29]);
+    mset(i, "crossing found", g[41], th >= 0 ? 1 : 0, 1e-6);
+    if (th >= 0 && g[41] === 1) { mset(i, "crossing th", g[40], th, 1e-4); cmpY(32, minoLand(y0, f0, g[29], g[40], c), "landed "); }
     mset(i, "r", g[13], st[1], 1e-5 * st[1]); mset(i, "theta", g[14], st[2], 1e-5);
     mset(i, "p_r", g[17], st[5], 1e-4 * Math.max(1, Math.abs(st[5]))); mset(i, "p_theta", g[18], st[6], 1e-4 * Math.max(1, Math.abs(st[6])));
     mset(i, "p_phi", g[19], st[7], 1e-6 * Math.max(1, Math.abs(st[7])));

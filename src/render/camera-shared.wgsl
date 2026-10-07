@@ -15,9 +15,10 @@
 // classify a ray regardless of where integration stopped.
 //   xi  = -alpha*sin(i)                                  (azimuthal angular momentum L_z/E)
 //   eta = beta^2 + xi^2*cot^2(i) - a^2*cos^2(i)          (Carter constant)
+// sinCosP (precise sin / cos) lives in integrator-shared.wgsl, which every module that includes this file also includes.
 fn cameraXiEta(alpha: f32, beta: f32, a: f32, i: f32) -> vec2<f32> {
-  let xi = -alpha * sin(i);
-  let ci = cos(i); let si = sin(i);
+  let sc = sinCosP(i); let si = sc.x; let ci = sc.y;
+  let xi = -alpha * si;
   let eta = beta*beta + xi*xi*(ci*ci)/max(si*si, 1e-8) - a*a*ci*ci;
   return vec2<f32>(xi, eta);
 }

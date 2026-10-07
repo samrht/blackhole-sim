@@ -3,7 +3,7 @@ import { screenToState } from "../src/physics/camera";
 import { photonOrbit } from "../src/physics/orbits";
 import { criticalXiEta, photonShellRange } from "../src/physics/shadow";
 import { traceRay } from "../src/physics/trace";
-import { minoRay, minoInit, minoStep, minoDense, minoCrossing, minoToState, minoRw, MINO_TOL, MINO_UFRAC } from "../src/physics/trace-mino";
+import { minoRay, minoInit, minoStep, minoDense, minoPlane, minoToState, minoRw, MINO_TOL, MINO_UFRAC, MINO_CTOL } from "../src/physics/trace-mino";
 import { flowN0, HOTFLOW } from "../src/physics/hot-flow";
 import { PRESETS } from "../src/physics/presets";
 import { SHIP, REF1, REF_ROBS, REF_ROUT, refTrace, convergedRef, skyDirCPU, flowSlab, flowAccum, flowMid, refFlowPath, flowReference,
@@ -33,19 +33,19 @@ const cart = (s: Float64Array) => [s[1] * Math.sin(s[2]) * Math.cos(s[3]), s[1] 
 
 /** NEW: trace-mino.ts in the render loop's order. Flow rays: the renderer's rule on the dense output (affine weights) and
  *  the path as dense sub-segments of <= 0.005 M for the path test. */
-function minoLocal(ray: Ray, tol: number, uFrac: number, wantPath = false): Res {
+function minoLocal(ray: Ray, tol: number, uFrac: number, wantPath = false, ctol = MINO_CTOL): Res {
   const { a, rIn, al, be, incl } = ray, rh = 1 + Math.sqrt(Math.max(0, 1 - a * a)), fl = ray.flow, I = [0, 0], path: PathSeg[] = [];
   const xi = -al * Math.sin(incl), ci = Math.cos(incl), si = Math.sin(incl);
   const c = minoRay(a, xi, be * be + (xi * xi * ci * ci) / Math.max(si * si, 1e-8) - a * a * ci * ci);
   let y = minoInit(REF_ROBS, incl, be, c), h = 50 / (REF_ROBS * REF_ROBS), f: Float64Array | undefined, att = 0, drift = 0;
   for (let step = 1; step <= MAXSTEPS; step++) {
-    const st = minoStep(y, h, c, tol, uFrac, f); att += st.attempts;
+    const st = minoStep(y, h, c, tol, uFrac, f, ctol); att += st.attempts;
     drift = Math.max(drift, Math.abs(st.y[5] * st.y[5] - minoRw(st.y[1], c)));
     const rA = 1 / y[1], rB = 1 / st.y[1];
     if (fl && Math.min(rA, rB) < HOTFLOW.rMax + 5) {
-      const dl = st.y[4] - y[4], dense = (th: number) => minoDense(y, st.y, st.f0, st.f1, st.h, th, st.pole);
+      const dl = st.y[4] - y[4], dense = (th: number) => minoDense(st.y0, st.y, st.f0, st.f1, st.h, th);
       const n = Math.min(32, Math.max(1, Math.ceil(dl / (0.25 * Math.max(1, Math.min(rA, rB) / 8)))));
-      let dk = y;
+      let dk = st.y0;
       for (let k = 0; k < n; k++) {
         const dn = dense((k + 1) / n), s = minoToState(dk, c);
         const [dI, dT] = flowSlab(s[1], s[2], [s[4], s[5], s[6], s[7]], a, rh, dn[4] - dk[4], fl); flowAccum(I, dI, dT);
@@ -53,7 +53,7 @@ function minoLocal(ray: Ray, tol: number, uFrac: number, wantPath = false): Res 
       }
       if (wantPath) {
         const m = Math.max(1, Math.ceil(dl / 0.005));
-        let q0 = y, s0 = minoToState(y, c);
+        let q0 = st.y0, s0 = minoToState(st.y0, c);
         for (let k = 1; k <= m; k++) {
           const q1 = dense(k / m), s1 = minoToState(q1, c);
           path.push({ l0: q0[4], l1: q1[4], x0: cart(s0), x1: cart(s1), p0: [s0[4], s0[5], s0[6], s0[7]], p1: [s1[4], s1[5], s1[6], s1[7]] });
@@ -62,10 +62,10 @@ function minoLocal(ray: Ray, tol: number, uFrac: number, wantPath = false): Res 
       }
     }
     if (!fl) {
-      const th = minoCrossing(y, st.y, st.f0, st.f1, st.h);
-      if (th >= 0) {
-        const d = minoDense(y, st.y, st.f0, st.f1, st.h, th, st.pole), rHit = 1 / d[1];
-        if (rHit >= rIn && rHit <= REF_ROUT) return { fate: "disk", steps: step, retries: att - step, rHit, phiHit: d[3], tHit: d[0], drift };
+      const d = minoPlane(st, c, rIn, REF_ROUT);
+      if (d) {
+        const rHit = 1 / d[1];
+        if (rHit >= rIn && rHit <= REF_ROUT) return { fate: "disk", steps: step, retries: att - step, rHit, phiHit: minoToState(d, c)[3], tHit: d[0], drift };
       }
     }
     const wPrev = y[1]; y = st.y; h = st.hNext; f = st.f1;
@@ -123,6 +123,9 @@ function sets(): { name: string; rays: Ray[] }[] {
     { name: "C critical a=0 i=72", rays: critical(0, 72, 32) },
     { name: "C critical a=0.9 i=72", rays: critical(0.9, 72, 32) },
     { name: "C critical a=0.998 i=72", rays: critical(0.998, 72, 32) },
+    // shallow plane crossings (near the image's horizontal line at high inclination): the crossing radius is most
+    // sensitive to polar error there, and near-critical rays among them wind first (the GPU found such a pixel)
+    { name: "G grazing i=72/85", rays: [72, 85].flatMap((i) => [-0.05, -0.02, -0.01, 0.01, 0.02, 0.05].flatMap((b) => lin(-14, 14, 57).map((al) => mk(al, b, i === 85 ? 0.99 : 0.9, i, photonOrbit(i === 85 ? 0.99 : 0.9, true))))) },
     { name: "mm Sgr A*", rays: mmGrid("sgra", 24) },
     { name: "mm Gargantua", rays: mmGrid("gargantua", 24) },
   ];
@@ -171,12 +174,12 @@ describe.skipIf(!SWEEP)("Mino integrator accuracy sweep (SWEEP=1)", () => {
       const rule = refTrace(r.s0, r.a, 0, SHIP, r.flow, 0), pth = refFlowPath(r.s0, r.a, SHIP, 0.005);
       return { ...rule, Ipath: flowMid(pth.path, r.a, r.flow) };
     }));
-    const score = (tol: number, uFrac: number) => {
+    const score = (tol: number, uFrac: number, ctol: number) => {
       let newFlips = 0, worse = 0, maxDrift = 0; const worst: string[] = [];
       const costNew: number[] = S.map(() => 0), costOld: number[] = S.map(() => 0);
       const err = { r: 0, phi: 0, t: 0, px: 0, Ipath: 0, Irule: 0 };
       S.forEach((set, si) => set.rays.forEach((r, ri) => {
-        const x = minoLocal(r, tol, uFrac, !!r.flow), q = ref[si][ri], o = old[si][ri];
+        const x = minoLocal(r, tol, uFrac, !!r.flow, ctol), q = ref[si][ri], o = old[si][ri];
         costNew[si] += x.steps + x.retries; costOld[si] += o.steps + o.retries; maxDrift = Math.max(maxDrift, x.drift);
         if (!q.converged) return;
         const bad = (what: string) => { worse++; if (worst.length < 12) worst.push(`${set.name} #${ri} ${what}`); };
@@ -209,20 +212,21 @@ describe.skipIf(!SWEEP)("Mino integrator accuracy sweep (SWEEP=1)", () => {
       }));
       return { newFlips, worse, maxDrift, err, worst, ratio: S.map((_, si) => costNew[si] / costOld[si]), costNew, costOld };
     };
-    console.log("tol      uFrac  newFlips  worse  maxDrift   max err: r(rel) phi(rad) t(rel) sky(px) I-path I-rule   cost NEW/OLD per set");
-    const rows: [number, number][] = [];
-    for (const tol of [1e-4, 3e-5, 1e-5, 3e-6, 1e-6]) for (const uf of [0.5, 0.25]) rows.push([tol, uf]);
-    if (!rows.some(([t, u]) => t === MINO_TOL && u === MINO_UFRAC)) rows.push([MINO_TOL, MINO_UFRAC]);
+    console.log("tol      uFrac  ctol   newFlips  worse  maxDrift   max err: r(rel) phi(rad) t(rel) sky(px) I-path I-rule   cost NEW/OLD per set");
+    const rows: [number, number, number][] = [];
+    for (const tol of [3e-5, 1e-5, 3e-6]) for (const ctol of [1e-3, 3e-4, 1e-4]) rows.push([tol, 0.25, ctol]);
+    rows.push([1e-5, 0.5, 3e-4]);
+    if (!rows.some(([t, u, k]) => t === MINO_TOL && u === MINO_UFRAC && k === MINO_CTOL)) rows.push([MINO_TOL, MINO_UFRAC, MINO_CTOL]);
     let shipped: ReturnType<typeof score> | null = null;
-    for (const [tol, uf] of rows) {
-      const s = score(tol, uf);
-      if (tol === MINO_TOL && uf === MINO_UFRAC) shipped = s;
-      console.log(`${tol.toExponential(0).padEnd(9)}${String(uf).padEnd(7)}${String(s.newFlips).padEnd(10)}${String(s.worse).padEnd(7)}${s.maxDrift.toExponential(1).padEnd(11)}` +
+    for (const [tol, uf, ctol] of rows) {
+      const s = score(tol, uf, ctol);
+      if (tol === MINO_TOL && uf === MINO_UFRAC && ctol === MINO_CTOL) shipped = s;
+      console.log(`${tol.toExponential(0).padEnd(9)}${String(uf).padEnd(7)}${ctol.toExponential(0).padEnd(7)}${String(s.newFlips).padEnd(10)}${String(s.worse).padEnd(7)}${s.maxDrift.toExponential(1).padEnd(11)}` +
         `${s.err.r.toExponential(1)} ${s.err.phi.toExponential(1)} ${s.err.t.toExponential(1)} ${s.err.px.toFixed(3)} ${s.err.Ipath.toExponential(1)} ${s.err.Irule.toExponential(1)}   ${s.ratio.map((x) => x.toFixed(2)).join(" ")}`);
       if (s.worst.length) console.log("   worst: " + s.worst.join(" | "));
     }
     console.log("sets: " + S.map((s, i) => `${i}=${s.name}`).join(", "));
-    console.log(`shipped tol ${MINO_TOL} uFrac ${MINO_UFRAC}: flips ${shipped!.newFlips}, worse ${shipped!.worse}, drift ${shipped!.maxDrift.toExponential(1)}; mean cost per set OLD ${shipped!.costOld.map((c, i) => (c / S[i].rays.length).toFixed(0)).join(" ")} / NEW ${shipped!.costNew.map((c, i) => (c / S[i].rays.length).toFixed(0)).join(" ")}`);
+    console.log(`shipped tol ${MINO_TOL} uFrac ${MINO_UFRAC} ctol ${MINO_CTOL}: flips ${shipped!.newFlips}, worse ${shipped!.worse}, drift ${shipped!.maxDrift.toExponential(1)}; mean cost per set OLD ${shipped!.costOld.map((c, i) => (c / S[i].rays.length).toFixed(0)).join(" ")} / NEW ${shipped!.costNew.map((c, i) => (c / S[i].rays.length).toFixed(0)).join(" ")}`);
     console.log(`total ${((Date.now() - t0) / 60000).toFixed(1)} min`);
     expect(shipped!.newFlips).toBe(0);
     expect(shipped!.worse).toBe(0);
