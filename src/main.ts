@@ -15,6 +15,7 @@ import { formatLength, formatDuration } from "./physics/units";
 import { advanceSimTime, splitTime } from "./render/sim-clock";
 import { sigmaForFlicker, FLICKER_DEFAULT, type HotSpot } from "./physics/emission";
 import { isHotFlow, flowN0 } from "./physics/hot-flow";
+import { HOTSPOT, hotspotAliveWindow } from "./physics/hotspot";
 
 const canvas = document.getElementById("c") as HTMLCanvasElement;
 
@@ -99,6 +100,8 @@ structural ${res.structural ? "ok" : "FAILED"} — centred dark shadow=${res.has
   const SPEED = 20;        // coordinate-time M per real second at Motion 1 (Motion = playback speed)
   const EMA_BLEND = 0.15;  // trailing-window weight while animating
   let simTime = 0, lastNow = 0;
+  // verify:gpu's hotspot check jumps the clock (dev server only; absent from production builds).
+  if (import.meta.env.DEV) (window as unknown as { __bhSetTime?: (t: number) => void }).__bhSetTime = (t) => { simTime = t; };
   const baseSpots: HotSpot[] = [
     { r: 8,  psi: 0.0, sigma: 1.2, amp: 1.8 },
     { r: 12, psi: 2.1, sigma: 1.6, amp: 1.2 },
@@ -361,6 +364,10 @@ structural ${res.structural ? "ok" : "FAILED"} — centred dark shadow=${res.has
     // binaries; for M87* its optical anchor would put 2.8 Jy in view where the EHT sees the jet base at <~10 % of the ring).
     const mm = state.band === "mm" ? 1 : 0, hot = mm && isHotFlow(state.lambda) ? 1 : 0;
     const n0 = hot ? flowN0(state.massSun, state.lambda) : 0;
+    // 1.3 mm hotspots (spec 2026-10-04 mm hotspots): the cache holds the steady flow, so frames trace live while a hotspot
+    // can be in view (alive within +-HOTSPOT.pad, the measured bound on light-travel delay). Otherwise mm frames get
+    // fluxVar 0, which in mm drives only the hotspots (no jet at 1.3 mm), so live frames skip the hotspot code exactly.
+    const hsLive = hot === 1 && hotspotAliveWindow(simTime, state.fluxVar, state.a, HOTSPOT.pad);
     const jetDrawn = state.jetOn && !mm;
     const geo = geometryKey({ a: state.a, incl: state.incl, fovScale: 14, rObs: 1000, rIn, rOut,
       maxSteps: state.maxSteps, jetLength: mm ? 0 : state.jetLength, displayW: r.displayW, displayH: r.displayH, epoch: r.cacheEpoch,
@@ -368,7 +375,7 @@ structural ${res.structural ? "ok" : "FAILED"} — centred dark shadow=${res.has
     if (geo !== geoKey) { geoKey = geo; sched.reset(r.cacheSets, r.displayH); r.resetCache(); }
     // One background build slice per playing frame (the cache is only used while playing).
     const slice = state.playing && cacheOn ? sched.next() : null;
-    const mode = chooseMode(state.playing, sched.completedSets, cacheOn);
+    const mode = chooseMode(state.playing, sched.completedSets, cacheOn, hsLive);
 
     if (mode === "cached") {
       if (!wasCached) { liveScale = r.scale; r.setScale(1); showScale(); cachedFrame = 0; }
@@ -400,7 +407,7 @@ structural ${res.structural ? "ok" : "FAILED"} — centred dark shadow=${res.has
       blend, timeScale: state.timeScale, turbAmp: sigmaForFlicker(state.flicker),
       breatheAmp: state.breatheAmp, nSpots: baseSpots.length,
       jetStrength: jetDrawn ? 1 : 0, jetGamma: state.jetGamma, jetB0: jetU.jetB0, jetQ0: jetU.jetQ0, rgCm: jetU.rgCm,
-      jetLength: state.jetLength, fluxVar: state.fluxVar,
+      jetLength: state.jetLength, fluxVar: mm ? (hsLive ? state.fluxVar : 0) : state.fluxVar,
       skyStrength: skyReady ? state.skyStrength : 0, setIndex,
       band: mm, hotFlow: hot, flowN0: n0,
     };

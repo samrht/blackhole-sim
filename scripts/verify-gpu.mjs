@@ -328,5 +328,43 @@ if (!reachOk) failed = true;
   if (!mmOk || mmDiag) failed = true;
 }
 
+// 1.3 mm hotspots (spec 2026-10-04 mm hotspots): with the cache complete, jumping the clock into a hotspot's life must
+// switch the mode to live and brighten the blob's pixels (half an orbit after the peak: at the peak itself the light seen
+// left while the blob was still rising, and eruption 0's blob then sits on the ring's saturated side); jumping past its window must return to cached
+// without a rebuild (a rebuild takes 16 slices x 4 sets, far longer than the 3 s allowed).
+{
+  const dHs = diags.length, hsSteps = [];
+  const hsStep = (name, ok) => { hsSteps.push(`${name} ${ok ? "ok" : "FAILED"}`); return ok; };
+  const clip = async () => { const vp = page.viewportSize(), cx = Math.round(vp.width / 2), cy = Math.round(vp.height / 2), R = 180;
+    return (await page.screenshot({ clip: { x: cx - R, y: cy - R, width: 2 * R, height: 2 * R } })).toString("base64"); };
+  const times = await page.evaluate(async () => {
+    const hs = await import("/src/physics/hotspot.ts"), { PRESETS } = await import("/src/physics/presets.ts");
+    const a = PRESETS.find((p) => p.id === "sgra").a;
+    return { flare: hs.hotspotPeakTime(0, a) + hs.hotspotPeriod(hs.hotspotRadius(0), a) / 2, after: hs.hotspotEndTime(0, a) + hs.HOTSPOT.pad + 50 };
+  });
+  await page.evaluate(() => window.__bhSetTime(0));
+  hsStep("steady cached", await waitMode("cached")); await page.waitForTimeout(1000);
+  const steady = await clip();
+  await page.evaluate((t) => window.__bhSetTime(t), times.flare - 30);
+  const live = hsStep("hotspot->live", await waitMode("live", 5000)); await page.waitForTimeout(1500);
+  const flare = await clip();
+  // Pixels that brightened by > 90 (sum over channels): the blob covers thousands; the live frame's lower internal
+  // resolution only moves thin ring edges, both ways.
+  const bright = await page.evaluate(async ([a, b]) => {
+    const px = async (d) => { const img = new Image(); img.src = "data:image/png;base64," + d; await img.decode();
+      const c = document.createElement("canvas"); c.width = img.width; c.height = img.height; const g = c.getContext("2d");
+      g.drawImage(img, 0, 0); return g.getImageData(0, 0, c.width, c.height).data; };
+    const x = await px(a), y = await px(b); let n = 0;
+    for (let i = 0; i < x.length; i += 4) if (y[i] - x[i] + y[i + 1] - x[i + 1] + y[i + 2] - x[i + 2] > 90) n++;
+    return n;
+  }, [steady, flare]);
+  hsSteps.push(`${bright} pixels brightened`);
+  await page.evaluate((t) => window.__bhSetTime(t), times.after);
+  const back = hsStep("->cached (no rebuild)", await waitMode("cached", 3000));
+  const ok = live && back && bright > 2000, hsDiag = diagSince(dHs);
+  console.log(`${ok && !hsDiag ? "✓ PASS" : "✗ FAIL"}  1.3 mm hotspot: ${hsSteps.join(", ")}${hsDiag}`);
+  if (!ok || hsDiag) failed = true;
+}
+
 await browser.close();
 process.exit(failed ? 1 : 0);

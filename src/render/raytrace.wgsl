@@ -294,23 +294,45 @@ fn jetStep(s: State, sNew: State, dl: f32, accIn: JetOut) -> JetOut {
 // hot-flow-image.ts). Samples are <= JET_DL apart inside 8 M and JET_DL r / 8 beyond, where the flow is faint (perf/mm-live:
 // one sample per step out there, ~190 fewer per ray; flux changed 2e-6, worst pixel 2e-6 of the peak, sgra-mm/m87-mm). The flow is steady and axisymmetric: no time, no azimuth. One channel, carried as
 // acc = (I_nu, tau) so visible frames hold two floats through the ray loop, not two vec3 (the jet's slab, scalar).
-fn flowStep(s: State, sNew: State, dl: f32, rh: f32, orb: vec3<f32>, accIn: vec2<f32>) -> vec2<f32> {
+// Hotspots (spec 2026-10-04 mm hotspots) add their boosted coefficients to the same slab on live frames (hs).
+fn flowStep(s: State, sNew: State, dl: f32, rh: f32, orb: vec3<f32>, accIn: vec2<f32>, hs: bool) -> vec2<f32> {
   let p0 = cartOf(s.x);
   let dvec = cartOf(sNew.x) - p0;
   if (dot(dvec, dvec) <= 1e-12 || chordMisses(p0, dvec, HF_RMAX)) { return accIn; }
   let n = clamp(u32(ceil(dl / (JET_DL * max(1.0, min(s.x.y, sNew.x.y) / 8.0)))), 1u, JET_NSUB_MAX);
+  // Hotspot only on live frames (hs; the cache stores the steady flow), with the slider on (main.ts sends fluxVar 0 in mm
+  // while no hotspot can be in view), and only on steps whose chord passes within HS_REACH of the hole.
+  let hsOn = hs && U.fluxVar > 0.0 && !chordMisses(p0, dvec, HS_REACH);
   var acc = accIn;
   for (var k = 0u; k < n; k++) {
     let q = jetSample(s, p0, dvec, k, n);
     if (q.x >= HF_RMAX || q.x <= rh * 1.01) { continue; }
-    let D = flowShiftOrbJ(q.x, q.y, mix(s.p, sNew.p, f32(k) / f32(n)), U.a, orb);
+    let f = f32(k) / f32(n);
+    let pk = mix(s.p, sNew.p, f);
+    var jE = 0.0; var dTau = 0.0; // this sample's observed emission and optical depth (flow + hotspot, one slab)
+    let D = flowShiftOrbJ(q.x, q.y, pk, U.a, orb);
     if (D > 1e-6) {
       let c = flowCoeffsJ(q.x, q.y, HF_LNNU + log(D), U.flowN0);
-      if (c.x > 0.0) {
-        let ds = U.rgCm * D * dl / f32(n); let dt = c.y * ds;
-        let fac = select((1.0 - exp(-dt)) / max(dt, 1e-30), 1.0 - 0.5 * dt, dt < 1e-4);
-        acc = vec2<f32>(acc.x + c.x / (D * D * D) * ds * fac * exp(-acc.y), min(acc.y + dt, 1e30));
+      if (c.x > 0.0) { let ds = U.rgCm * D * dl / f32(n); jE = c.x / (D * D * D) * ds; dTau = c.y * ds; }
+    }
+    if (hsOn && q.x < HS_REACH && abs(q.x * cos(q.y)) < HS_CUT * HS_SIGMA) {
+      let tS = select(s.x.x + (sNew.x.x - s.x.x) * f, s.x.x, k == 0u);
+      let st = hotspotStateJ(U.timeEpoch, emitRel(-tS - U.rObs), U.fluxVar, U.a);
+      if (st.w > 0.0) {
+        let b = st.z * hotspotBoostJ(q.x, q.y, q.z, st.x, st.y);
+        if (b > 0.0) {
+          let Dh = hotspotShiftJ(q.x, q.y, pk, U.a, 1.0 / (pow(st.x, 1.5) + U.a));
+          if (Dh > 1e-6) {
+            let ch = flowCoeffsJ(q.x, q.y, HF_LNNU + log(Dh), U.flowN0);
+            let dsh = U.rgCm * Dh * dl / f32(n);
+            jE += b * ch.x / (Dh * Dh * Dh) * dsh; dTau += b * ch.y * dsh;
+          }
+        }
       }
+    }
+    if (jE > 0.0 || dTau > 0.0) {
+      let fac = select((1.0 - exp(-dTau)) / max(dTau, 1e-30), 1.0 - 0.5 * dTau, dTau < 1e-4);
+      acc = vec2<f32>(acc.x + jE * fac * exp(-acc.y), min(acc.y + dTau, 1e30));
     }
   }
   return acc;
@@ -356,7 +378,7 @@ struct TraceOut {
   resolved: bool,                    // false: the step budget ran out (kind then comes from the classifier)
 };
 
-fn traceRay(pix: vec2<u32>, jit: vec2<f32>, record: bool) -> TraceOut {
+fn traceRay(pix: vec2<u32>, jit: vec2<f32>, record: bool, hs: bool) -> TraceOut {
   var out: TraceOut;
   out.kind = KIND_SHADOW; out.payload = vec3<f32>(0.0); out.hasBm = false; out.nJet = 0u; out.resolved = true;
   let a = U.a; let i = U.incl;
@@ -400,7 +422,7 @@ fn traceRay(pix: vec2<u32>, jit: vec2<f32>, record: bool) -> TraceOut {
     if (U.jetStrength > 0.0) { jet = jetStep(s, sNew, dl, jet); }
     // Hot flow (mm): a volume emitter the ray crosses; it does not stop at the plane. Jet and flow are separate
     // accumulators (neither absorbs the other's light; the jet is faint at 1.3 mm).
-    if (mmFlow()) { flow = flowStep(s, sNew, dl, rh, orb, flow); }
+    if (mmFlow()) { flow = flowStep(s, sNew, dl, rh, orb, flow, hs); }
     // Cache bookmark: the first step whose jet samples can see the envelope, through the last one.
     if (record && jetTouches(s, sNew, dl)) {
       if (!out.hasBm) { out.hasBm = true; out.bm = s; firstJ = step; }
@@ -498,7 +520,7 @@ fn storeComposite(idx: u32, color: vec3<f32>, jet: JetOut, flowI: f32) {
 @compute @workgroup_size(8,8) fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   if (gid.x >= u32(U.res.x) || gid.y >= u32(U.res.y)) { return; }
   let idx = gid.y * u32(U.res.x) + gid.x;
-  let t = traceRay(gid.xy, pixelJitter(gid.xy), false);
+  let t = traceRay(gid.xy, pixelJitter(gid.xy), false, true);
   storeComposite(idx, t.color, t.jet, t.flowI);
 }
 
@@ -524,7 +546,7 @@ fn replayJet(bm: State, nJet: u32) -> JetOut {
   let idx = y * u32(U.res.x) + gid.x;
   // No jet bookmarks at 1.3 mm: the jet is not drawn there (spec 2.5), and recording them overflowed the bookmark buffer
   // for face-on M87* (half its pixels fell back to live traces in every cached frame).
-  let t = traceRay(vec2<u32>(gid.x, y), fixedJitter(U.setIndex), !bandMm());
+  let t = traceRay(vec2<u32>(gid.x, y), fixedJitter(U.setIndex), !bandMm(), false);
   var word = t.kind | (BM_NONE << 2u);
   if (t.hasBm) {
     let b = atomicAdd(&bmCount, 1u);
@@ -545,7 +567,7 @@ fn replayJet(bm: State, nJet: u32) -> JetOut {
 // classifier, which the gate compares against, so those rays must be visible to it. Validation only.
 @compute @workgroup_size(8,8) fn audit(@builtin(global_invocation_id) gid: vec3<u32>) {
   if (gid.x >= u32(U.res.x) || gid.y >= u32(U.res.y)) { return; }
-  let t = traceRay(gid.xy, fixedJitter(U.setIndex), false);
+  let t = traceRay(gid.xy, fixedJitter(U.setIndex), false, false);
   entries[gid.y * u32(U.res.x) + gid.x] = Entry(t.kind | select(4u, 0u, t.resolved), 0.0, 0.0, 0.0);
 }
 
@@ -556,7 +578,7 @@ fn replayJet(bm: State, nJet: u32) -> JetOut {
   let e = entries[idx];
   let kind = e.word & 3u;
   if (kind == KIND_LIVE) {
-    let t = traceRay(gid.xy, fixedJitter(U.setIndex), false);
+    let t = traceRay(gid.xy, fixedJitter(U.setIndex), false, false);
     storeComposite(idx, t.color, t.jet, t.flowI);
     return;
   }

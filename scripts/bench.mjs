@@ -29,7 +29,8 @@ const out = await page.evaluate(async (ONLY_MM) => {
   const { buildTempLUT, buildVisibleLUT, lumNormFor } = await import("/src/physics/lookups.ts");
   const { iscoRadius } = await import("/src/physics/orbits.ts");
   // mm: Sgr A* in the 1.3 mm view (spec 2026-10-04): the hot flow integrated through r < 50 M, no disk, no jet.
-  async function bench(w, h, frames = 8, mm = false) {
+  // t0 > 0 (mm): the clock at a hotspot's peak, slider on; otherwise mm sends fluxVar 0, as the app does with no hotspot in view.
+  async function bench(w, h, frames = 8, mm = false, t0 = 0) {
     document.body.innerHTML = "";
     const c = document.createElement("canvas");
     c.style.cssText = `width:${w}px;height:${h}px;display:block`;
@@ -47,10 +48,10 @@ const out = await page.evaluate(async (ONLY_MM) => {
     const u = (f) => ({
       resW: r.width, resH: r.height, outW: r.displayW ?? r.width, outH: r.displayH ?? r.height,
       a, incl: (72 * Math.PI) / 180, rObs: 1000, fovScale: 14, rIn, rOut: 40, Tpeak: 3e4, lumNorm: lumNormFor(3e4), lightDelay: 1, exposure: 1.6,
-      time: f, frame: f, reset: f === 0 ? 1 : 0, maxSteps: 4800, blend: f === 0 ? 1 : 0.15, timeScale: 1,
+      time: t0 + f, frame: f, reset: f === 0 ? 1 : 0, maxSteps: 4800, blend: f === 0 ? 1 : 0.15, timeScale: 1,
       turbAmp: 0.6, breatheAmp: 0, nSpots: 3, jetStrength: 1, jetGamma: 2, jetLength: 60, fluxVar: 1,
       skyStrength: 0, jetB0: J.jetB0, jetQ0: J.jetQ0, rgCm: J.rgCm,
-      ...(mm ? { incl: (sg.inclDeg * Math.PI) / 180, jetStrength: 0, band: 1, hotFlow: 1, flowN0: flowN0(sg.massSun, sg.lambda) } : {}),
+      ...(mm ? { incl: (sg.inclDeg * Math.PI) / 180, jetStrength: 0, band: 1, hotFlow: 1, flowN0: flowN0(sg.massSun, sg.lambda), fluxVar: t0 ? 1 : 0 } : {}),
     });
     r.frame(u(0)); await r.device.queue.onSubmittedWorkDone(); // warm-up: pipeline compile
     const t = [];
@@ -84,15 +85,17 @@ const out = await page.evaluate(async (ONLY_MM) => {
       cachedOn = await cachedMedian(1); cachedOff = await cachedMedian(0);
     }
     r.device.destroy();
-    return { mm, w: r.width, h: r.height, median: t[t.length >> 1], min: t[0], build, cachedOn, cachedOff, sets: r.cacheSets,
+    return { mm, t0, w: r.width, h: r.height, median: t[t.length >> 1], min: t[0], build, cachedOn, cachedOff, sets: r.cacheSets,
       bmFrac: bm ? bm.count / (r.displayW * r.displayH * r.cacheSets) : null, meanNJet: bm ? bm.meanNJet : null };
   }
-  return { adapter: `${info.vendor || "?"} ${info.architecture || "?"}`, rows: ONLY_MM ? [await bench(1280, 720, 16, true)] : [await bench(1280, 720), await bench(1920, 1080), await bench(1280, 720, 8, true)] };
+  const { PRESETS: PS } = await import("/src/physics/presets.ts");
+  const hsPeak = (await import("/src/physics/hotspot.ts")).hotspotPeakTime(0, PS.find((p) => p.id === "sgra").a);
+  return { adapter: `${info.vendor || "?"} ${info.architecture || "?"}`, rows: ONLY_MM ? [await bench(1280, 720, 16, true), await bench(1280, 720, 16, true, hsPeak)] : [await bench(1280, 720), await bench(1920, 1080), await bench(1280, 720, 8, true), await bench(1280, 720, 8, true, hsPeak)] };
 }, process.env.ONLY_MM === "1");
 
 console.log(`adapter: ${out.adapter}`);
 for (const r of out.rows) {
-  console.log(`${`${r.w}x${r.h}${r.mm ? " mm" : ""}`.padEnd(10)} live   median ${r.median.toFixed(1)} ms/frame (${(1000 / r.median).toFixed(1)} fps), min ${r.min.toFixed(1)}`);
+  console.log(`${`${r.w}x${r.h}${r.mm ? (r.t0 ? " mm+hs" : " mm") : ""}`.padEnd(14)} live   median ${r.median.toFixed(1)} ms/frame (${(1000 / r.median).toFixed(1)} fps), min ${r.min.toFixed(1)}`);
   if (r.sets) {
     console.log(`${"".padEnd(10)} cached median ${r.cachedOn.toFixed(1)} ms jet on (${(1000 / r.cachedOn).toFixed(1)} fps), ${r.cachedOff.toFixed(1)} ms jet off; ` +
       `build ${r.build.toFixed(0)} ms/set x ${r.sets}; bookmarks ${(100 * r.bmFrac).toFixed(1)} % mean nJet ${r.meanNJet.toFixed(1)}`);
