@@ -174,3 +174,128 @@ fn stepGeodesic(s: State, a: f32, dl0: f32, hTol: f32) -> StepOut {
   let ok = abs(hs.x - h0) <= hTol * hs.y;
   return StepOut(reflectAxis(sN), dl, MAX_RETRY, ok);
 }
+
+// ---- Mino-time integrator (spec 2026-10-07 mino integrator; twin: src/physics/trace-mino.ts) -----------------------
+// Carter's separated null-geodesic equations in Mino time (d lambda = dl / Sigma) with w = 1/r: w'' = R~'(w)/2,
+// u = cos(theta), u'' = U'(u)/2, t / phi / l (affine) as quadratures. Per ray: p_t = 1 (camera-normalised, past-directed),
+// xi = -p_phi, eta (Carter). Dormand-Prince 5(4) with the twin's error norm, u-oscillation guard and bounded rejects;
+// cubic Hermite dense output. See trace-mino.ts for why w = 1/r and not r.
+const MINO_TOL = 1e-5;
+const MINO_UFRAC = 0.25;
+const MINO_MAX_REJECT = 10u;
+struct MinoRay { a: f32, xi: f32, eta: f32, K: f32, A1: f32, omMax: f32 };
+struct Mino { q: vec4<f32>, v: vec4<f32> };   // q = (t, w, u, phi), v = (l, w', u', 0)
+fn minoRay(a: f32, xi: f32, eta: f32) -> MinoRay {
+  let om2 = max(0.0, eta + xi * xi - a * a) + 6.0 * a * a;
+  return MinoRay(a, xi, eta, eta + (xi - a) * (xi - a), a * a - a * xi, sqrt(om2));
+}
+fn minoRw(w: f32, c: MinoRay) -> f32 { let Q = 1.0 + c.A1 * w * w; return Q * Q - c.K * w * w * (1.0 - 2.0 * w + c.a * c.a * w * w); }
+fn minoInit(r0: f32, th0: f32, beta: f32, c: MinoRay) -> Mino {
+  let w0 = 1.0 / r0;
+  return Mino(vec4<f32>(0.0, w0, cos(th0), 0.0), vec4<f32>(0.0, sqrt(max(0.0, minoRw(w0, c))), sin(th0) * beta, 0.0));
+}
+fn minoRhs(y: Mino, c: MinoRay) -> Mino {
+  let w = y.q.y; let u = y.q.z; let a = c.a; let xi = c.xi; let a2 = a * a; let w2 = w * w;
+  let Q = 1.0 + c.A1 * w2;                       // P w^2
+  let Dw = 1.0 - 2.0 * w + a2 * w2;              // Delta w^2
+  let s2 = max((1.0 - u) * (1.0 + u), 1e-30);    // sin^2 theta
+  return Mino(
+    vec4<f32>(-((1.0 + a2 * w2) * Q / (w2 * Dw) + a * (xi - a * s2)), y.v.y, y.v.z, -(a * Q / Dw - a + xi / s2)),
+    vec4<f32>(1.0 / w2 + a2 * u * u, 2.0 * c.A1 * w * Q - c.K * (w - 3.0 * w2 + 2.0 * a2 * w2 * w),
+              u * (a2 - c.eta - xi * xi) - 2.0 * a2 * u * u * u, 0.0));
+}
+fn mStage(y: Mino, h: f32, k1: Mino, c1: f32, k2: Mino, c2: f32, k3: Mino, c3: f32, k4: Mino, c4: f32, k5: Mino, c5: f32, k6: Mino, c6: f32) -> Mino {
+  return Mino(y.q + h * (k1.q * c1 + k2.q * c2 + k3.q * c3 + k4.q * c4 + k5.q * c5 + k6.q * c6),
+              y.v + h * (k1.v * c1 + k2.v * c2 + k3.v * c3 + k4.v * c4 + k5.v * c5 + k6.v * c6));
+}
+// Error scale per component (twin: errNorm): t, phi, l against the step's change (floor 1); w relative; w' against
+// max(|w'|, w); u absolute; u' against max(1, |u'|).
+fn minoErrNorm(y0: Mino, y1: Mino, e: Mino, tol: f32) -> f32 {
+  let sq = vec4<f32>(max(1.0, abs(y1.q.x - y0.q.x)), max(y0.q.y, y1.q.y), 1.0, max(1.0, abs(y1.q.w - y0.q.w)));
+  let sv = vec3<f32>(max(1.0, abs(y1.v.x - y0.v.x)), max(abs(y1.v.y), y1.q.y), max(1.0, abs(y1.v.z)));
+  let m1 = abs(e.q) / (tol * sq); let m2 = abs(e.v.xyz) / (tol * sv);
+  return max(max(max(m1.x, m1.y), max(m1.z, m1.w)), max(max(m2.x, m2.y), m2.z));
+}
+// pole: for an exact xi = 0 ray, the fraction of the step where it passed through the pole, else -1 (y's phi includes pi).
+struct MinoStepOut { y: Mino, f0: Mino, f1: Mino, h: f32, hNext: f32, attempts: u32, en: f32, pole: f32 };
+// One accepted DP5(4) step from y (f0 = minoRhs(y), the previous step's FSAL value) with proposed size h0, capped at the
+// u-oscillation guard; rejected attempts shrink h, and after MINO_MAX_REJECT the last attempt is accepted.
+fn minoStep(y: Mino, f0: Mino, h0: f32, c: MinoRay) -> MinoStepOut {
+  let hMax = select(1e30, MINO_UFRAC * PI / c.omMax, c.omMax > 0.0);
+  var h = min(h0, hMax);
+  let z = Mino(vec4<f32>(0.0), vec4<f32>(0.0));
+  var att = 1u;
+  loop {
+    let k1 = f0;
+    let k2 = minoRhs(mStage(y, h, k1, 1.0 / 5.0, z, 0.0, z, 0.0, z, 0.0, z, 0.0, z, 0.0), c);
+    let k3 = minoRhs(mStage(y, h, k1, 3.0 / 40.0, k2, 9.0 / 40.0, z, 0.0, z, 0.0, z, 0.0, z, 0.0), c);
+    let k4 = minoRhs(mStage(y, h, k1, 44.0 / 45.0, k2, -56.0 / 15.0, k3, 32.0 / 9.0, z, 0.0, z, 0.0, z, 0.0), c);
+    let k5 = minoRhs(mStage(y, h, k1, 19372.0 / 6561.0, k2, -25360.0 / 2187.0, k3, 64448.0 / 6561.0, k4, -212.0 / 729.0, z, 0.0, z, 0.0), c);
+    let k6 = minoRhs(mStage(y, h, k1, 9017.0 / 3168.0, k2, -355.0 / 33.0, k3, 46732.0 / 5247.0, k4, 49.0 / 176.0, k5, -5103.0 / 18656.0, z, 0.0), c);
+    let y1 = mStage(y, h, k1, 35.0 / 384.0, k2, 0.0, k3, 500.0 / 1113.0, k4, 125.0 / 192.0, k5, -2187.0 / 6784.0, k6, 11.0 / 84.0);
+    let k7 = minoRhs(y1, c);
+    let e = mStage(Mino(vec4<f32>(0.0), vec4<f32>(0.0)), h, k1, 71.0 / 57600.0, k3, -71.0 / 16695.0, k4, 71.0 / 1920.0,
+                   k5, -17253.0 / 339200.0, k6, 22.0 / 525.0, k7, -1.0 / 40.0);
+    let en = minoErrNorm(y, y1, e, MINO_TOL);
+    // finite factor: 5 for a zero error, 0.2 for a non-finite one (NaN compares false everywhere)
+    let finite = en < 1e30;
+    let fac = select(select(0.2, 0.9 * pow(max(en, 1e-30), -0.2), finite), 5.0, en == 0.0);
+    if (en <= 1.0 || att > MINO_MAX_REJECT) {
+      // xi = 0: u' changes sign only at a pole, where the ray continues on the far side: phi + pi (twin: minoStep).
+      var yOut = y1; var pole = -1.0;
+      if (c.xi == 0.0 && y.v.z * y1.v.z < 0.0) {
+        var lo = 0.0; var hi = 1.0;
+        for (var k = 0u; k < 24u; k++) { let m = 0.5 * (lo + hi); if (minoDense(y, y1, f0, k7, h, m, -1.0).v.z * y.v.z > 0.0) { lo = m; } else { hi = m; } }
+        pole = 0.5 * (lo + hi); yOut.q.w = yOut.q.w + PI;
+      }
+      return MinoStepOut(yOut, f0, k7, h, min(hMax, h * min(5.0, max(0.2, fac))), att, en, pole);
+    }
+    h = h * max(0.2, min(0.9, fac));
+    att = att + 1u;
+  }
+}
+// Cubic Hermite in lambda (values y0, y1, derivatives f0, f1 over step h) at fraction th of the step. pole: the step's pole
+// passage (MinoStepOut.pole); y1's phi carries its pi, which applies after that fraction only.
+fn minoDense(y0: Mino, y1: Mino, f0: Mino, f1: Mino, h: f32, th: f32, pole: f32) -> Mino {
+  if (th == 0.0) { return y0; }
+  let t2 = th * th; let t3 = t2 * th;
+  let h00 = 2.0 * t3 - 3.0 * t2 + 1.0; let h10 = (t3 - 2.0 * t2 + th) * h; let h01 = -2.0 * t3 + 3.0 * t2; let h11 = (t3 - t2) * h;
+  var o = Mino(y0.q * h00 + f0.q * h10 + y1.q * h01 + f1.q * h11, y0.v * h00 + f0.v * h10 + y1.v * h01 + f1.v * h11);
+  if (pole >= 0.0) { o.q.w = o.q.w + select(-h01 * PI, PI * (1.0 - h01), th > pole); }
+  return o;
+}
+// Fraction of the step where u = 0 (the equatorial plane; bisection on the dense u), or -1 without a sign change.
+fn minoCrossing(y0: Mino, y1: Mino, f0: Mino, f1: Mino, h: f32) -> f32 {
+  if (!(y0.q.z * y1.q.z < 0.0 || (y1.q.z == 0.0 && y0.q.z != 0.0))) { return -1.0; }
+  var lo = 0.0; var hi = 1.0;
+  for (var k = 0u; k < 24u; k++) {
+    let m = 0.5 * (lo + hi);
+    if (minoDense(y0, y1, f0, f1, h, m, -1.0).q.z * y0.q.z > 0.0) { lo = m; } else { hi = m; }
+  }
+  return 0.5 * (lo + hi);
+}
+// atan(x) for x >= 0 to ~1 ulp (Cephes atanf: reduction by tan(3 pi / 8) and tan(pi / 8), odd polynomial). WGSL's
+// built-in atan2 may be off by up to 4096 ulp (1.2e-5 rad measured on the Intel iGPU at theta ~ 1.19), which as the
+// position angle at escape would move the sky by ~0.3 px.
+fn atanPos(x: f32) -> f32 {
+  var y = 0.0; var z = x;
+  if (x > 2.414213562373095) { y = 0.5 * PI; z = -1.0 / x; }
+  else if (x > 0.4142135623730950) { y = 0.25 * PI; z = (x - 1.0) / (x + 1.0); }
+  let zz = z * z;
+  return y + ((((8.05374449538e-2 * zz - 1.38776856032e-1) * zz + 1.99777106478e-1) * zz - 3.33329491539e-1) * zz * z + z);
+}
+// theta in [0, pi] from (sin theta >= 0, cos theta = u).
+fn thetaOf(s: f32, u: f32) -> f32 {
+  if (u > 0.0) { return atanPos(s / u); }
+  if (u < 0.0) { return PI - atanPos(s / -u); }
+  return 0.5 * PI;
+}
+// Today's State (x = (t, r, theta, phi), p = (p_t, p_r, p_theta, p_phi)); p_r = -w' / (1 - 2w + a^2 w^2). Near the axis
+// p_theta comes from Theta with u''s sign, never 0/0; theta from (sin, cos) via thetaOf, accurate everywhere in f32.
+fn minoToState(y: Mino, c: MinoRay) -> State {
+  let w = y.q.y; let u = clamp(y.q.z, -1.0, 1.0); let s2 = (1.0 - u) * (1.0 + u); let Dw = 1.0 - 2.0 * w + c.a * c.a * w * w;
+  var pth: f32;
+  if (s2 > 1e-8) { pth = -y.v.z / sqrt(s2); }
+  else { let Th = c.eta + c.a * c.a * u * u - c.xi * c.xi * u * u / max(s2, 1e-12); pth = -sign(y.v.z) * sqrt(max(Th, 0.0)); }
+  return State(vec4<f32>(y.q.x, 1.0 / w, thetaOf(sqrt(s2), u), y.q.w), vec4<f32>(1.0, -y.v.y / Dw, pth, -c.xi));
+}

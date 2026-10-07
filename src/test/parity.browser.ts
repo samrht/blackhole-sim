@@ -24,10 +24,12 @@ import cameraSharedWGSL from "../render/camera-shared.wgsl?raw";
 import cameraParityWGSL from "../render/camera-parity.wgsl?raw";
 import { stepGeodesic, stepSize, H_TOL, H_TOL_FAR, MAX_RETRY, F_PHI, DL_FAR_MIN } from "../physics/trace";
 import integratorParityWGSL from "../render/integrator-parity.wgsl?raw";
+import minoParityWGSL from "../render/mino-parity.wgsl?raw";
+import { minoRay, minoInit, minoRhs, minoStep, minoTry, minoDense, minoToState, MINO_TOL as MINO_TOL_PARITY, MINO_MAX_REJECT as MINO_MAX_REJECT_PARITY, MINO_UFRAC as MINO_UFRAC_PARITY } from "../physics/trace-mino";
 
 /** Runs the WGSL metric/orbit/g-factor helpers on fixed inputs and returns the max relative
  *  error vs the TypeScript core. f32 GPU vs f64 CPU keeps this in the ~1e-6..1e-4 range. */
-export async function runParity(): Promise<{ maxErr: number; rows: number; jetLogErr: number; turbErr: number; turbWorst: string; turbRough: { gpu: number; old: number; cpu: number }; fluxErr: number; fluxWorst: string; flowErr: number; flowWorst: string; hsErr: number; hsWorst: string }> {
+export async function runParity(): Promise<{ maxErr: number; rows: number; jetLogErr: number; turbErr: number; turbWorst: string; turbRough: { gpu: number; old: number; cpu: number }; fluxErr: number; fluxWorst: string; flowErr: number; flowWorst: string; hsErr: number; hsWorst: string; minoErr: number; minoWorst: string }> {
   const cases = [
     { r: 8, th: Math.PI / 2, a: 0.0, xi: 3 }, { r: 6, th: 1.2, a: 0.5, xi: 2 },
     { r: 12, th: Math.PI / 2, a: 0.9, xi: -4 }, { r: 20, th: 0.9, a: 0.99, xi: 5 },
@@ -428,6 +430,82 @@ export async function runParity(): Promise<{ maxErr: number; rows: number; jetLo
     "cpu dl0", icases.map((c) => cpuStep(c).dl0.toPrecision(6)),
     "gpu dl0", icases.map((_, i) => igpu[i * OUT_F + 12].toPrecision(6)),
     "state relErr", icases.map((c, i) => { const { out } = cpuStep(c); let e = 0; for (let k = 0; k < c.nCmp; k++) e = Math.max(e, Math.abs(igpu[i * OUT_F + k] - out.s[k]) / (1 + Math.abs(out.s[k]))); return e.toExponential(2); }));
+  // --- Mino-time integrator (CPU trace-mino.ts vs the SHIPPED minoRhs / minoStep / minoDense / minoToState in
+  // integrator-shared.wgsl): ONE step from an identical f32 state per case (see mino-parity.wgsl for why). States are
+  // found by walking the CPU twin: the camera's first step at r = 1000; a ray at r ~ 60; near the horizon at a = 0.9 and
+  // 0.998; near the axis (xi = -0.001); at a radial turning point (photon-ring ray); and a forced reject (the r ~ 60
+  // state with its proposal x10).
+  type MCase = { label: string; y: Float64Array; a: number; xi: number; eta: number; h: number };
+  const mcases: MCase[] = [];
+  const mkRay = (al: number, be: number, a: number, iDeg: number) => {
+    const i = (iDeg * Math.PI) / 180, xi = -al * Math.sin(i), ci = Math.cos(i), si = Math.sin(i);
+    return { th0: i, be, a: Math.fround(a), xi: Math.fround(xi), eta: Math.fround(be * be + (xi * xi * ci * ci) / Math.max(si * si, 1e-8) - a * a * ci * ci) };
+  };
+  /** Walk the CPU twin from the camera until pred holds BEFORE a step; that state and its proposal are the case. */
+  const caseAt = (label: string, r: ReturnType<typeof mkRay>, pred: (y: Float64Array, prev: Float64Array) => boolean, mul = 1) => {
+    const c = minoRay(r.a, r.xi, r.eta); let y = minoInit(1000, r.th0, r.be, c), prev = y, f = minoRhs(y, c), h = 50 / 1e6;
+    for (let k = 0; k < 4000 && !pred(y, prev); k++) { const o = minoStep(y, h, c, undefined, undefined, f); prev = y; y = o.y; f = o.f1; h = o.hNext; }
+    mcases.push({ label, y: Float64Array.from(y, Math.fround), a: r.a, xi: r.xi, eta: r.eta, h: Math.fround(h * mul) });
+  };
+  const def = mkRay(4, 3, 0.9, 72);
+  caseAt("first", def, () => true);
+  caseAt("r~60", def, (y) => 1 / y[1] < 60);
+  caseAt("near-horizon a=0.9", mkRay(2, 0.5, 0.9, 90), (y) => 1 / y[1] < 1.6);
+  caseAt("near-horizon a=0.998", mkRay(1.5, 0.5, 0.998, 90), (y) => 1 / y[1] < 1.15);
+  caseAt("near-axis", mkRay(0.0072, 6, 0, 8), (y) => (1 - y[2]) * (1 + y[2]) < 1e-3);
+  caseAt("turning point", mkRay(5.3, 0, 0, 90), (y, prev) => y[5] * prev[5] < 0);
+  caseAt("forced reject", def, (y) => 1 / y[1] < 60, 10);
+  const mIn = new Float32Array(mcases.length * 12);
+  mcases.forEach((m, i) => mIn.set([m.y[0], m.y[1], m.y[2], m.y[3], m.y[4], m.y[5], m.y[6], 0, m.a, m.xi, m.eta, m.h], i * 12));
+  const mInBuf = device.createBuffer({ size: mIn.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+  device.queue.writeBuffer(mInBuf, 0, mIn);
+  const MOUT = 32; // floats per MOut (8 vec4)
+  const mOutBuf = device.createBuffer({ size: mcases.length * MOUT * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
+  const mRead = device.createBuffer({ size: mcases.length * MOUT * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+  const mMod = device.createShaderModule({ code: integratorSharedWGSL + minoParityWGSL });
+  const mPipe = device.createComputePipeline({ layout: "auto", compute: { module: mMod, entryPoint: "main" } });
+  const mBind = device.createBindGroup({ layout: mPipe.getBindGroupLayout(0), entries: [
+    { binding: 0, resource: { buffer: mInBuf } }, { binding: 1, resource: { buffer: mOutBuf } }] });
+  const mEnc = device.createCommandEncoder();
+  const mCp = mEnc.beginComputePass(); mCp.setPipeline(mPipe); mCp.setBindGroup(0, mBind); mCp.dispatchWorkgroups(mcases.length); mCp.end();
+  mEnc.copyBufferToBuffer(mOutBuf, 0, mRead, 0, mcases.length * MOUT * 4);
+  device.queue.submit([mEnc.finish()]);
+  await mRead.mapAsync(GPUMapMode.READ);
+  const mGpu = new Float32Array(mRead.getMappedRange().slice(0));
+  // Errors / tolerance: attempts exact; the error norm within 0.02 + 10 % (it decides acceptance near 1; far below 1 it is
+  // f32 noise); w, l relative 1e-5; u, u' absolute 1e-5 (u' against max(1, |u'|)); t, phi against max(1, |value|) at
+  // 1e-5; w' against max(|w'|, w) at 1e-5; the State: r relative 1e-5, theta absolute 1e-5, p_r and p_theta 1e-4 against
+  // max(1, |value|); the constants exact.
+  let minoErr = 0, minoWorst = "";
+  const mset = (i: number, what: string, g: number, w: number, tol: number) => { const e = Math.abs(g - w) / tol;
+    if (!(e <= minoErr)) { minoErr = Number.isFinite(e) ? e : Infinity; minoWorst = `${mcases[i].label} ${what}: gpu ${g} cpu ${w}`; } };
+  const diag: string[] = [];
+  mcases.forEach((m, i) => {
+    const g = Array.from(mGpu.subarray(i * MOUT, i * MOUT + MOUT));
+    // After a rejected attempt the accepted h derives from the attempt's f32 error norm, so it differs from the CPU's in
+    // the 4th digit; the state is compared against ONE CPU attempt at the GPU's own h, and the two h are compared.
+    const c = minoRay(m.a, m.xi, m.eta), o = minoStep(m.y, m.h, c), f0 = minoRhs(m.y, c), tr = minoTry(m.y, g[29], c, f0);
+    const st = minoToState(tr.y1, c), d = minoDense(m.y, tr.y1, f0, tr.f1, g[29], 0.37); // no case is an exact xi = 0 pole passage
+    mset(i, "h used", g[29], o.h, 1e-3 * o.h);
+    const cmpY = (base: number, yy: Float64Array, tag: string) => {
+      mset(i, tag + "t", g[base], yy[0], 1e-5 * Math.max(1, Math.abs(yy[0]))); mset(i, tag + "w", g[base + 1], yy[1], 1e-5 * yy[1]);
+      mset(i, tag + "u", g[base + 2], yy[2], 1e-5); mset(i, tag + "phi", g[base + 3], yy[3], 1e-5 * Math.max(1, Math.abs(yy[3])));
+      mset(i, tag + "l", g[base + 4], yy[4], 1e-5 * Math.max(1, Math.abs(yy[4]))); mset(i, tag + "w'", g[base + 5], yy[5], 1e-5 * Math.max(Math.abs(yy[5]), yy[1]));
+      mset(i, tag + "u'", g[base + 6], yy[6], 1e-5 * Math.max(1, Math.abs(yy[6])));
+    };
+    mset(i, "attempts", g[9], o.attempts, 1e-6);
+    // 10 %: near the horizon of a = 0.998 the f32 estimate reads 8 % low (1/Delta cancellation); that moves the accepted h
+    // by < 2 % (err ~ h^5). Whole-ray accuracy on the GPU is gated by ?accuracy.
+    mset(i, "err norm", g[10], o.en, 0.02 + 0.1 * o.en);
+    cmpY(0, tr.y1, ""); cmpY(20, d, "dense ");
+    mset(i, "r", g[13], st[1], 1e-5 * st[1]); mset(i, "theta", g[14], st[2], 1e-5);
+    mset(i, "p_r", g[17], st[5], 1e-4 * Math.max(1, Math.abs(st[5]))); mset(i, "p_theta", g[18], st[6], 1e-4 * Math.max(1, Math.abs(st[6])));
+    mset(i, "p_phi", g[19], st[7], 1e-6 * Math.max(1, Math.abs(st[7])));
+    mset(i, "MINO_TOL", g[11], Math.fround(MINO_TOL_PARITY), 1e-6 * MINO_TOL_PARITY); mset(i, "MINO_MAX_REJECT", g[28], MINO_MAX_REJECT_PARITY, 1e-6);
+    mset(i, "MINO_UFRAC", g[30], Math.fround(MINO_UFRAC_PARITY), 1e-6);
+    diag.push(`${m.label}: att ${g[9]}/${o.attempts} en ${g[10].toPrecision(3)}/${o.en.toPrecision(3)} h ${g[29].toPrecision(4)}/${o.h.toPrecision(4)}`);
+  });
+  console.log("mino parity worst (|err| / tol)", minoErr.toExponential(2), minoWorst, "|", diag.join(" | "));
   // --- flux history / launch delay / co-moving azimuth / filaments (CPU flux-history.ts + jet.ts vs the SHIPPED
   // emission-shared.wgsl). Epochs up to 2048 x 8000 (~16 M M: hours of play, Review Focus 1); rel spans eruption
   // drops and refills and negative launch remainders; both lobes; spins 0, 0.9, 0.998.
@@ -572,5 +650,5 @@ export async function runParity(): Promise<{ maxErr: number; rows: number; jetLo
     else hset(i, 5, g[5], Dh, 1e-3 * (Math.abs(pt) + Math.abs(Om * pphi)) * Math.max(1, Math.abs(Dh)));
   });
   console.log("hotspot parity worst (|err| / tol)", hsErr.toExponential(2), hsWorst, "cases", hsCases.length);
-  return { maxErr, rows: cases.length + tcases.length + jcases.length + scases.length + ccases.length + icases.length + fcases.length + hcases.length + hsCases.length, jetLogErr, turbErr, turbWorst, turbRough, fluxErr, fluxWorst, flowErr, flowWorst, hsErr, hsWorst };
+  return { maxErr, rows: cases.length + tcases.length + jcases.length + scases.length + ccases.length + icases.length + fcases.length + hcases.length + hsCases.length + mcases.length, jetLogErr, turbErr, turbWorst, turbRough, fluxErr, fluxWorst, flowErr, flowWorst, hsErr, hsWorst, minoErr, minoWorst };
 }

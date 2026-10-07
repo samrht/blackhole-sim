@@ -1,0 +1,22 @@
+// Parity harness for the Mino-time integrator: minoRay / minoRhs / minoStep / minoDense / minoToState come from
+// integrator-shared.wgsl (sole copy, also prepended to raytrace.wgsl), so ?parity checks the renderer's own bytes against
+// src/physics/trace-mino.ts. ONE step per case from an identical f32 state (adaptive stepping in two precisions picks
+// different step sizes where the error estimate is noise, << 1, so multi-step sequences are not comparable; whole-ray
+// accuracy on the GPU is gated by ?accuracy). Per case: q, v = the state y; c = (spin, xi, eta, h0).
+// Output: y1 (q, v), (hNext, attempts, err norm of the accepted attempt, MINO_TOL), State(y1) (x, p),
+// minoDense(y, y1, f0, f1, h, 0.37) (q, v), (MINO_MAX_REJECT, h used, MINO_UFRAC, 0).
+struct MIn { q: vec4<f32>, v: vec4<f32>, c: vec4<f32> };
+struct MOut { q: vec4<f32>, v: vec4<f32>, info: vec4<f32>, sx: vec4<f32>, sp: vec4<f32>, dq: vec4<f32>, dv: vec4<f32>, extra: vec4<f32> };
+@group(0) @binding(0) var<storage, read> inp: array<MIn>;
+@group(0) @binding(1) var<storage, read_write> outp: array<MOut>;
+@compute @workgroup_size(1) fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+  if (gid.x >= arrayLength(&inp)) { return; }
+  let m = inp[gid.x];
+  let c = minoRay(m.c.x, m.c.y, m.c.z);
+  let y = Mino(m.q, m.v);
+  let o = minoStep(y, minoRhs(y, c), m.c.w, c);
+  let s = minoToState(o.y, c);
+  let d = minoDense(y, o.y, o.f0, o.f1, o.h, 0.37, o.pole);
+  outp[gid.x] = MOut(o.y.q, o.y.v, vec4<f32>(o.hNext, f32(o.attempts), o.en, MINO_TOL), s.x, s.p, d.q, d.v,
+                     vec4<f32>(f32(MINO_MAX_REJECT), o.h, MINO_UFRAC, 0.0));
+}

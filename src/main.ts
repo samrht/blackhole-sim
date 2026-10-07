@@ -24,9 +24,9 @@ if (location.search.includes("parity")) {
   const { runParity } = await import("./test/parity.browser");
   const res = await runParity();
   // jet coefficients are compared as logs with an absolute tolerance (cooled-jet plan, Task 5)
-  const ok = res.maxErr < 1e-3 && res.jetLogErr <= 2e-3 && res.turbErr <= 1 && res.fluxErr <= 1 && res.flowErr <= 1 && res.hsErr <= 1 && res.turbRough.gpu <= 1.5 * res.turbRough.cpu;
+  const ok = res.maxErr < 1e-3 && res.jetLogErr <= 2e-3 && res.turbErr <= 1 && res.fluxErr <= 1 && res.flowErr <= 1 && res.hsErr <= 1 && res.minoErr <= 1 && res.turbRough.gpu <= 1.5 * res.turbRough.cpu;
   document.body.innerHTML = `<pre style="color:${ok ? "#6f6" : "#f66"};font-size:18px;padding:20px">
-PARITY ${ok ? "PASS" : "FAIL"} — maxRelErr=${res.maxErr.toExponential(3)} over ${res.rows} cases; jet max |d ln| ${res.jetLogErr.toExponential(2)}; turb worst ${res.turbErr.toFixed(2)} of tolerance (${res.turbWorst}); flux worst ${res.fluxErr.toFixed(3)} of tolerance (${res.fluxWorst}); hot flow worst ${res.flowErr.toFixed(3)} of tolerance (${res.flowWorst}); hotspots worst ${res.hsErr.toFixed(3)} of tolerance (${res.hsWorst}); turb roughness at t 1.8e6 ${res.turbRough.gpu.toFixed(3)} (exact ${res.turbRough.cpu.toFixed(3)}, old f32(t - delay) ${res.turbRough.old.toFixed(3)})</pre>`;
+PARITY ${ok ? "PASS" : "FAIL"} — maxRelErr=${res.maxErr.toExponential(3)} over ${res.rows} cases; jet max |d ln| ${res.jetLogErr.toExponential(2)}; turb worst ${res.turbErr.toFixed(2)} of tolerance (${res.turbWorst}); flux worst ${res.fluxErr.toFixed(3)} of tolerance (${res.fluxWorst}); hot flow worst ${res.flowErr.toFixed(3)} of tolerance (${res.flowWorst}); hotspots worst ${res.hsErr.toFixed(3)} of tolerance (${res.hsWorst}); mino worst ${res.minoErr.toFixed(3)} of tolerance (${res.minoWorst}); turb roughness at t 1.8e6 ${res.turbRough.gpu.toFixed(3)} (exact ${res.turbRough.cpu.toFixed(3)}, old f32(t - delay) ${res.turbRough.old.toFixed(3)})</pre>`;
   console.log("parity", res);
 } else if (location.search.includes("shadow")) {
   // Validation entry: critical-curve gate (three spins/inclinations) + the structural shadow check.
@@ -49,6 +49,19 @@ structural ${res.structural ? "ok" : "FAILED"} — centred dark shadow=${res.has
   const res = await runCacheCheck(canvas);
   document.body.innerHTML = `<pre style="color:${res.ok ? "#6f6" : "#f66"};font-size:15px;padding:20px">CACHECHECK ${res.ok ? "PASS" : "FAIL"}\n${res.lines.join("\n")}</pre>`;
   console.log("cachecheck", res);
+} else if (location.search.includes("accuracy")) {
+  // Validation entry: whole-ray accuracy of the renderer's integrator on this GPU (spec 2026-10-07 mino integrator).
+  // `&record` prints the current renderer's entries as JSON (the pre-Mino baseline, src/test/accuracy-old.json).
+  const acc = await import("./test/accuracy.browser");
+  if (location.search.includes("record")) {
+    const fx = await (await fetch("/src/test/accuracy-ref.json")).json();
+    const got = await acc.measureEntries(canvas, fx);
+    document.body.innerHTML = `<pre>ACCURACY RECORD</pre><pre id="json">${JSON.stringify(got)}</pre>`;
+  } else {
+    const res = await acc.runAccuracy(canvas);
+    document.body.innerHTML = `<pre style="color:${res.verdict === "FAIL" ? "#f66" : "#6f6"};font-size:14px;padding:20px">ACCURACY ${res.verdict}\n${res.lines.join("\n")}</pre>`;
+    console.log("accuracy", res);
+  }
 } else if (location.search.includes("golden")) {
   // Validation entry: bit-exact live-pass hashes (plan 2026-10-01 Task 2). `&record` prints JSON to commit.
   const { runGolden, judgeGolden, GOLDEN: want } = await import("./test/golden.browser");
