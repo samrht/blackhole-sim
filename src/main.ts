@@ -23,9 +23,9 @@ if (location.search.includes("parity")) {
   const { runParity } = await import("./test/parity.browser");
   const res = await runParity();
   // jet coefficients are compared as logs with an absolute tolerance (cooled-jet plan, Task 5)
-  const ok = res.maxErr < 1e-3 && res.jetLogErr <= 2e-3 && res.turbErr <= 1 && res.fluxErr <= 1 && res.flowErr <= 1 && res.turbRough.gpu <= 1.5 * res.turbRough.cpu;
+  const ok = res.maxErr < 1e-3 && res.jetLogErr <= 2e-3 && res.turbErr <= 1 && res.fluxErr <= 1 && res.flowErr <= 1 && res.hsErr <= 1 && res.turbRough.gpu <= 1.5 * res.turbRough.cpu;
   document.body.innerHTML = `<pre style="color:${ok ? "#6f6" : "#f66"};font-size:18px;padding:20px">
-PARITY ${ok ? "PASS" : "FAIL"} — maxRelErr=${res.maxErr.toExponential(3)} over ${res.rows} cases; jet max |d ln| ${res.jetLogErr.toExponential(2)}; turb worst ${res.turbErr.toFixed(2)} of tolerance (${res.turbWorst}); flux worst ${res.fluxErr.toFixed(3)} of tolerance (${res.fluxWorst}); hot flow worst ${res.flowErr.toFixed(3)} of tolerance (${res.flowWorst}); turb roughness at t 1.8e6 ${res.turbRough.gpu.toFixed(3)} (exact ${res.turbRough.cpu.toFixed(3)}, old f32(t - delay) ${res.turbRough.old.toFixed(3)})</pre>`;
+PARITY ${ok ? "PASS" : "FAIL"} — maxRelErr=${res.maxErr.toExponential(3)} over ${res.rows} cases; jet max |d ln| ${res.jetLogErr.toExponential(2)}; turb worst ${res.turbErr.toFixed(2)} of tolerance (${res.turbWorst}); flux worst ${res.fluxErr.toFixed(3)} of tolerance (${res.fluxWorst}); hot flow worst ${res.flowErr.toFixed(3)} of tolerance (${res.flowWorst}); hotspots worst ${res.hsErr.toFixed(3)} of tolerance (${res.hsWorst}); turb roughness at t 1.8e6 ${res.turbRough.gpu.toFixed(3)} (exact ${res.turbRough.cpu.toFixed(3)}, old f32(t - delay) ${res.turbRough.old.toFixed(3)})</pre>`;
   console.log("parity", res);
 } else if (location.search.includes("shadow")) {
   // Validation entry: critical-curve gate (three spins/inclinations) + the structural shadow check.

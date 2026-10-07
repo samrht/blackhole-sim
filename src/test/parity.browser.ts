@@ -9,8 +9,10 @@ import emissionSharedWGSL from "../render/emission-shared.wgsl?raw";
 import jetParityWGSL from "../render/jet-parity.wgsl?raw";
 import fluxParityWGSL from "../render/flux-parity.wgsl?raw";
 import flowParityWGSL from "../render/flow-parity.wgsl?raw";
+import hotspotParityWGSL from "../render/hotspot-parity.wgsl?raw";
+import { HOTSPOT, hotspotAt, hotspotBoost, hotspotShift, hotspotPeriod, hotspotRadius } from "../physics/hotspot";
 import { HOTFLOW, flowVelocity, flowShift, flowCoeffs, flowDensity } from "../physics/hot-flow";
-import { fluxRatio } from "../physics/flux-history";
+import { fluxRatio, eruptionTime } from "../physics/flux-history";
 import { jetShape, launchDelay, comovingAzimuth, filaments } from "../physics/jet";
 import { plasmaShift, streamlineDir, gammaProfile, jetField, jetCoeffs, flowTime, slabStep, JET_BANDS_NM, C_CGS, LN_K0 } from "../physics/synchrotron";
 import { parseTable } from "../physics/cyclosynch";
@@ -25,7 +27,7 @@ import integratorParityWGSL from "../render/integrator-parity.wgsl?raw";
 
 /** Runs the WGSL metric/orbit/g-factor helpers on fixed inputs and returns the max relative
  *  error vs the TypeScript core. f32 GPU vs f64 CPU keeps this in the ~1e-6..1e-4 range. */
-export async function runParity(): Promise<{ maxErr: number; rows: number; jetLogErr: number; turbErr: number; turbWorst: string; turbRough: { gpu: number; old: number; cpu: number }; fluxErr: number; fluxWorst: string; flowErr: number; flowWorst: string }> {
+export async function runParity(): Promise<{ maxErr: number; rows: number; jetLogErr: number; turbErr: number; turbWorst: string; turbRough: { gpu: number; old: number; cpu: number }; fluxErr: number; fluxWorst: string; flowErr: number; flowWorst: string; hsErr: number; hsWorst: string }> {
   const cases = [
     { r: 8, th: Math.PI / 2, a: 0.0, xi: 3 }, { r: 6, th: 1.2, a: 0.5, xi: 2 },
     { r: 12, th: Math.PI / 2, a: 0.9, xi: -4 }, { r: 20, th: 0.9, a: 0.99, xi: 5 },
@@ -522,5 +524,53 @@ export async function runParity(): Promise<{ maxErr: number; rows: number; jetLo
   });
   console.log("flow parity worst (|err| / tol)", flowErr.toExponential(2), flowWorst, "cases", hcases.length,
     `(no velocity ${nNoVel}, density cut ${nCut}, j below f32 ${nTiny}, compared ${nEmit})`);
-  return { maxErr, rows: cases.length + tcases.length + jcases.length + scases.length + ccases.length + icases.length + fcases.length + hcases.length, jetLogErr, turbErr, turbWorst, turbRough, fluxErr, fluxWorst, flowErr, flowWorst };
+  // --- hotspots (CPU hotspot.ts vs the SHIPPED hotspotStateJ / hotspotBoostJ / hotspotShiftJ in emission-shared.wgsl) ---
+  // Times across eruption k's life (before birth, the rise, the peak, mid-life, the cut, after) for k from 0 to 5000
+  // (clock up to 7.5e6 M: the f32 epoch split must stay exact), spins 0 / 0.94 / 0.998, slider 0 / 0.6 / 1.4; points at the
+  // centre, 2-3 M off it in r, above the plane, ahead in phi, and near the horizon (r 1.6: not timelike, D_h = -1).
+  const hsCases: { a: number[]; b: number[]; c: number[] }[] = [];
+  for (const k of [0, 1, 3, 700, 5000]) for (const a of [0, 0.94, 0.998]) for (const fr of [-0.02, 0.003, 0.05, 0.098, 0.5, 1.7, 2.6, 2.95, 3.05]) {
+    const t = eruptionTime(k) + fr * hotspotPeriod(hotspotRadius(k), a), epoch = 2048 * Math.floor(t / 2048);
+    for (const s of fr === 0.5 ? [0, 0.6, 1.4] : [1]) {
+      const h = hotspotAt(t, 1, a), rc = h.rc;
+      for (const [r, th, dph] of [[rc, Math.PI / 2, 0], [rc + 2, Math.PI / 2, 0.25], [rc - 3, 1.3, -0.2], [1.6, Math.PI / 2, 0], [3, 1.4, 0.1]])
+        hsCases.push({ a: [epoch, t - epoch, s, a], b: [r, th, h.phiC + dph, 0], c: [1, (k & 1) ? 3 : -2.5, 0, 0] });
+    }
+  }
+  const hsArr = new Float32Array(hsCases.length * 12);
+  hsCases.forEach((c, i) => hsArr.set([...c.a, ...c.b, ...c.c], i * 12));
+  const hsIn = device.createBuffer({ size: hsArr.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+  device.queue.writeBuffer(hsIn, 0, hsArr);
+  const hsOut = device.createBuffer({ size: hsCases.length * 32, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
+  const hsRead = device.createBuffer({ size: hsCases.length * 32, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+  const hsMod = device.createShaderModule({ code: integratorSharedWGSL + emissionSharedWGSL + hotspotParityWGSL });
+  const hsPipe = device.createComputePipeline({ layout: "auto", compute: { module: hsMod, entryPoint: "main" } });
+  const hsBind = device.createBindGroup({ layout: hsPipe.getBindGroupLayout(0), entries: [
+    { binding: 0, resource: { buffer: hsIn } }, { binding: 1, resource: { buffer: hsOut } }] });
+  const hsEnc = device.createCommandEncoder();
+  const hsCp = hsEnc.beginComputePass(); hsCp.setPipeline(hsPipe); hsCp.setBindGroup(0, hsBind); hsCp.dispatchWorkgroups(hsCases.length); hsCp.end();
+  hsEnc.copyBufferToBuffer(hsOut, 0, hsRead, 0, hsCases.length * 32);
+  device.queue.submit([hsEnc.finish()]);
+  await hsRead.mapAsync(GPUMapMode.READ);
+  const hsGpu = new Float32Array(hsRead.getMappedRange().slice(0));
+  // Errors / tolerance: alive must agree exactly (no case sits within 0.02 P of a boundary); absolute 1e-4 on r_c, 2e-3 on
+  // phi_c (f32 tau ~ 1e3 M carries ~1e-4 M), 1e-4 on G; relative 1e-3 on the amplitude, Omega_c and D_h (D_h's against the
+  // size of its terms, as for the flow); D_h = -1 exactly where the CPU has no timelike motion.
+  let hsErr = 0, hsWorst = "";
+  const hset = (i: number, k: number, g: number, w: number, tol: number) => { const e = Math.abs(g - w) / tol;
+    if (!(e <= hsErr)) { hsErr = Number.isFinite(e) ? e : Infinity; hsWorst = `case ${i} out ${k}: gpu ${g} cpu ${w}`; } };
+  hsCases.forEach((_, i) => {
+    const v = Array.from(hsArr.subarray(i * 12, i * 12 + 12)), [epoch, rel, s, a] = v, [r, th, ph] = v.slice(4, 7), [pt, pphi] = v.slice(8, 10);
+    const g = Array.from(hsGpu.subarray(i * 8, i * 8 + 8)), h = hotspotAt(epoch + rel, s, a);
+    hset(i, 3, g[3], h.alive ? 1 : 0, 1e-6);
+    if (h.alive) { hset(i, 0, g[0], h.rc, 1e-4); hset(i, 1, g[1], h.phiC, 2e-3); hset(i, 2, g[2], h.amp, 1e-3 * Math.max(1, h.amp)); }
+    const rc = h.alive ? g[0] : HOTSPOT.rMin, Om = 1 / (rc ** 1.5 + a);
+    hset(i, 4, g[4], hotspotBoost(r, th, ph, rc, g[1]), 1e-4);
+    hset(i, 6, g[6], Om, 1e-3 * Om);
+    const Dh = hotspotShift(r, th, pt, pphi, a, g[6]);
+    if (Dh === null) hset(i, 5, g[5], -1, 1e-6);
+    else hset(i, 5, g[5], Dh, 1e-3 * (Math.abs(pt) + Math.abs(Om * pphi)) * Math.max(1, Math.abs(Dh)));
+  });
+  console.log("hotspot parity worst (|err| / tol)", hsErr.toExponential(2), hsWorst, "cases", hsCases.length);
+  return { maxErr, rows: cases.length + tcases.length + jcases.length + scases.length + ccases.length + icases.length + fcases.length + hcases.length + hsCases.length, jetLogErr, turbErr, turbWorst, turbRough, fluxErr, fluxWorst, flowErr, flowWorst, hsErr, hsWorst };
 }

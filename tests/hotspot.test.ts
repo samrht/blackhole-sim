@@ -85,3 +85,16 @@ describe("live-tracing window", () => {
     }
   });
 });
+
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+describe("WGSL twin constants (emission-shared.wgsl)", () => {
+  const W = readFileSync(join(__dirname, "../src/render/emission-shared.wgsl"), "utf8");
+  const wconst = (n: string) => { const m = W.match(new RegExp(`const ${n}\\s*=\\s*([^;]+);`)); if (!m) throw new Error(`no ${n}`); return Number(m[1].trim().replace(/u$/, "")); };
+  it("match HOTSPOT", () => {
+    for (const [n, v] of [["HS_RMIN", HOTSPOT.rMin], ["HS_RSPAN", HOTSPOT.rSpan], ["HS_SIGMA", HOTSPOT.sigma], ["HS_CUT", HOTSPOT.cut],
+      ["HS_RISE", HOTSPOT.rise], ["HS_CUT_FROM", HOTSPOT.cutFrom], ["HS_CUT_TO", HOTSPOT.cutTo], ["HS_SALT_R", HOTSPOT.saltR],
+      ["HS_SALT_PHI", HOTSPOT.saltPhi], ["HS_A0", HOTSPOT.A0]] as const) expect(wconst(n)).toBe(v);
+    expect(wconst("HS_REACH")).toBeCloseTo(HOTSPOT_REACH, 6);
+  });
+});

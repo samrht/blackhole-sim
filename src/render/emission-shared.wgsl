@@ -362,3 +362,41 @@ fn flowCoeffsJ(r: f32, th: f32, lnNu: f32, n0: f32) -> vec2<f32> {
   let lnA = lnJ - (HF_LN_RJ + 2.0 * lnNu + lnT);
   return vec2<f32>(exp(lnJ), exp(lnA));
 }
+// --- Hotspot flares at 1.3 mm (spec 2026-10-04 mm hotspots; twin: src/physics/hotspot.ts) -----------------------------
+const HS_RMIN = 8.0; const HS_RSPAN = 4.0; const HS_SIGMA = 2.548; const HS_CUT = 4.0;
+const HS_RISE = 0.1; const HS_CUT_FROM = 2.5; const HS_CUT_TO = 3.0;
+const HS_SALT_R = 0x4853u; const HS_SALT_PHI = 0x4850u;
+const HS_A0 = 9.22;       // scripts/calibrate-hotspot.ts (twin: HOTSPOT.A0)
+const HS_REACH = 22.192;  // HS_RMIN + HS_RSPAN + HS_CUT * HS_SIGMA: no blob reaches beyond this radius
+fn hotspotLightJ(tau: f32, P: f32) -> f32 {
+  if (tau < 0.0 || tau >= HS_CUT_TO * P) { return 0.0; }
+  return smoothstepJ(0.0, HS_RISE * P, tau) * exp(-tau / P) * (1.0 - smoothstepJ(HS_CUT_FROM * P, HS_CUT_TO * P, tau));
+}
+// (r_c, phi_c, A_k L, 1) of the hotspot at absolute time epoch + rel, or 0 when none is alive (twin: hotspotAt). The
+// latest eruption k comes from fluxDeficitJ's split (exact at any epoch); at most one hotspot is alive at a time.
+fn hotspotStateJ(epoch: f32, rel: f32, s: f32, a: f32) -> vec4<f32> {
+  if (s <= 0.0) { return vec4<f32>(0.0); }
+  let kl = splitPeriodJ(epoch, rel, FLUX_T);
+  var k = i32(kl.x);
+  var tau = kl.y - FLUX_T * (0.5 + FLUX_JIT * fluxHashJ(k, FLUX_SALT_T));
+  if (tau < 0.0) { k = k - 1; tau = kl.y + FLUX_T - FLUX_T * (0.5 + FLUX_JIT * fluxHashJ(k, FLUX_SALT_T)); }
+  let rc = HS_RMIN + HS_RSPAN * (fluxHashJ(k, HS_SALT_R) + 0.5);
+  let q = pow(rc, 1.5) + a; let P = TWO_PI_E * q;
+  if (tau >= HS_CUT_TO * P) { return vec4<f32>(0.0); }
+  let phiC = TWO_PI_E * (fluxHashJ(k, HS_SALT_PHI) + 0.5) + tau / q;
+  let amp = HS_A0 * s * (1.0 + FLUX_SPREAD * fluxHashJ(k, FLUX_SALT_D)) * hotspotLightJ(tau, P);
+  return vec4<f32>(rc, phiC, amp, 1.0);
+}
+// Gaussian G(d) about (r_c, pi/2, phi_c), 0 beyond 4 sigma (twin: hotspotBoost).
+fn hotspotBoostJ(r: f32, th: f32, ph: f32, rc: f32, phiC: f32) -> f32 {
+  let d2 = r * r + rc * rc - 2.0 * r * rc * sin(th) * cos(ph - phiC);
+  if (d2 >= HS_CUT * HS_CUT * HS_SIGMA * HS_SIGMA) { return 0.0; }
+  return exp(-d2 / (2.0 * HS_SIGMA * HS_SIGMA));
+}
+// nu_plasma / nu_obs of matter at (r, th) moving at Om, p = (p_t, p_r, p_th, p_phi); -1 where not timelike (twin: hotspotShift).
+fn hotspotShiftJ(r: f32, th: f32, p: vec4<f32>, a: f32, Om: f32) -> f32 {
+  let g = gLow(r, th, a);                                // 0 tt, 1 tphi, 2 rr, 3 thth, 4 phph
+  let K = -(g[0] + 2.0 * Om * g[1] + Om * Om * g[4]);
+  if (K <= 0.0) { return -1.0; }
+  return (p.x + Om * p.w) / sqrt(K);
+}
