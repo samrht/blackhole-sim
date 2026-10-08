@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { HOTFLOW, mahadevanM, flowDensity, flowTemperature, flowField, iscoEL, flowVelocity, flowCoeffs, isHotFlow, flowN0, HOTFLOW_N0 } from "../src/physics/hot-flow";
+import { HOTFLOW, mahadevanM, flowDensity, flowDensityEq, flowIonTemperature, flowBeta, flowRatio, flowTemperature, flowField, iscoEL, flowVelocity, flowCoeffs, isHotFlow, flowN0, HOTFLOW_N0 } from "../src/physics/hot-flow";
 import { ringDiameterUas } from "../src/physics/hot-flow-image";
 import { metricLower } from "../src/physics/kerr";
 import { iscoRadius } from "../src/physics/orbits";
@@ -11,14 +11,35 @@ describe("hot flow (spec 2026-10-04)", () => {
     for (const X of [0.1, 1, 10, 100, 1e4]) expect(mahadevanM(X)).toBeCloseTo(M(X), 12);
     expect(mahadevanM(1e9)).toBeLessThan(1e-200 + 1e-300);
   });
-  it("Broderick profiles: density r^-1.1 with a Gaussian in z/rho, temperature r^-0.84, beta = 10 toroidal field", () => {
+  it("Broderick density r^-1.1 with a Gaussian in z/rho; its midplane value is the field's reference", () => {
     expect(flowDensity(4, Math.PI / 2, 1e7)).toBeCloseTo(1e7 * 2 ** -1.1, 3);
     const th = Math.atan2(4, 3), r = 5; // rho = 4, z = 3
     expect(flowDensity(r, th, 1e7)).toBeCloseTo(1e7 * (r / 2) ** -1.1 * Math.exp(-9 / 32), 3);
     expect(flowDensity(10, 1e-9, 1e7)).toBe(0); // on the axis
-    expect(flowTemperature(2)).toBeCloseTo(1e11, 0); expect(flowTemperature(8)).toBeCloseTo(1e11 * 4 ** -0.84, 0);
-    const n = 3e6, r2 = 6, B = flowField(r2, n);
-    expect((B * B) / (8 * Math.PI)).toBeCloseTo((n * 1.67262192e-24 * 2.99792458e10 ** 2 * (2 / r2)) / (12 * 10), 6);
+    expect(flowDensityEq(r, 1e7)).toBeCloseTo(flowDensity(r, Math.PI / 2, 1e7), 6);
+  });
+  it("MAD R-beta electrons (spec 2026-10-08): virial ions, field from the midplane density, T_e = T_i / R(beta)", () => {
+    const C = 2.99792458e10, MP = 1.67262192e-24, KB = 1.380649e-16;
+    expect(HOTFLOW.betaEq).toBe(1); expect(HOTFLOW.rHigh).toBe(160); expect(HOTFLOW.rLow).toBe(1);
+    expect(flowIonTemperature(3)).toBeCloseTo((MP * C * C) / (3 * KB * 3), -3);       // k T_i = m_p c^2 / (3 r)
+    expect(flowIonTemperature(1) / 3.629398e12).toBeCloseTo(1, 6);
+    // B^2 / 8 pi = n_eq m_p c^2 r_S / (12 r beta_eq), n_eq the midplane density
+    const r = 6, n0 = 1e6, B = flowField(r, n0);
+    expect((B * B) / (8 * Math.PI)).toBeCloseTo((flowDensityEq(r, n0) * MP * C * C * (2 / r)) / (12 * HOTFLOW.betaEq), 6);
+    // beta is the ion plasma beta 8 pi n k T_i / B^2 = 2 beta_eq e^{-z^2 / 2 rho^2}
+    for (const th of [Math.PI / 2, 1.2, 0.7]) {
+      const n = flowDensity(r, th, n0), def = (8 * Math.PI * n * KB * flowIonTemperature(r)) / (B * B);
+      expect(flowBeta(r, th) / def).toBeCloseTo(1, 9);
+    }
+    expect(flowBeta(r, Math.PI / 2)).toBeCloseTo(2 * HOTFLOW.betaEq, 12);
+    expect(flowBeta(r, 1e-9)).toBe(0);                                                  // on the axis
+    // R(beta): R_low where the field dominates, R_high where the gas does
+    expect(flowRatio(0)).toBe(1); expect(flowRatio(1)).toBeCloseTo(80.5, 12); expect(flowRatio(1e4)).toBeCloseTo(160, 4);
+    expect(flowTemperature(r, Math.PI / 2)).toBeCloseTo(flowIonTemperature(r) / flowRatio(2), -3);
+    // far off the midplane: beta -> 0 (e^-200), electrons as hot as the ions, never NaN
+    const thFar = Math.atan2(1, 20); // rho / z = 1 / 20
+    expect(flowBeta(r, thFar)).toBeLessThan(1e-80);
+    expect(flowTemperature(r, thFar)).toBeCloseTo(flowIonTemperature(r), -3);
   });
   it("Pu et al. velocity: normalised, Keplerian / free-fall limits, plunge inside the ISCO, K0 <= 0 -> null", () => {
     const a = 0.94, risco = iscoRadius(a, true);
@@ -37,7 +58,7 @@ describe("hot flow (spec 2026-10-04)", () => {
   it("coefficients: Kirchhoff with the Rayleigh-Jeans source function; zero where there is no gas", () => {
     const [j, al] = flowCoeffs(6, 1.3, 230e9, 1e7);
     expect(j).toBeGreaterThan(0);
-    expect((j / al) / ((2 * 230e9 ** 2 * 1.380649e-16 * flowTemperature(6)) / 2.99792458e10 ** 2)).toBeCloseTo(1, 9);
+    expect((j / al) / ((2 * 230e9 ** 2 * 1.380649e-16 * flowTemperature(6, 1.3)) / 2.99792458e10 ** 2)).toBeCloseTo(1, 9);
     expect(flowCoeffs(6, 1e-9, 230e9, 1e7)).toEqual([0, 0]);
   });
   it("regime: hot below 1 % Eddington; n0 scaled lambda / M from the calibrated object nearest in mass", () => {
