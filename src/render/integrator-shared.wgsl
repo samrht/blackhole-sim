@@ -291,7 +291,10 @@ fn minoTry(y: Mino, f0: Mino, h: f32, c: MinoRay) -> MinoTryOut {
   let k7 = minoRhs(y1, c);
   let e = mStage(z, h, k1, 71.0 / 57600.0, k3, -71.0 / 16695.0, k4, 71.0 / 1920.0,
                  k5, -17253.0 / 339200.0, k6, 22.0 / 525.0, k7, -1.0 / 40.0);
-  return MinoTryOut(y1, k7, max(minoErrNorm(y, y1, e, MINO_TOL), minoDriftNorm(y, y1, k7, c, MINO_TOL)));
+  // w <= 0 (r beyond infinity) is outside the domain: rejected explicitly, not through ln w's NaN (WGSL's log of a negative
+  // is indeterminate, finite on Intel). 3e38 reads as non-finite below (factor 0.2). Twin: minoTry.
+  let en = select(3e38, max(minoErrNorm(y, y1, e, MINO_TOL), minoDriftNorm(y, y1, k7, c, MINO_TOL)), y1.q.y > 0.0);
+  return MinoTryOut(y1, k7, en);
 }
 // y0, f0: the start state and derivative AS USED (mirrored if the step began past the equator); dense output and the
 // plane crossing of the step take (y0, y, f0, f1).
@@ -349,7 +352,8 @@ fn minoSegWMax(y0: Mino, y1: Mino, f0: Mino, f1: Mino, h: f32) -> f32 {
   return m;
 }
 // The state ON the equatorial plane within the step (y0, f0, h) whose dense crossing is at fraction th: a DP5 step of
-// size s from y0, s refined by safeguarded Newton on cos(theta) (bisection inside the sign bracket when Newton leaves it).
+// size s from y0, s refined by safeguarded Newton on cos(theta) (bisection inside the sign bracket when Newton leaves it;
+// the bracket is closed, since a converged update rounds onto s, a bracket end).
 // The cubic Hermite crossing is only 4th order; the landing step carries the step's own accuracy to the plane (twin:
 // minoLand).
 fn minoLand(y0: Mino, f0: Mino, h: f32, th: f32, c: MinoRay) -> Mino {
@@ -359,7 +363,7 @@ fn minoLand(y0: Mino, f0: Mino, h: f32, th: f32, c: MinoRay) -> Mino {
     let t = minoTry(y0, f0, s, c); let sc = sinCosP(t.y1.q.z);
     if (sc.y * c0 > 0.0) { lo = s; } else { hi = s; }
     let sn = s - sc.y / (-sc.x * t.f1.q.z);
-    s = select(0.5 * (lo + hi), sn, sn > lo && sn < hi);
+    s = select(0.5 * (lo + hi), sn, sn >= lo && sn <= hi);
   }
   return minoTry(y0, f0, s, c).y1;
 }
@@ -372,7 +376,7 @@ fn minoLandW(y0: Mino, f0: Mino, h: f32, th: f32, c: MinoRay, wT: f32) -> Mino {
     let t = minoTry(y0, f0, s, c); let g = t.y1.q.y - wT;
     if (g * g0 > 0.0) { lo = s; } else { hi = s; }
     let sn = s - g / t.f1.q.y;
-    s = select(0.5 * (lo + hi), sn, sn > lo && sn < hi);
+    s = select(0.5 * (lo + hi), sn, sn >= lo && sn <= hi);
   }
   return minoTry(y0, f0, s, c).y1;
 }

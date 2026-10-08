@@ -153,7 +153,10 @@ export function minoTry(y: Float64Array, h: number, c: MinoRay, f0: Float64Array
   const err = new Float64Array(7); for (let j = 0; j < 7; j++) { let acc = 0; for (let q = 0; q < 7; q++) acc += E[q] * k[q][j]; err[j] = h * acc; }
   const d = minoDrift(y, y1, c, k[6], eps);
   const ec = Math.max(d[0] / Math.max(ctol * tol * d[1], d[2]), d[3] / Math.max(ctol * tol * d[4], d[5]));
-  return { y1, f1: k[6], en: Math.max(errNorm(y, y1, err, tol), ec) };
+  // w <= 0 (r beyond infinity) is outside the domain: rejected explicitly (en Infinity -> factor 0.2). tau' takes ln w, so
+  // f64 already gave NaN there; WGSL's log of a negative is indeterminate (finite on Intel), and the GPU accepted steps
+  // past r = infinity on far rays and read their sky off the escape sphere (?accuracy 2026-10-08). Twin: WGSL minoTry.
+  return { y1, f1: k[6], en: y1[1] > 0 ? Math.max(errNorm(y, y1, err, tol), ec) : Infinity };
 }
 /** One accepted DP5(4) step from y with proposed size h0 (capped at the polar-oscillation guard). Rejected attempts shrink
  *  h and retry; after MINO_MAX_REJECT the last attempt is accepted (the ray proceeds, as today's monitor does). f0In: the
@@ -204,7 +207,10 @@ export function minoSegWMax(y0: Float64Array, y1: Float64Array, f0: Float64Array
 }
 /** The state ON the equatorial plane within the step (y0, f0, h) whose dense crossing is at fraction th: a DP5 step of
  *  size s from y0, s refined by safeguarded Newton on cos(theta) (two iterations; bisection inside the sign bracket when
- *  Newton leaves it, e.g. a grazing theta' ~ 0). The cubic Hermite crossing is only 4th order: its interpolation error
+ *  Newton leaves the CLOSED bracket, e.g. a grazing theta' ~ 0; NaN fails both tests). The bracket is closed because once
+ *  Newton has converged its update rounds onto s itself, a bracket end: the open test sent such a converged s to the
+ *  midpoint of [s, h], up to half a step off (f32 always, the GPU's first update from the dense guess; ?accuracy
+ *  2026-10-08). The cubic Hermite crossing is only 4th order: its interpolation error
  *  (~1e-4 rad of phi on near-critical rays, 1e-2 M of t on far ones) exceeds the step's own; the landing step carries the
  *  step's 5th-order accuracy to the plane. Twin: WGSL minoLand. */
 export function minoLand(y0: Float64Array, f0: Float64Array, h: number, th: number, c: MinoRay): Float64Array {
@@ -214,7 +220,7 @@ export function minoLand(y0: Float64Array, f0: Float64Array, h: number, th: numb
     const { y1: d, f1: fd } = minoTry(y0, s, c, f0), g = Math.cos(d[2]);
     if (g * c0 > 0) lo = s; else hi = s;
     const sn = s - g / (-Math.sin(d[2]) * fd[2]);
-    s = sn > lo && sn < hi ? sn : 0.5 * (lo + hi);
+    s = sn >= lo && sn <= hi ? sn : 0.5 * (lo + hi); // closed: a converged update rounds onto s, which is a bracket end
   }
   return minoTry(y0, s, c, f0).y1;
 }
@@ -229,7 +235,7 @@ export function minoLandW(y0: Float64Array, f0: Float64Array, h: number, th: num
     const { y1: d, f1: fd } = minoTry(y0, s, c, f0), g = d[1] - wT;
     if (g * g0 > 0) lo = s; else hi = s;
     const sn = s - g / fd[1];
-    s = sn > lo && sn < hi ? sn : 0.5 * (lo + hi);
+    s = sn >= lo && sn <= hi ? sn : 0.5 * (lo + hi);
   }
   return minoTry(y0, s, c, f0).y1;
 }

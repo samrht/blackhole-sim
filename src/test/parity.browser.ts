@@ -25,7 +25,7 @@ import cameraParityWGSL from "../render/camera-parity.wgsl?raw";
 import { stepGeodesic, stepSize, H_TOL, H_TOL_FAR, MAX_RETRY, F_PHI, DL_FAR_MIN } from "../physics/trace";
 import integratorParityWGSL from "../render/integrator-parity.wgsl?raw";
 import minoParityWGSL from "../render/mino-parity.wgsl?raw";
-import { minoRay, minoInit, minoRhs, minoStep, minoTry, minoDense, minoToState, minoHemi, minoCrossing, minoLand, MINO_TOL as MINO_TOL_PARITY, MINO_MAX_REJECT as MINO_MAX_REJECT_PARITY, MINO_UFRAC as MINO_UFRAC_PARITY } from "../physics/trace-mino";
+import { minoRay, minoInit, minoRhs, minoStep, minoTry, minoDense, minoToState, minoHemi, minoCrossing, minoLand, minoSphere, MINO_TOL as MINO_TOL_PARITY, MINO_MAX_REJECT as MINO_MAX_REJECT_PARITY, MINO_UFRAC as MINO_UFRAC_PARITY } from "../physics/trace-mino";
 
 /** Runs the WGSL metric/orbit/g-factor helpers on fixed inputs and returns the max relative
  *  error vs the TypeScript core. f32 GPU vs f64 CPU keeps this in the ~1e-6..1e-4 range. */
@@ -468,12 +468,18 @@ export async function runParity(): Promise<{ maxErr: number; rows: number; jetLo
     }
     if (!mcases.some((m) => m.label === "plane crossing")) throw new Error("mino parity: no plane-crossing case");
   }
+  // the escape sphere: a far outgoing state with a step long enough to carry w past the sphere and past 0 (the GPU's
+  // f32 error norm accepts such steps on corner rays; ?accuracy found their sky read off the sphere), and an ordinary one
+  const corner = mkRay(10.063, -12.688, 0.9, 72); // ?accuracy default #1554
+  caseAt("escape long step", corner, (y) => y[1] < 0.0105 && y[5] < 0);
+  mcases[mcases.length - 1].h = Math.fround(0.0172);
+  caseAt("escape", corner, (y) => y[1] < 0.002 && y[5] < 0);
   if (!mcases.some((m) => m.label === "near south pole" && m.y[7] < 0 && Math.sin(m.y[2]) ** 2 < 1e-3)) throw new Error("mino parity: no south-pole case");
   const mIn = new Float32Array(mcases.length * 12);
   mcases.forEach((m, i) => mIn.set([m.y[0], m.y[1], m.y[2], m.y[3], m.y[4], m.y[5], m.y[6], m.y[7], m.a, m.xi, m.eta, m.h], i * 12));
   const mInBuf = device.createBuffer({ size: mIn.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
   device.queue.writeBuffer(mInBuf, 0, mIn);
-  const MOUT = 44; // floats per MOut (11 vec4)
+  const MOUT = 56; // floats per MOut (14 vec4)
   const mOutBuf = device.createBuffer({ size: mcases.length * MOUT * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
   const mRead = device.createBuffer({ size: mcases.length * MOUT * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
   const mMod = device.createShaderModule({ code: integratorSharedWGSL + minoParityWGSL });
@@ -521,6 +527,10 @@ export async function runParity(): Promise<{ maxErr: number; rows: number; jetLo
     const th = minoCrossing(y0, tr.y1, f0, tr.f1, g[29]);
     mset(i, "crossing found", g[41], th >= 0 ? 1 : 0, 1e-6);
     if (th >= 0 && g[41] === 1) { mset(i, "crossing th", g[40], th, 1e-4); cmpY(32, minoLand(y0, f0, g[29], g[40], c), "landed "); }
+    // the escape landing at the GPU's step: on the sphere, and the CPU twin's landed state from the same step
+    const esc = minoSphere({ y0, y: tr.y1, f0, f1: tr.f1, h: g[29], hNext: 0, attempts: 0, en: 0 }, c, 1 / 1200);
+    mset(i, "escape found", g[52], esc ? 1 : 0, 1e-6);
+    if (esc && g[52] === 1) { cmpY(44, esc, "escaped "); mset(i, "escaped on sphere w", g[45], 1 / 1200, 1e-5 / 1200); }
     mset(i, "r", g[13], st[1], 1e-5 * st[1]); mset(i, "theta", g[14], st[2], 1e-5);
     mset(i, "p_r", g[17], st[5], 1e-4 * Math.max(1, Math.abs(st[5]))); mset(i, "p_theta", g[18], st[6], 1e-4 * Math.max(1, Math.abs(st[6])));
     mset(i, "p_phi", g[19], st[7], 1e-6 * Math.max(1, Math.abs(st[7])));
