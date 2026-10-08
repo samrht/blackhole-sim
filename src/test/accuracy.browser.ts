@@ -3,12 +3,21 @@
 // rHit, phiHit, delay; sky: direction; 1.3 mm hot flow: intensity), so reading those entries measures the renderer's own
 // integrator, not a copy. Scored against the CPU converged reference (src/test/accuracy-ref.json, built by
 // scripts/build-accuracy-ref.ts) and, per pixel, against the pre-Mino renderer's entries recorded on the same adapter
-// (src/test/accuracy-old.json, `?accuracy&record` before the swap): no fate flips and no pixel worse than the old
-// renderer beyond the floors (r, delay 1e-5 relative; phi 1e-5 rad; sky 0.01 px through the lensing Jacobian; intensity
-// max(1e-5, 2 q) relative, q the renderer rule's own quadrature error along the exact path), each raised to the pixel's
-// own f32 input conditioning where that is larger (row.s, src/test/accuracy-sens.ts: how far the converged answer moves
-// under a 1-ulp nudge of the f32 alpha or beta; near the critical curve 2-4e-4 in rHit, for the old and the new renderer
-// alike). A fate flip counts unless such a nudge flips the reference's own fate (s = 1e9).
+// (src/test/accuracy-old.json, `?accuracy&record` before the swap). Floors per pixel: r, delay 1e-5 relative; phi 1e-5
+// rad; sky 0.01 px through the lensing Jacobian; intensity max(1e-5, 2 q) relative, q the rule's quadrature error along
+// the exact path taken as the max of |q| / I over the pixel's 3 x 3 neighbourhood (q is a signed sum that crosses zero
+// between neighbours: #885 of sgra-mm had 3e-6 among neighbours at 1e-4); each raised to the pixel's own f32 input
+// conditioning where that is larger (row.s, src/test/accuracy-sens.ts: how far the converged answer moves under a 1-ulp
+// nudge of the f32 alpha or beta; near the critical curve 2-4e-4 in rHit, for the old and the new renderer alike).
+// PASS (user decision 2026-10-08, ledger): no fate flips (unless such a nudge flips the reference's own fate, s = 1e9),
+// and per scene and quantity, with ratio = error / floor:
+//   - no pixel whose new ratio exceeds 1, its old ratio, AND the old renderer's typical exceedance (the median old ratio
+//     among the pixels where the old one exceeds its floor);
+//   - no more pixels above their floor than the old renderer has, and no larger worst ratio.
+// Why not "no pixel worse than old" alone: both renderers sit on shared f32 floors the 1-ulp nudge does not capture
+// (near-critical rounding amplified by the photon orbit; the f32 log-sum in flowCoeffsJ, biased ~-1e-5). The old renderer
+// exceeds its floor on ~1000-1270 pixels of every geometry scene and beats the new one only where its own error happens
+// to cancel (17 such pixels out of ~9600 at the shipped tolerance; no practical tolerance reaches 0).
 // A different adapter than the recording's reports SKIP for the per-pixel comparison (like ?golden).
 import { Renderer } from "../render/gpu";
 import { BuildScheduler } from "../render/cache-plan";
@@ -57,6 +66,17 @@ function errors(row: RefRow, e: number[]): Err | null {
   return { r: 0, p: 0, d: 0, px: 0, I: 0 };
 }
 const FLOOR: Err = { r: 1e-5, p: 1e-5, d: 1e-5, px: 0.01, I: 1e-5 };
+/** The rule's quadrature error at pixel k on its neighbourhood scale: max |q| / I over the 3 x 3 pixels around it. */
+function qScale(s: RefScene, N: number, k: number): number {
+  const i0 = k % N, j0 = Math.floor(k / N); let m = 0;
+  for (let j = Math.max(0, j0 - 1); j <= Math.min(N - 1, j0 + 1); j++)
+    for (let i = Math.max(0, i0 - 1); i <= Math.min(N - 1, i0 + 1); i++) {
+      const r = s.rays[j * N + i];
+      if (r.q !== undefined && r.I !== undefined && r.I > 0) m = Math.max(m, r.q / r.I);
+    }
+  return m;
+}
+const median = (a: number[]) => { const s = [...a].sort((x, y) => x - y); return s.length ? s[Math.floor((s.length - 1) / 2)] : 0; };
 export async function runAccuracy(canvas: HTMLCanvasElement): Promise<{ verdict: "PASS" | "FAIL" | "SKIP"; lines: string[] }> {
   const fx: Fixture = await (await fetch("/src/test/accuracy-ref.json")).json();
   const oldRes = await fetch("/src/test/accuracy-old.json");
@@ -68,6 +88,7 @@ export async function runAccuracy(canvas: HTMLCanvasElement): Promise<{ verdict:
     const E = got.entries[s.name], O = same ? old!.entries[s.name] : null;
     let scored = 0, flips = 0; const worse: Record<string, number> = { r: 0, p: 0, d: 0, px: 0, I: 0 };
     const maxNew: Err = { r: 0, p: 0, d: 0, px: 0, I: 0 }, maxOld: Err = { r: 0, p: 0, d: 0, px: 0, I: 0 }; const examples: string[] = [];
+    const ratios: Record<string, { k: number; n: number; o: number }[]> = { r: [], p: [], d: [], px: [], I: [] };
     s.rays.forEach((row, k) => {
       if (!row.c) return;
       scored++;
@@ -78,16 +99,28 @@ export async function runAccuracy(canvas: HTMLCanvasElement): Promise<{ verdict:
         if (!Number.isFinite(en[q])) continue;
         maxNew[q] = Math.max(maxNew[q], en[q]);
         if (eo && Number.isFinite(eo[q])) maxOld[q] = Math.max(maxOld[q], eo[q]);
-        // 1.3 mm: the renderer's 0.25 M left-sample rule has its own error q along the exact path (plan Task 2 ruling)
+        // 1.3 mm: the rule's quadrature error q along the exact path (plan Task 2 ruling), at its neighbourhood scale
         const sens = row.s ? { r: row.s[0], p: row.s[1], d: row.s[2], px: row.s[3], I: 0 }[q] : 0;
-        const floor = Math.max(sens, q === "I" && row.q !== undefined ? Math.max(FLOOR.I, (2 * row.q) / Math.max(row.I!, 1e-300)) : FLOOR[q]);
-        if (O && en[q] > Math.max(eo ? eo[q] : Infinity, floor)) { worse[q]++; if (examples.length < 4) examples.push(`#${k} ${q} ${en[q].toExponential(2)} > old ${eo![q].toExponential(2)}`); }
+        const floor = Math.max(sens, q === "I" && row.q !== undefined ? Math.max(FLOOR.I, 2 * qScale(s, fx.N, k)) : FLOOR[q]);
+        if (eo && Number.isFinite(eo[q])) ratios[q].push({ k, n: en[q] / floor, o: eo[q] / floor });
       }
     });
+    const verdicts: string[] = [];
+    for (const [q, v] of Object.entries(ratios)) {
+      if (!v.length) continue;
+      const overN = v.filter((x) => x.n > 1).length, overO = v.filter((x) => x.o > 1).length;
+      const maxN = Math.max(...v.map((x) => x.n)), maxO = Math.max(...v.map((x) => x.o));
+      if (maxN === 0 && maxO === 0) continue; // a quantity this scene does not have (geometry in mm, intensity in visible)
+      const typ = Math.max(1, median(v.filter((x) => x.o > 1).map((x) => x.o)));
+      for (const x of v) if (x.n > Math.max(1, x.o, typ)) { worse[q]++; if (examples.length < 4) examples.push(`#${x.k} ${q} ${x.n.toFixed(2)}x floor > old ${x.o.toFixed(2)}x, typical ${typ.toFixed(2)}x`); }
+      if (overN > overO) { worse[q]++; examples.push(`${q}: ${overN} px above floor > old ${overO}`); }
+      if (maxN > maxO) { worse[q]++; examples.push(`${q}: worst ${maxN.toFixed(2)}x floor > old ${maxO.toFixed(2)}x`); }
+      verdicts.push(`${q} >floor ${overN}/${overO} worst ${maxN.toFixed(2)}/${maxO.toFixed(2)}x`);
+    }
     const nWorse = Object.values(worse).reduce((t, x) => t + x, 0);
     if (same && (flips || nWorse)) fail = true; // without a same-adapter baseline, fate edges and f32 noise cannot be judged
     const fmt = (e: Err) => `r ${e.r.toExponential(1)} phi ${e.p.toExponential(1)} delay ${e.d.toExponential(1)} sky ${e.px.toFixed(3)} px I ${e.I.toExponential(1)}`;
-    lines.push(`${s.name}: ${scored} scored, flips ${flips}, worse ${nWorse} ${JSON.stringify(worse)}; max err new ${fmt(maxNew)}${O ? `; old ${fmt(maxOld)}` : ""}${examples.length ? " | " + examples.join("; ") : ""}`);
+    lines.push(`${s.name}: ${scored} scored, flips ${flips}, worse ${nWorse} ${JSON.stringify(worse)}; max err new ${fmt(maxNew)}${O ? `; old ${fmt(maxOld)}` : ""}${verdicts.length ? " | new/old " + verdicts.join(", ") : ""}${examples.length ? " | " + examples.join("; ") : ""}`);
   }
   const verdict = fail ? "FAIL" : same ? "PASS" : "SKIP";
   lines.unshift(`adapter ${got.adapter}; old recorded on ${old ? old.adapter : "(none)"}`);
