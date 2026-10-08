@@ -21,8 +21,13 @@ import { SHIP, REF1, REF_ROBS, REF_ROUT, refTrace, convergedRef, skyDirCPU, flow
  * 1.3 mm flow, per ray (plan Task 2 ruling: the renderer's 0.25 M left-sample rule has its own ~1e-3 quadrature error):
  *   (a) path: each method's path (OLD the chords of its steps, as the GPU samples them; NEW its dense output) integrated
  *       with a fine midpoint rule, against the exact integral: error_new <= max(error_old, 1e-5 relative);
- *   (b) rule: each method run as the renderer runs it, against the exact integral: error_new <= max(error_old, 2 q,
- *       1e-5 relative), q = the rule's own error along the exact path.
+ *   (b) rule: each method run as the renderer runs it, against the exact integral: floor max(2 q, 1e-5 relative), q = the
+ *       rule's own error along the exact path at its 3 x 3 neighbourhood scale (q is a signed sum with zero crossings).
+ * "error_new <= max(error_old, floor)" is judged as in ?accuracy (user decision 2026-10-08): per set and quantity, a ray is
+ * worse when error/floor exceeds 1, the old ratio and the old method's typical exceedance (median old ratio among its
+ * above-floor rays), and the set fails if the new method exceeds floors on more rays or by a larger worst ratio. The
+ * strict per-ray count is printed alongside: at the shipped tolerance it was 7 of ~6000, all 1.3 mm rays where the old
+ * method's error happened to cancel.
  */
 const SWEEP = !!process.env.SWEEP, HOLDOUT = !!process.env.HOLDOUT;
 const FOV = 14, MAXSTEPS = 4800, PX = (2 * FOV) / 720;
@@ -177,24 +182,39 @@ describe.skipIf(!SWEEP)("Mino integrator accuracy sweep (SWEEP=1)", () => {
       const rule = refTrace(r.s0, r.a, 0, SHIP, r.flow, 0), pth = refFlowPath(r.s0, r.a, SHIP, 0.005);
       return { ...rule, Ipath: flowMid(pth.path, r.a, r.flow) };
     }));
+    // The rule's quadrature error at its neighbourhood scale (mm sets are n x n row-major grids): q is a signed sum that
+    // crosses zero between neighbours, so a single ray's q can sit far below the rule's resolution there.
+    const qScale = (si: number, ri: number) => {
+      const N = Math.round(Math.sqrt(S[si].rays.length)), i0 = ri % N, j0 = Math.floor(ri / N); let m = 0;
+      for (let j = Math.max(0, j0 - 1); j <= Math.min(N - 1, j0 + 1); j++) for (let i = Math.max(0, i0 - 1); i <= Math.min(N - 1, i0 + 1); i++) {
+        const q = ref[si][j * N + i]; if (q.converged && q.q !== undefined && q.I! > 0) m = Math.max(m, q.q / q.I!);
+      }
+      return m;
+    };
+    const median = (a: number[]) => { const v = [...a].sort((x, y) => x - y); return v.length ? v[Math.floor((v.length - 1) / 2)] : 0; };
     const score = (tol: number, uFrac: number, ctol: number) => {
-      let newFlips = 0, worse = 0, maxDrift = 0; const worst: string[] = [];
+      let newFlips = 0, worse = 0, strict = 0, maxDrift = 0; const worst: string[] = [];
+      // per set and quantity: (ray, new error / floor, old error / floor), judged below by the ?accuracy rule
+      const rat = new Map<string, { si: number; ri: number; n: number; o: number }[]>();
+      const judge = (si: number, ri: number, what: string, e: number, eo: number, floor: number) => {
+        if (e > Math.max(eo, floor)) strict++;
+        const k = `${si}|${what}`; if (!rat.has(k)) rat.set(k, []); rat.get(k)!.push({ si, ri, n: e / floor, o: eo / floor });
+      };
       const costNew: number[] = S.map(() => 0), costOld: number[] = S.map(() => 0);
       const err = { r: 0, phi: 0, t: 0, px: 0, Ipath: 0, Irule: 0 };
       S.forEach((set, si) => set.rays.forEach((r, ri) => {
         const x = minoLocal(r, tol, uFrac, !!r.flow, ctol), q = ref[si][ri], o = old[si][ri];
         costNew[si] += x.steps + x.retries; costOld[si] += o.steps + o.retries; maxDrift = Math.max(maxDrift, x.drift);
         if (!q.converged) return;
-        const bad = (what: string) => { worse++; if (worst.length < 12) worst.push(`${set.name} #${ri} ${what}`); };
         if (x.fate !== q.fate) { if (o.fate === q.fate) { newFlips++; if (worst.length < 12) worst.push(`${set.name} #${ri} FLIP ${x.fate} vs ${q.fate}`); } return; }
         if (r.flow) {
           const I = Math.max(q.I!, 1e-300);
           const ep = Math.abs(flowMid(x.path!, r.a, r.flow) - q.I!) / I, eop = Math.abs(o.Ipath - q.I!) / I;
           err.Ipath = Math.max(err.Ipath, ep);
-          if (ep > Math.max(eop, 1e-5)) bad(`I(path) ${ep.toExponential(2)} > old ${eop.toExponential(2)}`);
+          judge(si, ri, "I(path)", ep, eop, 1e-5);
           const er = Math.abs(x.I! - q.I!) / I, eor = Math.abs(o.I! - q.I!) / I;
           err.Irule = Math.max(err.Irule, er);
-          if (er > Math.max(eor, (2 * q.q!) / I, 1e-5)) bad(`I(rule) ${er.toExponential(2)} > old ${eor.toExponential(2)}, 2q ${(2 * q.q! / I).toExponential(2)}`);
+          judge(si, ri, "I(rule)", er, eor, Math.max(2 * qScale(si, ri), 1e-5));
           return;
         }
         if (x.fate === "disk") {
@@ -202,20 +222,31 @@ describe.skipIf(!SWEEP)("Mino integrator accuracy sweep (SWEEP=1)", () => {
           err.r = Math.max(err.r, er / q.rHit!); err.phi = Math.max(err.phi, ep); err.t = Math.max(err.t, et / Math.abs(q.tHit!));
           const od = o.fate === "disk";
           const eor = od ? Math.abs(o.rHit! - q.rHit!) : Infinity, eop = od ? wrapAngle(o.phiHit! - q.phiHit!) : Infinity, eot = od ? Math.abs(o.tHit! - q.tHit!) : Infinity;
-          if (er > Math.max(eor, 1e-5 * q.rHit!)) bad(`r ${er.toExponential(2)} > old ${eor.toExponential(2)}`);
-          if (ep > Math.max(eop, 1e-5)) bad(`phi ${ep.toExponential(2)} > old ${eop.toExponential(2)}`);
-          if (et > Math.max(eot, 1e-5 * Math.abs(q.tHit!))) bad(`t ${et.toExponential(2)} > old ${eot.toExponential(2)}`);
+          judge(si, ri, "r", er, eor, 1e-5 * q.rHit!); judge(si, ri, "phi", ep, eop, 1e-5); judge(si, ri, "t", et, eot, 1e-5 * Math.abs(q.tHit!));
         }
         if (x.fate === "escaped") {
           const e = pxError(q.J, x.dir!, q.dir!); if (isNaN(e)) return;
           err.px = Math.max(err.px, e);
           const eo = o.fate === "escaped" ? pxError(q.J, o.dir!, q.dir!) : Infinity;
-          if (e > Math.max(eo, 0.01)) bad(`sky ${e.toFixed(4)} px > old ${eo.toFixed(4)}`);
+          judge(si, ri, "sky", e, eo, 0.01);
         }
       }));
-      return { newFlips, worse, maxDrift, err, worst, ratio: S.map((_, si) => costNew[si] / costOld[si]), costNew, costOld };
+      // ?accuracy's rule (user decision 2026-10-08, src/test/accuracy.browser.ts): a ray is worse when its error/floor
+      // exceeds 1, the old one's and the old method's typical exceedance (median old ratio among its above-floor rays);
+      // per set and quantity the new method may not exceed floors on more rays than the old one, nor by a larger worst
+      // ratio. (The old method beat the new on a handful of rays only where its own error cancelled: 7 of ~6000.)
+      for (const [k, v] of rat) {
+        const name = `${S[v[0].si].name} ${k.split("|")[1]}`, fin = v.filter((x) => Number.isFinite(x.o));
+        const overN = v.filter((x) => x.n > 1).length, overO = v.filter((x) => x.o > 1).length;
+        const maxN = Math.max(0, ...v.map((x) => x.n)), maxO = Math.max(0, ...fin.map((x) => x.o));
+        const typ = Math.max(1, median(fin.filter((x) => x.o > 1).map((x) => x.o)));
+        for (const x of v) if (x.n > Math.max(1, x.o, typ)) { worse++; if (worst.length < 12) worst.push(`${name} #${x.ri} ${x.n.toFixed(2)}x floor > old ${x.o.toFixed(2)}x, typical ${typ.toFixed(2)}x`); }
+        if (overN > overO) { worse++; if (worst.length < 12) worst.push(`${name}: ${overN} rays above floor > old ${overO}`); }
+        if (maxN > maxO) { worse++; if (worst.length < 12) worst.push(`${name}: worst ${maxN.toFixed(2)}x floor > old ${maxO.toFixed(2)}x`); }
+      }
+      return { newFlips, worse, strict, maxDrift, err, worst, ratio: S.map((_, si) => costNew[si] / costOld[si]), costNew, costOld };
     };
-    console.log("tol      uFrac  ctol   newFlips  worse  maxDrift   max err: r(rel) phi(rad) t(rel) sky(px) I-path I-rule   cost NEW/OLD per set");
+    console.log("tol      uFrac  ctol   newFlips  worse(strict)  maxDrift   max err: r(rel) phi(rad) t(rel) sky(px) I-path I-rule   cost NEW/OLD per set");
     const rows: [number, number, number][] = [];
     if (process.env.ROWS) for (const r of process.env.ROWS.split(";")) rows.push(r.split(",").map(Number) as [number, number, number]);
     else { for (const tol of [3e-5, 1e-5, 3e-6]) for (const ctol of [1e-3, 3e-4, 1e-4]) rows.push([tol, 0.25, ctol]); rows.push([1e-5, 0.5, 3e-4]); }
@@ -224,12 +255,12 @@ describe.skipIf(!SWEEP)("Mino integrator accuracy sweep (SWEEP=1)", () => {
     for (const [tol, uf, ctol] of rows) {
       const s = score(tol, uf, ctol);
       if (tol === MINO_TOL && uf === MINO_UFRAC && ctol === MINO_CTOL) shipped = s;
-      console.log(`${tol.toExponential(0).padEnd(9)}${String(uf).padEnd(7)}${ctol.toExponential(0).padEnd(7)}${String(s.newFlips).padEnd(10)}${String(s.worse).padEnd(7)}${s.maxDrift.toExponential(1).padEnd(11)}` +
+      console.log(`${tol.toExponential(0).padEnd(9)}${String(uf).padEnd(7)}${ctol.toExponential(0).padEnd(7)}${String(s.newFlips).padEnd(10)}${`${s.worse} (${s.strict})`.padEnd(15)}${s.maxDrift.toExponential(1).padEnd(11)}` +
         `${s.err.r.toExponential(1)} ${s.err.phi.toExponential(1)} ${s.err.t.toExponential(1)} ${s.err.px.toFixed(3)} ${s.err.Ipath.toExponential(1)} ${s.err.Irule.toExponential(1)}   ${s.ratio.map((x) => x.toFixed(2)).join(" ")}`);
       if (s.worst.length) console.log("   worst: " + s.worst.join(" | "));
     }
     console.log("sets: " + S.map((s, i) => `${i}=${s.name}`).join(", "));
-    console.log(`shipped tol ${MINO_TOL} uFrac ${MINO_UFRAC} ctol ${MINO_CTOL}: flips ${shipped!.newFlips}, worse ${shipped!.worse}, drift ${shipped!.maxDrift.toExponential(1)}; mean cost per set OLD ${shipped!.costOld.map((c, i) => (c / S[i].rays.length).toFixed(0)).join(" ")} / NEW ${shipped!.costNew.map((c, i) => (c / S[i].rays.length).toFixed(0)).join(" ")}`);
+    console.log(`shipped tol ${MINO_TOL} uFrac ${MINO_UFRAC} ctol ${MINO_CTOL}: flips ${shipped!.newFlips}, worse ${shipped!.worse} (strict ${shipped!.strict}), drift ${shipped!.maxDrift.toExponential(1)}; mean cost per set OLD ${shipped!.costOld.map((c, i) => (c / S[i].rays.length).toFixed(0)).join(" ")} / NEW ${shipped!.costNew.map((c, i) => (c / S[i].rays.length).toFixed(0)).join(" ")}`);
     console.log(`total ${((Date.now() - t0) / 60000).toFixed(1)} min`);
     expect(shipped!.newFlips).toBe(0);
     expect(shipped!.worse).toBe(0);
