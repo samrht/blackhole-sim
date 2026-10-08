@@ -1,7 +1,14 @@
 # Magnetically arrested electron heating for the hot flow (M87*'s ring) — design
 
 **Date:** 2026-10-08
-**Status:** design approved in conversation; this document awaits review
+**Status:** implemented (plan `docs/plans/2026-10-08-mad-rbeta-hotflow.md`, 2026-10-08). Results: M87\* 41.8 µas
+(GPU and CPU twin), gated inside 2σ and robust to the blur; Sgr A\* 57.3 µas, reported (+2.4σ). Departures, each in the
+plan's ledger: (1) ring robustness is required of the EHT-gated ring only (user decision: Sgr A\*'s ring is
+flat-topped, ~51–61 µas); (2) the CPU twin rings are measured on the GPU's 28 M frame at 192² (`TWIN_GRID`; on the 96²,
+26 M calibration grid Sgr A\*'s flat-topped peak moved by up to 8 µas), and Sgr A\*'s twin tolerance is 3 µas, not 0.5;
+(3) the hotspot amplitude is A₀ 692 (bisection bracket widened: the cold midplane electrons need ~600×); (4) `?accuracy`
+scores intensity above 1e-9 of the scene peak (the GPU's density cutoff), and 16 % / 25 % of the rebuilt mm reference
+rays, nearly all faint, no longer converge to 1e-6 and go unscored.
 **Builds on:** `docs/specs/2026-10-04-hot-flow-mm-design.md` (the hot flow and the 1.3 mm view),
 `docs/specs/2026-10-04-mm-hotspots-design.md` (hotspots borrow the flow's electrons).
 
