@@ -237,21 +237,86 @@ fn segRMin(sg: Seg) -> f32 { return 1.0 / minoSegWMax(sg.y0, sg.y1, sg.f0, sg.f1
 // The jet quadrature is a composite midpoint rule along the ray with sub-intervals at most JET_DL long in affine length: a
 // step is split into n sub-intervals at equal fractions of its Mino-time span, sub-interval k sampled at its middle
 // ((k + 1/2) / n) and weighted by its dense affine length l((k+1)/n) - l(k/n) (minoDl). (Pre-Mino: left samples on each
-// step's chord; the midpoint rule's error is second order, measured 4x smaller per sample on the 1.3 mm flow.) dl/d(lambda) = Sigma = r^2 + a^2 cos^2 is largest at the step's outer end (a
-// photon's only radial turning point is a periapsis), so n = ceil(h (1/w_min^2 + a^2) / JET_DL) keeps every spacing <=
-// JET_DL.
+// step's chord; the midpoint rule's error is second order, measured 4x smaller per sample on the 1.3 mm flow.)
+// Only the part of the step inside the jet's bounding sphere is sampled (jetPlan: the dense w(t) is a cubic, monotone
+// between its critical points, so the fractions where w = 1/R are bisected exactly, keeping the outside end of each
+// bracket; outside the sphere jetShapeJ is 0, so dropping that part is exact). Inside it the sub-interval boundaries march
+// in affine length (jetNext): each sub-interval is at most jetSpacing(r) long, JET_DL far out and 0.02 (r - r_+) near the
+// hole (floor 0.002), the density the pre-Mino renderer had (one sample per near-field step of that length; at a flat
+// 0.25 the jet base was under-sampled: 456 vs 29 pixels > 5 % off a fine render of the default view). At most
+// JET_NSUB_MAX per step. Samples clearly outside the envelope are skipped on their dense (w, theta) alone (jetFarOut).
+// Measured 2026-10-08 against a 16x finer render, default / edge-on / face-on jet, pixels > 5 % off 69 / 97 / 9 (pre-Mino
+// renderer 95 / 127 / 10), mean error 3.4e-3 / 4.8e-3 / 6.4e-4 (5.2e-3 / 5.8e-3 / 1.7e-3). (The first Mino cut split the
+// whole step into equal Mino-time fractions counted for the largest Sigma, at its outer end, and evaluated every sample in
+// full: live visible frames with the jet on ran 1.6x slower than the pre-Mino renderer on the RTX 3050; now 0.8x.)
 // Before 2026-10-01 the jet was sampled once per step (its accuracy followed the geodesic stride); 0.25 against a
 // fine-step GPU reference (face-on jet scene, pixels > 5 % off: 116 per-step, 29 at 1.0, 7 at 0.5, 2 at 0.25). Steps whose
 // dense path stays outside the jet's bounding sphere are skipped exactly, so rays that never come near the jet pay nothing.
 const JET_DL = 0.25;
 const FLOW_DL = 0.125;         // the hot flow's sub-interval (x max(1, r / 8)): half the pre-Mino 0.25, see flowSeg
 const FLOW_NSUB_MAX = 64u;
-const JET_NSUB_MAX_JET = 256u; // the jet's: Mino steps are long, and the jet's spacing bound must hold at any length
-// The jet sample count of one step, shared by jetSeg (what it sums) and jetSegTouches (what the geodesic cache
-// bookmarks), so the two cannot disagree.
-fn jetSegCount(sg: Seg) -> u32 {
-  let wMin = min(sg.y0.q.y, sg.y1.q.y);
-  return clamp(u32(ceil(sg.h * (1.0 / (wMin * wMin) + U.a * U.a) / JET_DL)), 1u, JET_NSUB_MAX_JET);
+const JET_NSUB_MAX = 256u; // per step, as before
+// The step's dense w at fraction t: the w component of minoDense, in the same operation order (so the bounding values
+// agree with segRMin's).
+fn segW(sg: Seg, t: f32) -> f32 {
+  let t2 = t * t; let t3 = t2 * t;
+  return sg.y0.q.y * (2.0 * t3 - 3.0 * t2 + 1.0) + sg.f0.q.y * ((t3 - 2.0 * t2 + t) * sg.h) + sg.y1.q.y * (-2.0 * t3 + 3.0 * t2) + sg.f1.q.y * ((t3 - t2) * sg.h);
+}
+// Critical points of the dense w(t) (roots of its derivative; -1 when absent), as in minoSegWMax.
+fn segWCrit(sg: Seg) -> vec2<f32> {
+  let w0 = sg.y0.q.y; let w1 = sg.y1.q.y; let d0 = sg.h * sg.f0.q.y; let d1 = sg.h * sg.f1.q.y;
+  let A = 6.0 * (w0 - w1) + 3.0 * (d0 + d1); let B = -6.0 * (w0 - w1) - 4.0 * d0 - 2.0 * d1; let C = d0;
+  var t1 = -1.0; var t2 = -1.0;
+  if (abs(A) > 1e-30) { let D = B * B - 4.0 * A * C; if (D >= 0.0) { let q = sqrt(D); t1 = (-B + q) / (2.0 * A); t2 = (-B - q) / (2.0 * A); } }
+  else if (abs(B) > 1e-30) { t1 = -C / B; }
+  return vec2<f32>(min(t1, t2), max(t1, t2));
+}
+// The jet's samples of one step, shared by jetSeg (what it sums) and jetSegTouches (what the geodesic cache bookmarks),
+// so the two cannot disagree: the span [ta, tb] of the step inside the bounding sphere and JET_CHUNKS sub-interval counts.
+struct JetPlan { ta: f32, tb: f32, cr: vec2<f32> };
+fn jetPlan(sg: Seg) -> JetPlan {
+  let wR = 1.0 / jetBoundR(); let cr = segWCrit(sg);
+  var p = array<f32, 4>(0.0, 1.0, 1.0, 1.0); var np = 1u;   // breakpoints of the monotone pieces
+  if (cr.x > 0.0 && cr.x < 1.0) { p[np] = cr.x; np++; }
+  if (cr.y > 0.0 && cr.y < 1.0 && cr.y != cr.x) { p[np] = cr.y; np++; }
+  p[np] = 1.0;
+  var ta = 2.0; var tb = -1.0;
+  for (var i = 0u; i < np; i++) {
+    let a0 = p[i]; let b0 = p[i + 1u]; let wa = segW(sg, a0); let wb = segW(sg, b0);
+    if (wa < wR && wb < wR) { continue; }                     // monotone piece entirely outside
+    var s0 = a0; var e0 = b0;
+    if (wa < wR) { var lo = a0; var hi = b0; for (var k = 0u; k < 20u; k++) { let m = 0.5 * (lo + hi); if (segW(sg, m) < wR) { lo = m; } else { hi = m; } } s0 = lo; }
+    if (wb < wR) { var lo = a0; var hi = b0; for (var k = 0u; k < 20u; k++) { let m = 0.5 * (lo + hi); if (segW(sg, m) >= wR) { lo = m; } else { hi = m; } } e0 = hi; }
+    ta = min(ta, s0); tb = max(tb, e0);
+  }
+  if (!(tb > ta)) { ta = 0.0; tb = 1.0; }                     // nothing resolved (f32 edge, NaN): the whole step
+  return JetPlan(ta, tb, cr);
+}
+// The next sub-interval boundary after t: dl/d(lambda) = Sigma <= 1/w^2 + a^2, and along a step that bound is largest at
+// an end of any sub-interval (w is monotone but for a periapsis, where it peaks), so taking the larger of its values at t
+// and at a first estimate of the next boundary keeps the sub-interval's affine length <= JET_DL.
+fn jetNext(sg: Seg, t: f32, tb: f32) -> f32 {
+  let a2 = U.a * U.a; let rh = 1.0 + sqrt(max(0.0, 1.0 - a2));
+  let w0 = max(segW(sg, t), 1e-6); let s0 = 1.0 / (w0 * w0) + a2; let d0 = jetSpacing(1.0 / w0, rh);
+  let w1 = max(segW(sg, min(t + d0 / (sg.h * s0), tb)), 1e-6); let s1 = 1.0 / (w1 * w1) + a2;
+  let tn = min(t + min(d0, jetSpacing(1.0 / w1, rh)) / (sg.h * max(s0, s1)), tb);
+  return select(tb, tn, tn > t);                                // f32 stagnation: close the span
+}
+// The jet's affine sample spacing at radius r: JET_DL, finer near the hole as the pre-Mino renderer's samples were (each
+// of its steps took at least one sample, and its near-field step is 0.02 (r - r_+), floor 0.002).
+fn jetSpacing(r: f32, rh: f32) -> f32 { return min(JET_DL, max(0.002, 0.02 * (r - rh))); }
+// Is the step's dense point at fraction t clearly outside the jet envelope, where jetShapeJ is exactly 0 (|z| < JET_ZBASE,
+// |z| > jetLength, rho > JET_ENV_Q funnelEdge)? From the dense w and theta alone (two cubics), with a 1e-3 margin so a
+// point near the boundary always takes the full test: |sin| and |cos| of the hemisphere-frame theta equal those of the
+// folded theta minoToState gives jetShapeJ. Most of a step's samples inside the bounding sphere are outside the narrow
+// funnel; they now skip the full state, the delay and the emission (exact: they contributed 0).
+fn jetFarOut(sg: Seg, t: f32) -> bool {
+  let t2 = t * t; let t3 = t2 * t;
+  let b0 = 2.0 * t3 - 3.0 * t2 + 1.0; let b1 = (t3 - 2.0 * t2 + t) * sg.h; let b2 = -2.0 * t3 + 3.0 * t2; let b3 = (t3 - t2) * sg.h;
+  let w = sg.y0.q.y * b0 + sg.f0.q.y * b1 + sg.y1.q.y * b2 + sg.f1.q.y * b3;
+  let th = sg.y0.q.z * b0 + sg.f0.q.z * b1 + sg.y1.q.z * b2 + sg.f1.q.z * b3;
+  let r = 1.0 / w; let az = r * abs(cos(th)); let rho = r * abs(sin(th));
+  return az < JET_ZBASE * 0.999 - 1e-3 || az > U.jetLength * 1.001 + 1e-3 || rho > JET_ENV_Q * funnelEdgeJ(az) * 1.001 + 1e-3;
 }
 fn jetBoundR() -> f32 { let fe = JET_ENV_Q * funnelEdgeJ(U.jetLength); return sqrt(U.jetLength * U.jetLength + fe * fe); }
 // Exact skip radius test for a chord p0 -> p0 + dvec (kept for other emitters).
@@ -267,11 +332,14 @@ fn jetSeg(sg: Seg, c: MinoRay, accIn: JetOut) -> JetOut {
   // log(q0), which WGSL leaves undefined at 0. Without the coefficient table (1x1 placeholder) nothing either.
   if (U.jetQ0 <= 0.0 || !synchReady()) { return accIn; }
   if (segRMin(sg) > jetBoundR()) { return accIn; }
-  let n = jetSegCount(sg);
+  let pl = jetPlan(sg);
   var acc = accIn;
-  var dk = sg.y0;
-  for (var k = 0u; k < n; k++) {
-    let dn = segAt(sg, f32(k + 1u) / f32(n)); let dm = segAt(sg, (f32(k) + 0.5) / f32(n));
+  var t = pl.ta;
+  for (var k = 0u; k < JET_NSUB_MAX && t < pl.tb; k++) {
+    let tn = select(jetNext(sg, t, pl.tb), pl.tb, k + 1u == JET_NSUB_MAX);
+    let tm = 0.5 * (t + tn); let tk = t; t = tn;
+    if (jetFarOut(sg, tm)) { continue; }
+    let dk = segAt(sg, tk); let dn = segAt(sg, tn); let dm = segAt(sg, tm);
     let sk = minoToState(dm, c); let dl = minoDl(dk, dn);
     let shape = jetShapeJ(sk.x.y, sk.x.z, sk.x.w, U.timeEpoch, emitRel(minoDelay(dm)), U.jetLength, U.fluxVar, U.jetGamma, U.a);
     if (shape > 0.0) {
@@ -281,7 +349,6 @@ fn jetSeg(sg: Seg, c: MinoRay, accIn: JetOut) -> JetOut {
         acc = jetSlabJ(acc, so.j, so.a, U.rgCm * D * dl);
       }
     }
-    dk = dn;
   }
   return acc;
 }
@@ -342,9 +409,13 @@ fn flowSeg(sg: Seg, c: MinoRay, rh: f32, orb: vec3<f32>, accIn: vec2<f32>, hs: b
 // these steps, so its replay sums the same samples.
 fn jetSegTouches(sg: Seg, c: MinoRay) -> bool {
   if (segRMin(sg) > jetBoundR()) { return false; }
-  let n = jetSegCount(sg);
-  for (var k = 0u; k < n; k++) {
-    let sk = minoToState(segAt(sg, (f32(k) + 0.5) / f32(n)), c); // jetSeg's sample points
+  let pl = jetPlan(sg);
+  var t = pl.ta;
+  for (var k = 0u; k < JET_NSUB_MAX && t < pl.tb; k++) {
+    let tn = select(jetNext(sg, t, pl.tb), pl.tb, k + 1u == JET_NSUB_MAX);
+    let tm = 0.5 * (t + tn); t = tn; // jetSeg's sample points
+    if (jetFarOut(sg, tm)) { continue; }
+    let sk = minoToState(segAt(sg, tm), c);
     if (inJetEnvelope(sk.x.y, sk.x.z)) { return true; }
   }
   return false;
