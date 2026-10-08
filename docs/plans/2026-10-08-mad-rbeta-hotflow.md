@@ -22,8 +22,8 @@
 
 ## Review Focus
 
-- **Pixels on the polar axis** (ρ < 1e-6): `flowBeta` must return 0 and `flowCoeffs` [0, 0] without NaN from z²/ρ². Pinned in Task 1 (axis test) and Task 2 (parity includes near-axis flow cases).
-- **Far off the midplane** (e^(−g) underflows to 0): β → 0, R → R_low, finite T_e. WGSL `exp(-g)` for large g must not produce NaN. Pinned in Task 1 (large-z test) and Task 2 (a WGSL emission check at z/ρ = 20).
+- **Pixels on the polar axis** (ρ < 1e-6): `flowBeta` must return 0 and `flowCoeffs` [0, 0] without NaN from z²/ρ². Pinned in Task 1 (axis tests) and Task 2 (parity's near-axis and on-axis flow cases).
+- **Far off the midplane** (e^(−g) → 0): β → 0, R → R_low, finite T_e, never NaN. Pinned in Task 1 (z/ρ = 20 test) and Task 2 (parity cases at θ 0.15 and 0.05).
 - **Custom hot-flow objects far from both calibrated masses** (e.g. Gargantua, the default view's 1e8 M☉ at λ 3.7e-4): they keep scaling n₀ from the nearest calibrated object and must render finite. Pinned in Task 5 (garg-mm accuracy scene) and Task 6 (app checks open the default and presets in 1.3 mm).
 - **Bimodal radial profiles** that make the ring jump between two peaks: the robustness check must catch them on the CPU and the GPU. Pinned in Task 3 (sweep test) and Task 4 (`?hotflow`).
 - **Hotspot frames**: the hotspot boosts the flow's electrons, so its added flux changes with T_e. A₀ and `HOTSPOT_TWIN` must be re-fitted before `?hotflow`'s hotspot rows are judged. Pinned in Task 3.
@@ -238,26 +238,17 @@ Also update the comment block above the hot-flow constants (the line beginning `
 Run: `npx vitest run tests/jet.test.ts tests/hot-flow.test.ts tests/shader-twins.test.ts`
 Expected: PASS.
 
-- [ ] **Step 5: GPU parity, including a far-off-plane case.** In `src/test/parity.browser.ts` find the hot-flow case loop (search `for (const n0 of [5.03e5, 1.5e7]) hcases.push(`). Directly after that loop's closing brace, add one far-off-plane case per n₀ so `exp(-g)` underflow is exercised (z/ρ = 20 at r = 8):
-
-```ts
-    // far off the midplane (spec 2026-10-08 review focus): e^{-g} underflows, beta -> 0, R -> R_low; must stay finite
-    for (const n0 of [5.03e5, 1.5e7]) { const th = Math.atan2(1, 20), r = 8, gu = metricUpper(r, th, a), L = 0.5;
-      const R = Math.max(0, -gu.tt - 2 * gu.tphi * L - gu.phph * L * L);
-      hcases.push({ s: Float64Array.from([0, r, th, 0, 1, -Math.sqrt(R / gu.rr), 0, L]), a, n0 }); }
-```
-
-(Adapt variable names `a`, `metricUpper`, `hcases` to the ones in scope at that point; read 20 lines around the insertion point first. If the existing cases build `s` differently, build this one the same way with r = 8 and θ = atan2(1, 20).)
+- [ ] **Step 5: GPU parity.** The existing hot-flow parity cases (`src/test/parity.browser.ts`, search `hot flow (CPU hot-flow.ts vs the SHIPPED`) already span what this change touches: the midplane (th 1.55), mid-latitude (1.0), near the axis (0.15: g = z²/2ρ² ≈ 22, β ≈ 5e-10, R → R_low) and on it (0.05: ln n < −40, j = 0). Before the ln n < −40 cutoff g stays below ~55, so `exp(-g)` ≥ 1e-24 never underflows in f32. No new case is needed.
 
 Start the dev server (PowerShell, background): `Set-Location C:\Users\shoke\Documents\Claude\blackhole-sim; npx vite --port 5173 --strictPort`
-Run: `node scripts/scratch-parity.mjs` (git-excluded helper; if missing, `npm run verify:gpu` and read the `?parity` line)
-Expected: `PARITY PASS`, hot flow worst ≤ 1 of tolerance.
+Run: `node scripts/scratch-parity.mjs` (git-excluded helper that opens `/?parity` headless and prints the verdict)
+Expected: `PARITY PASS`, hot flow worst ≤ 1 of tolerance. Stop the dev server afterwards (memory).
 
 - [ ] **Step 6: Commit.**
 
 ```bash
-git add src/render/emission-shared.wgsl tests/jet.test.ts src/test/parity.browser.ts
-git commit -m "Hot flow WGSL twin: R-beta electrons and the midplane-set field; parity covers a far-off-plane case"
+git add src/render/emission-shared.wgsl tests/jet.test.ts
+git commit -m "Hot flow WGSL twin: R-beta electrons and the midplane-set field"
 ```
 
 ---
@@ -324,7 +315,7 @@ Expected output shape: `sgra: n0 <X> cm^-3 -> 2.400 Jy; ring <D> uas (15 uas blu
 
 **Decision gate:** if M87\*'s ring is outside 36–48 µas, or |ring − blur15| > 3 for either object, STOP. Report the numbers to the user (spec §1: report, do not tune).
 
-- [ ] **Step 5: Write the calibrated values.** In `src/physics/hot-flow.ts` set `HOTFLOW_N0` to the printed n₀ values (3 significant figures, as today). In `src/physics/hot-flow-image.ts` set `cpuRingUas` for both to the printed unblurred rings (1 decimal). Rewrite the `HOTFLOW_TARGETS` comments: sgra `// EHT 2022 (Sgr A* Papers I, IV); reported, not gated (spec 2026-10-08)`, m87 `// EHT 2019 (Papers I, IV, VI); gated inside 2 sigma (spec 2026-10-08)`. In `src/test/parity.browser.ts` replace `for (const n0 of [5.03e5, 1.5e7])` (both occurrences, including Task 2's added loop) with `for (const n0 of [HOTFLOW_N0.m87, HOTFLOW_N0.sgra])` and add `HOTFLOW_N0` to that file's import from `../physics/hot-flow` (add the import line if none exists).
+- [ ] **Step 5: Write the calibrated values.** In `src/physics/hot-flow.ts` set `HOTFLOW_N0` to the printed n₀ values (3 significant figures, as today). In `src/physics/hot-flow-image.ts` set `cpuRingUas` for both to the printed unblurred rings (1 decimal). Rewrite the `HOTFLOW_TARGETS` comments: sgra `// EHT 2022 (Sgr A* Papers I, IV); reported, not gated (spec 2026-10-08)`, m87 `// EHT 2019 (Papers I, IV, VI); gated inside 2 sigma (spec 2026-10-08)`. In `src/test/parity.browser.ts` replace `for (const n0 of [5.03e5, 1.5e7])` with `for (const n0 of [HOTFLOW_N0.m87, HOTFLOW_N0.sgra])`, and change its import line `import { HOTFLOW, flowVelocity, flowShift, flowCoeffs, flowDensity } from "../physics/hot-flow";` to `import { HOTFLOW, HOTFLOW_N0, flowVelocity, flowShift, flowCoeffs, flowDensity } from "../physics/hot-flow";`.
 
 - [ ] **Step 6: Run the sweep test to verify it passes.**
 
