@@ -372,7 +372,7 @@ fn flowCoeffsJ(r: f32, th: f32, lnNu: f32, n0: f32) -> vec2<f32> {
 const HS_RMIN = 8.0; const HS_RSPAN = 4.0; const HS_SIGMA = 2.548; const HS_CUT = 4.0;
 const HS_RISE = 0.1; const HS_CUT_FROM = 2.5; const HS_CUT_TO = 3.0;
 const HS_SALT_R = 0x4853u; const HS_SALT_PHI = 0x4850u;
-const HS_A0 = 9.22;       // scripts/calibrate-hotspot.ts (twin: HOTSPOT.A0)
+const HS_A0 = 692.0;      // scripts/calibrate-hotspot.ts (twin: HOTSPOT.A0), recalibrated 2026-10-08 for the R-beta electrons
 const HS_REACH = 22.192;  // HS_RMIN + HS_RSPAN + HS_CUT * HS_SIGMA: no blob reaches beyond this radius
 fn hotspotLightJ(tau: f32, P: f32) -> f32 {
   if (tau < 0.0 || tau >= HS_CUT_TO * P) { return 0.0; }

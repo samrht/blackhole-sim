@@ -7,8 +7,9 @@ import { metricLower } from "./kerr";
 
 export const HOTSPOT = {
   rMin: 8, rSpan: 4, sigma: 2.548, cut: 4, rise: 0.1, cutFrom: 2.5, cutTo: 3, saltR: 0x4853, saltPhi: 0x4850,
-  // scripts/calibrate-hotspot.ts: Sgr A*, r_c = 10, mean depth, peak of L -> +0.3 Jy at 229 GHz (Wielgus et al. 2022 S3.1)
-  A0: 9.22,
+  // scripts/calibrate-hotspot.ts: Sgr A*, r_c = 10, mean depth, peak of L -> +0.3 Jy at 229 GHz (Wielgus et al. 2022 S3.1);
+  // recalibrated 2026-10-08 for the R-beta electrons (was 9.22: the midplane electrons are now ~50x colder)
+  A0: 692,
   // M: half-width of the live-tracing window; bounds |light-travel delay| of every ray through the blob region
   // (tests/sweep-hotspot.test.ts, 48^2: Sgr A* 77.9, Gargantua 68.8, M87* 67.2; the Custom extremes a = 0.998 at i = 1 and
   // 89 deg reach 91.9 and 94.5. Longer delays are higher-order ring images, ~e^-pi fainter per half orbit, and at the
@@ -18,8 +19,8 @@ export const HOTSPOT = {
 /** CPU twin of ?hotflow's hotspot measurement (scripts/calibrate-hotspot.ts, 96^2): Sgr A* at the peak of eruption 0
  *  (t = 846.25 M), flux the hotspot adds (Jy) and its centroid (alpha, beta in M), with light-travel delay on and off. */
 export const HOTSPOT_TWIN = {
-  delay: { jy: 0.2142, cx: -1.486, cy: -4.369 },
-  instant: { jy: 0.6019, cx: 0.475, cy: -3.806 },
+  delay: { jy: 0.2019, cx: -0.221, cy: 0.537 },
+  instant: { jy: 0.8440, cx: 0.753, cy: -0.474 },
 } as const;
 /** No blob reaches beyond this radius (r_c max + the 4 sigma cut). */
 export const HOTSPOT_REACH = HOTSPOT.rMin + HOTSPOT.rSpan + HOTSPOT.cut * HOTSPOT.sigma;

@@ -15,7 +15,7 @@ const added = (amp: number) => {
     s += imageFluxJy(flowImage(smp, n0, rg, () => ({ rc: 10, phiC, amp, Om: 1 / (10 ** 1.5 + p.a) })), N, H, rg, dist) - F0;
   return s / 4;
 };
-let lo = 0.1, hi = 200;
+let lo = 0.1, hi = 1e5; // R-beta electrons (2026-10-08): the cold midplane needs ~600 (was < 200)
 for (let k = 0; k < 40; k++) { const m = Math.sqrt(lo * hi); if (added(m) < 0.3) lo = m; else hi = m; }
 const A0 = Number((lo / HOTSPOT_LPEAK).toPrecision(3));
 console.log(`A0 ${A0} (peak amp ${lo.toFixed(3)}, adds ${added(A0 * HOTSPOT_LPEAK).toFixed(4)} Jy over ${F0.toFixed(3)} Jy)`);

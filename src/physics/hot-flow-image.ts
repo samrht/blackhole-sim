@@ -6,11 +6,15 @@ import { HOTFLOW, flowShift, flowCoeffs } from "./hot-flow";
 import { HOTSPOT, HOTSPOT_REACH, hotspotBoost, hotspotShift } from "./hotspot";
 
 export const HOTFLOW_TARGETS = {
-  // cpuRingUas: this CPU twin's ring at the calibrated n0 (scripts/calibrate-hotflow.ts, 96^2), which ?hotflow's GPU
-  // image must reproduce (a twin check; the EHT comparison alone has a window of +-4.6 uas)
-  sgra: { distKpc: 8.2, jy: 2.4, ringUas: 51.8, ringErr: 2.3, cpuRingUas: 48.2 },   // EHT 2022 (Sgr A* Papers I, IV)
-  m87: { distKpc: 16800, jy: 0.5, ringUas: 42, ringErr: 3, cpuRingUas: 35.6 },      // EHT 2019 (Papers I, IV, VI); not gated (spec 2.4)
+  // cpuRingUas / cpuRingBlurUas: this CPU twin's ring unblurred / at a 15 uas blur at the calibrated n0
+  // (scripts/calibrate-hotflow.ts, 96^2), which ?hotflow's GPU image must reproduce. ehtGated: the EHT comparison is a
+  // gate (and the ring must be robust to the blur); otherwise reported (spec 2026-10-08, user decision: Sgr A*'s R-beta
+  // ring is flat-topped from ~51 to ~61 uas, so its unblurred and blurred peaks differ by 8 uas).
+  sgra: { distKpc: 8.2, jy: 2.4, ringUas: 51.8, ringErr: 2.3, cpuRingUas: 59.1, cpuRingBlurUas: 51.1, ehtGated: false },   // EHT 2022 (Sgr A* Papers I, IV); reported, not gated
+  m87: { distKpc: 16800, jy: 0.5, ringUas: 42, ringErr: 3, cpuRingUas: 42.0, cpuRingBlurUas: 42.1, ehtGated: true },       // EHT 2019 (Papers I, IV, VI); gated inside 2 sigma
 } as const;
+/** A gated ring must not move by more than this under a 15 uas blur (spec 2026-10-08: rejects bimodal profiles). */
+export const RING_ROBUST_UAS = 3;
 // per ray: (r, th, D, dl, phi, t) per sample, D = -1 where the flow has no velocity (the hotspot can still emit there);
 // mom: the ray's conserved (p_t, p_phi). t is the coordinate time (0 at the camera, decreasing): delay = -t - 1000.
 export interface FlowSamples { N: number; half: number; a: number; rays: Float64Array[]; mom: Float64Array }

@@ -11,7 +11,7 @@ import fluxParityWGSL from "../render/flux-parity.wgsl?raw";
 import flowParityWGSL from "../render/flow-parity.wgsl?raw";
 import hotspotParityWGSL from "../render/hotspot-parity.wgsl?raw";
 import { HOTSPOT, hotspotAt, hotspotBoost, hotspotShift, hotspotPeriod, hotspotRadius } from "../physics/hotspot";
-import { HOTFLOW, flowVelocity, flowShift, flowCoeffs, flowDensity } from "../physics/hot-flow";
+import { HOTFLOW, HOTFLOW_N0, flowVelocity, flowShift, flowCoeffs, flowDensity } from "../physics/hot-flow";
 import { fluxRatio, eruptionTime } from "../physics/flux-history";
 import { jetShape, launchDelay, comovingAzimuth, filaments } from "../physics/jet";
 import { plasmaShift, streamlineDir, gammaProfile, jetField, jetCoeffs, flowTime, slabStep, JET_BANDS_NM, C_CGS, LN_K0 } from "../physics/synchrotron";
@@ -586,7 +586,7 @@ export async function runParity(): Promise<{ maxErr: number; rows: number; jetLo
     for (const [L0, pth, sgn] of [[2, 0.5, 1], [-3, -1, -1]]) {
       let L = L0, R = -(gu.tt + 2 * gu.tphi * L + gu.thth * pth * pth + gu.phph * L * L);
       for (let k = 0; k < 30 && R <= 0; k++) { L *= 0.5; R = -(gu.tt + 2 * gu.tphi * L + gu.thth * pth * pth + gu.phph * L * L); }
-      for (const n0 of [5.03e5, 1.5e7]) hcases.push({ s: Float64Array.from([0, r, th, 0, 1, sgn * Math.sqrt(R / gu.rr), pth, L]), a, n0 });
+      for (const n0 of [HOTFLOW_N0.m87, HOTFLOW_N0.sgra]) hcases.push({ s: Float64Array.from([0, r, th, 0, 1, sgn * Math.sqrt(R / gu.rr), pth, L]), a, n0 });
     }
   }
   const harr = new Float32Array(hcases.length * 8);

@@ -75,7 +75,7 @@ export function isHotFlow(lambda: number): boolean { return lambda < HOTFLOW.lam
 /** n0 calibrated to the measured 230 GHz flux (scripts/calibrate-hotflow.ts). Any object scales from the calibrated
  *  object nearest in log mass as density ~ Mdot / (r_g^2 c) ~ lambda / M, so a calibrated object's own mass and accretion
  *  give its calibrated n0 exactly, whatever the selector says (a spin or inclination nudge, a Custom link). */
-export const HOTFLOW_N0: Record<string, number> = { sgra: 1.5e7, m87: 5.03e5 }; // from scripts/calibrate-hotflow.ts (96^2, flux-matched)
+export const HOTFLOW_N0: Record<string, number> = { sgra: 1.43e7, m87: 1.14e5 }; // from scripts/calibrate-hotflow.ts (96^2, flux-matched)
 export function flowN0(mSun: number, lambda: number): number {
   let best = PRESETS[0], dBest = Infinity;
   for (const p of PRESETS) {
