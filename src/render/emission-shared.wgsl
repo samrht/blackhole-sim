@@ -298,7 +298,7 @@ fn jetSlabJ(acc: JetOut, j: vec3<f32>, alpha: vec3<f32>, ds: f32) -> JetOut {
 }
 // --- Hot flow at 230 GHz (spec 2026-10-04 hot flow; twin: src/physics/hot-flow.ts) ---------------------------------
 // Broderick et al. 2011 RIAF density with R-beta electrons (spec 2026-10-08), Pu et al. 2016 velocity (Keplerian / free fall mixed 50/50), thermal synchrotron
-// (Mahadevan et al. 1996 fit) with Kirchhoff absorption. Coefficients are built in logs so n0 (5e5 for M87* up to ~1e18
+// (Mahadevan et al. 1996 fit) with Kirchhoff absorption. Coefficients are built in logs so n0 (1.1e5 for M87* up to ~1e18
 // for dense custom objects) and j (~1e-20 cgs) stay inside f32: ln X spans about [-28, 36] and every exp stays below 88.
 const HF_LNNU = 26.16134515;        // ln(230e9)
 // Electrons (spec 2026-10-08, twin of HOTFLOW): R-beta heating, R_high 160, R_low 1, midplane beta 1; ln(m_p c^2 / 3 k).

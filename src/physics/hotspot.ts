@@ -8,7 +8,7 @@ import { metricLower } from "./kerr";
 export const HOTSPOT = {
   rMin: 8, rSpan: 4, sigma: 2.548, cut: 4, rise: 0.1, cutFrom: 2.5, cutTo: 3, saltR: 0x4853, saltPhi: 0x4850,
   // scripts/calibrate-hotspot.ts: Sgr A*, r_c = 10, mean depth, peak of L -> +0.3 Jy at 229 GHz (Wielgus et al. 2022 S3.1);
-  // recalibrated 2026-10-08 for the R-beta electrons (was 9.22: the midplane electrons are now ~50x colder)
+  // recalibrated 2026-10-08 for the R-beta electrons (was 9.22: the midplane electrons are now ~9x colder, 2.8e9 vs 2.6e10 K at r 10, and emit far less)
   A0: 692,
   // M: half-width of the live-tracing window; bounds |light-travel delay| of every ray through the blob region
   // (tests/sweep-hotspot.test.ts, 48^2: Sgr A* 77.9, Gargantua 68.8, M87* 67.2; the Custom extremes a = 0.998 at i = 1 and

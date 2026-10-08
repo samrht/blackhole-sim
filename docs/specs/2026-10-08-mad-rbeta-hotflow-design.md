@@ -7,7 +7,8 @@ plan's ledger: (1) ring robustness is required of the EHT-gated ring only (user 
 flat-topped, ~51–61 µas); (2) the CPU twin rings are measured on the GPU's 28 M frame at 192² (`TWIN_GRID`; on the 96²,
 26 M calibration grid Sgr A\*'s flat-topped peak moved by up to 8 µas), and Sgr A\*'s twin tolerance is 3 µas, not 0.5;
 (3) the hotspot amplitude is A₀ 692 (bisection bracket widened: the cold midplane electrons need ~600×); (4) `?accuracy`
-scores intensity above 1e-9 of the scene peak (the GPU's density cutoff), and 16 % / 25 % of the rebuilt mm reference
+judges intensity where the reference or the renderer reaches 1e-9 of the scene peak (the GPU's density cutoff), holds the
+mm scenes to this renderer's own statistics with headroom (final review: the old renderer's were 30-60x looser), and 16 % / 25 % of the rebuilt mm reference
 rays, nearly all faint, no longer converge to 1e-6 and go unscored.
 **Builds on:** `docs/specs/2026-10-04-hot-flow-mm-design.md` (the hot flow and the 1.3 mm view),
 `docs/specs/2026-10-04-mm-hotspots-design.md` (hotspots borrow the flow's electrons).
@@ -57,7 +58,7 @@ fit), Kirchhoff absorption and the transfer are unchanged.
   the midplane toward the funnel.
 - **Electrons:** T_e = T_i / R(β), R(β) = R_high β²/(1 + β²) + R_low/(1 + β²), **R_high = 160, R_low = 1** (the EHT's
   GRMHD libraries span R_high 1–160; 160 is the top of that range, the coldest disk electrons). Cold midplane electrons
-  (R → 160), hot funnel-wall electrons (R → 1).
+  (R = 128 at the midplane, where β = 2 β_eq = 2; R → 160 for β ≫ 1), hot funnel-wall electrons (R → 1).
 - Constants live in `HOTFLOW` (CPU) and `emission-shared.wgsl` (GPU) as twins (`tests/jet.test.ts` checks the twinned
   constants). The WGSL keeps its log-space form (ln T_e, ln B) so f32 stays in range.
 

@@ -1,7 +1,7 @@
 // Hot accretion flow for the 1.3 mm (EHT) view (spec 2026-10-04; electrons spec 2026-10-08): the semi-analytic RIAF of
 // Broderick et al. 2011/2016 (n_e ~ r^-1.1 e^{-z^2/2 rho^2}) with magnetically-arrested R-beta electron heating
-// (Moscibrodzka et al. 2016, as in the EHT's GRMHD libraries): virial ions, a field set by the midplane density at
-// midplane beta 1, T_e = T_i / R(beta) with R_high 160, R_low 1. Sub-Keplerian dynamics of Pu, Akiyama & Asada 2016
+// (Moscibrodzka et al. 2016, as in the EHT's GRMHD libraries): virial ions, a field set by the midplane density with
+// Broderick's normalisation at beta_eq 1 (so the local ion beta is 2 at the midplane: R 128 there), T_e = T_i / R(beta) with R_high 160, R_low 1. Sub-Keplerian dynamics of Pu, Akiyama & Asada 2016
 // (Keplerian / zero-angular-momentum free fall mixed 50/50 in u^r and Omega; equatorial profiles of r, u^t from the
 // local metric), thermal synchrotron (Mahadevan et al. 1996 isotropic fit) with Kirchhoff absorption. n0 calibrated
 // to the measured 230 GHz flux (scripts/calibrate-hotflow.ts). WGSL twin in emission-shared.wgsl.
@@ -64,6 +64,8 @@ export function flowShift(s: Float64Array, a: number): number | null {
   return u.ut * s[4] + u.ur * s[5] + u.Om * u.ut * s[7];
 }
 /** Plasma-frame thermal synchrotron j_nu (erg s^-1 cm^-3 Hz^-1 sr^-1) and alpha_nu (cm^-1) at nu. */
+// No density cutoff here: the WGSL twin returns 0 below ln n = -40 (f32 range), where this one still gives a vanishing value
+// (Gargantua's frame corners: 1e-23 of the peak; ?accuracy judges intensity above 1e-9 of it, src/test/accuracy-judge.ts).
 export function flowCoeffs(r: number, th: number, nu: number, n0: number): [number, number] {
   const n = flowDensity(r, th, n0); if (n <= 0) return [0, 0];
   const T = flowTemperature(r, th), the = (KB * T) / (ME * C * C), B = flowField(r, n0);

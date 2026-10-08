@@ -576,11 +576,12 @@ export async function runParity(): Promise<{ maxErr: number; rows: number; jetLo
   console.log("flux parity worst (|err| / tol)", fluxErr.toExponential(2), fluxWorst);
   // --- hot flow (CPU hot-flow.ts vs the SHIPPED flowVelocityJ / flowShiftJ / flowCoeffsJ in emission-shared.wgsl) ---
   // Spins 0.1 / 0.94; r from inside the ISCO (plunge, near the horizon) to the edge of the flow; latitudes at the plane,
-  // mid, near the axis (th 0.15: density down e^-22) and on it (th 0.05: ln n < -40, the GPU must return j = 0);
+  // mid, the R-beta transition (th 0.6: beta ~ 0.3, R mid-way; final review 2026-10-08), near the axis (th 0.15: density
+  // down e^-22) and on it (th 0.05: ln n < -40, the GPU must return j = 0);
   // n0 at M87* and Sgr A*. Each point gets two null momenta (p_t = 1, prograde and retrograde, in- and outgoing),
   // with p_r from the null condition and L shrunk until one exists, so D sees both blue- and redshifts.
   const hcases: { s: Float64Array; a: number; n0: number }[] = [];
-  for (const a of [0.1, 0.94]) for (const r of [1.5, 2.5, 5, 12, 30, 49]) for (const th of [1.55, 1.0, 0.15, 0.05]) {
+  for (const a of [0.1, 0.94]) for (const r of [1.5, 2.5, 5, 12, 30, 49]) for (const th of [1.55, 1.0, 0.6, 0.15, 0.05]) {
     if (r <= (1 + Math.sqrt(1 - a * a)) * 1.01) continue;
     const gu = metricUpper(r, th, a);
     for (const [L0, pth, sgn] of [[2, 0.5, 1], [-3, -1, -1]]) {

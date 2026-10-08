@@ -176,8 +176,8 @@ was never the problem.)
 
 **Hot flow and the 1.3 mm view (feat/hot-flow-mm, 2026-10-04):** a Band control (Visible / 1.3 mm (EHT), share key `b`)
 switches the camera to 230 GHz. Objects below 1 % of Eddington show a hot accretion flow instead of the thin disk: the
-semi-analytic RIAF of Broderick et al. 2011/2016 (n_e ∝ r^-1.1 e^(-z²/2ρ²), T_e = 1e11 K (r/2M)^-0.84, toroidal field at
-β = 10) moving with the sub-Keplerian dynamics of Pu, Akiyama & Asada 2016 (Keplerian, plunging inside the ISCO, and
+semi-analytic RIAF of Broderick et al. 2011/2016 (n_e ∝ r^-1.1 e^(-z²/2ρ²), T_e = 1e11 K (r/2M)^-0.84 and a toroidal field at
+β = 10 until 2026-10-08, since then R-β electrons: section "MAD electron heating" below) moving with the sub-Keplerian dynamics of Pu, Akiyama & Asada 2016 (Keplerian, plunging inside the ISCO, and
 zero-angular-momentum free fall mixed 50/50), emitting thermal synchrotron (Mahadevan et al. 1996 fit) with Kirchhoff
 absorption. Rays integrate it every ≤ 0.25 M inside r < 50 M (no disk termination); the image is brightness
 temperature in afmhot false colour (v = T_b / 2e10 K × 2^EV, no bloom or tone map). The density scale n₀ is fitted to
@@ -240,9 +240,10 @@ and Keplerian in the equatorial plane at r_c = 8 + 4 u_k r_g from a hashed azimu
 (σ = 2.548 M, cut at 4σ) whose light curve rises over 0.1 P, e-folds in P and ends by 3 P (≤ 802 M, shorter than the
 1000 M minimum eruption gap, so at most one is alive). Inside it the flow's electrons are boosted by A_k L G at the
 flow's own temperature and field, radiating with the blob's own Doppler factor; flow and hotspot share one slab per
-sample (the blob is partly opaque, τ ~ 0.3, so adding a separate image would be wrong by 8 % in flux), each sample at
+sample (the blob is partly opaque, τ ~ 0.3, so adding a separate image would be wrong by 8 % in flux; with the R-β electrons
+of 2026-10-08 it is optically thick, peak τ ≈ 11 by a CPU probe), each sample at
 its own emission time (light-travel delay). A_k = A₀ s δ_k/δ̄ with s the Flux-variability slider (0 turns hotspots
-off). A₀ = 9.22 (`scripts/calibrate-hotspot.ts`, 96² CPU twin): a mean-depth hotspot at r_c = 10 at the peak of its
+off). A₀ = 9.22 at the time (692 since the R-β electrons of 2026-10-08; `scripts/calibrate-hotspot.ts`, 96² CPU twin): a mean-depth hotspot at r_c = 10 at the peak of its
 light curve adds 0.300 Jy to Sgr A*, averaged over four orbital phases. Other objects' hotspots are predictions in
 units of M. The cache stores the steady flow, so frames trace live while a hotspot can be in view: alive within
 ±100 M of the clock (the measured bound on the light-travel delay of rays through the blob region: 77.9 M for
@@ -253,7 +254,8 @@ of 1.3 mm playback renders at the live rate and the render scale drops while it 
 off and keeps the view cached. The faster integrator (below) cuts the live rate. Gates: `?parity` adds 825 hotspot cases (state on the f32 epoch split
 up to t = 7.5e6 M, profile, Doppler factor; worst 0.354 of tolerance; σ = 2.6 fails at 149×); `?hotflow` renders Sgr A*
 at the peak of eruption 0's hotspot and gates the flux it adds and its centroid against the CPU twin (light delay on:
-0.212 vs 0.214 Jy at (−1.49, −4.37) vs (−1.49, −4.37) M; off: 0.597 vs 0.602 Jy, centroid within 0.01 M); golden adds
+0.212 vs 0.214 Jy at (−1.49, −4.37) vs (−1.49, −4.37) M; off: 0.597 vs 0.602 Jy, centroid within 0.01 M; since the R-β electrons: on 0.201 vs 0.202 Jy at (−0.22, 0.54) M, off 0.844 vs
+0.844 Jy, the centroid moved by the electrons, not A₀); golden adds
 `sgra-mm-hotspot` (fa9214e0) with every other hash unchanged; `?cachecheck` unchanged (cached frames never show a
 hotspot); an app check jumps the clock (dev-only `window.__bhSetTime`) into a hotspot, sees the mode go live and
 ~19,000 pixels brighten, then back to cached within 3 s (no rebuild). Performance (bench minima, interleaved with
@@ -314,8 +316,9 @@ the emitters' sampling is now the larger share of a jet frame.
 **MAD electron heating for the hot flow (feat/mad-rbeta, 2026-10-08; spec `docs/specs/2026-10-08-mad-rbeta-hotflow-design.md`):**
 the hot flow's fixed electron temperature (T_e ∝ r^-0.84) is replaced by the R-β heating of the EHT's GRMHD libraries
 (Mościbrodzka et al. 2016): virial ions (k T_i = m_p c²/3r), a magnetically arrested field set by the midplane density
-at midplane plasma β 1 (Broderick's normalisation, which used β 10 everywhere), local β = 2 e^(−z²/2ρ²), and
-T_e = T_i / R(β) with R_high 160, R_low 1: cold electrons where the gas pressure dominates, hot ones toward the funnel.
+with Broderick's normalisation at β_eq 1 (it used β 10 everywhere), so the local ion β = 2 e^(−z²/2ρ²) is 2 at the
+midplane, and T_e = T_i / R(β) with R_high 160, R_low 1: cold electrons where the gas pressure dominates (R 128 at the
+midplane), hot ones toward the funnel.
 Density, velocity, emissivity and transfer are unchanged. Why: on the CPU twin, only *where the electrons are hot* moved
 M87\*'s ring; the GRMHD-calibrated MAD velocity (arXiv 2607.21852), density slope and disk thickness left it at 35.5 µas,
 a flatter temperature reached 36.3, while R-β at the EHT libraries' R_high 80–160 gave 41.9–42.2. Results (table above):
@@ -323,18 +326,23 @@ a flatter temperature reached 36.3, while R-β at the EHT libraries' R_high 80�
 +2.4σ (both objects come out at α = D/θ_g ≈ 11, as GRMHD images do; the EHT's Sgr A\* ring is α ≈ 10 for the preset's
 mass and distance). Sgr A\*'s ring is flat-topped from ~51 to ~61 µas, so its peak is located to ~3 µas, not 0.5: the
 CPU twin is measured on the GPU's frame (192², 28 M; on the 96², 26 M calibration grid the peak moved by up to 8 µas)
-and checked to 3 µas, M87\*'s to 0.5 µas. Recalibrated: n₀ (Sgr A\* 1.43e7, M87\* 1.14e5 cm⁻³) and the hotspot
-amplitude A₀ 692 (was 9.22) for ALMA's +0.3 Jy: the midplane electrons where hotspots orbit are now ~50× colder
-(2.8e9 K at r 10), so the hotspot multiplies them ~600×; a real flare heats its electrons instead (a limitation).
-`?accuracy`: the 1.3 mm reference rows were rebuilt for the new emission; the pre-Mino renderer's mm statistics are
-fixed bounds (it no longer exists to re-record): Sgr A\* 0 / 261 pixels above floor (worst 0.58 / 38.4× floor), Gargantua
-5 / 235 (1.28 / 19.3×); intensity is scored above 1e-9 of the scene peak (below it the GPU's ln n < −40 density cutoff
-applies by design). Hot off-plane electrons now emit out to the flow's cutoff at r = 50, so 16 % (Sgr A\*) and 25 %
-(Gargantua) of the reference rays, nearly all faint, no longer converge to 1e-6 and go unscored. Limitations: R-β with
+and checked to 3 µas, M87\*'s to 0.5 µas. Recalibrated: n₀ (Sgr A\* 1.43e7, M87\* 1.14e5 cm⁻³; fitted to the flux inside the 26 M calibration frame:
+the hot off-plane electrons emit out to r = 50, so the model's total compact flux is ~8 % higher for Sgr A\*, 2.58 Jy in a
+52 M frame by a CPU probe) and the hotspot amplitude A₀ 692 (was 9.22) for ALMA's +0.3 Jy: the midplane electrons where
+hotspots orbit are now ~9× colder (2.8e9 vs 2.6e10 K at r 10) and their emissivity far lower, so the hotspot multiplies
+them ~600×; a real flare heats its electrons instead (a limitation).
+`?accuracy`: the 1.3 mm reference rows were rebuilt for the new emission. The pre-Mino renderer no longer exists to
+re-record its mm entries, so each mm scene is held to this renderer's own statistics at the change with headroom (pixels
+above floor ≤ 2 × measured + 5, worst ≤ 3 × measured, on every adapter): Sgr A\* 0 above floor, worst 0.58× (bounds 5,
+1.74×), Gargantua 5, 1.28× (bounds 15, 3.84×). Intensity is judged where the reference or the renderer reaches 1e-9 of
+the scene's peak (dark in both: the GPU skips gas below its ln n < −40 density cutoff by design and nothing is visible;
+`src/test/accuracy-judge.ts`). Hot off-plane electrons now emit out to the flow's cutoff at r = 50, so 16 % (Sgr A\*) and
+25 % (Gargantua) of the reference rays, nearly all faint, no longer converge to 1e-6; with the dark ones, intensity is
+scored on 1235 (Sgr A\*) and 607 (Gargantua) of 1600 pixels. Limitations: R-β with
 virial ions and a midplane-set field is a semi-analytic stand-in for GRMHD (no turbulence, flux eruptions in the field
 or funnel geometry beyond the density's Gaussian); the velocity is unchanged (Pu 50/50).
 
-**Current gates (feat/mad-rbeta):** `npm test` 277 passed, 14 skipped; `?parity` PASS 1.654e-4 over 1174; `?shadow` PASS;
+**Current gates (feat/mad-rbeta):** `npm test` 279 passed, 14 skipped; `?parity` PASS 1.654e-4 over 1218 (adds the R-β transition, θ 0.6); `?shadow` PASS;
 `?golden` PASS, mm re-recorded (sgra-mm cb3a37f7, m87-mm 7917ac74, sgra-mm-hotspot cb4942b1; the five visible hashes
 unchanged); `?cachecheck` PASS 0.00e+0; `?hotflow` PASS (M87\* 41.8 µas inside 2σ, robust; Sgr A\* reported; hotspot
 twins 0.201 / 0.844 Jy); `?accuracy` PASS; `SWEEP=1` sweep-hotflow and sweep-hotspot PASS; every app check PASS.
