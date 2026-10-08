@@ -15,6 +15,9 @@ export const HOTFLOW_TARGETS = {
 } as const;
 /** A gated ring must not move by more than this under a 15 uas blur (spec 2026-10-08: rejects bimodal profiles). */
 export const RING_ROBUST_UAS = 3;
+/** The CPU twin of ?hotflow's GPU ring is measured on the GPU's frame (half 14 M) at a converged grid: Sgr A*'s R-beta
+ *  ring is flat-topped (~10 uas wide), and on the 96^2, 13 M calibration grid its peak sat 2-8 uas off (2026-10-08). */
+export const TWIN_GRID = { N: 192, half: 14 } as const;
 // per ray: (r, th, D, dl, phi, t) per sample, D = -1 where the flow has no velocity (the hotspot can still emit there);
 // mom: the ray's conserved (p_t, p_phi). t is the coordinate time (0 at the camera, decreasing): delay = -t - 1000.
 export interface FlowSamples { N: number; half: number; a: number; rays: Float64Array[]; mom: Float64Array }
@@ -82,11 +85,14 @@ export function imageFluxJy(I: Float64Array, N: number, half: number, rgCm: numb
 }
 export function ringDiameterUas(I: Float64Array, N: number, half: number, uasPerM: number, blurUas = 0): number {
   let img = I; const px = (2 * half) / N;
-  if (blurUas > 0) {
-    const sig = blurUas / 2.3548 / uasPerM, R = Math.ceil((3 * sig) / px); img = new Float64Array(N * N);
+  if (blurUas > 0) { // separable Gaussian, normalised per axis over the pixels inside the frame (= the 2-D sum)
+    const sig = blurUas / 2.3548 / uasPerM, R = Math.ceil((3 * sig) / px), k = new Float64Array(2 * R + 1);
+    for (let d = -R; d <= R; d++) k[d + R] = Math.exp(-((d * px) ** 2) / (2 * sig * sig));
+    const tmp = new Float64Array(N * N); img = new Float64Array(N * N);
     for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) { let v = 0, w = 0;
-      for (let dj = -R; dj <= R; dj++) for (let di = -R; di <= R; di++) { const ii = i + di, jj = j + dj; if (ii < 0 || jj < 0 || ii >= N || jj >= N) continue;
-        const ww = Math.exp(-((di * px) ** 2 + (dj * px) ** 2) / (2 * sig * sig)); v += ww * I[jj * N + ii]; w += ww; } img[j * N + i] = v / w; }
+      for (let d = -R; d <= R; d++) { const ii = i + d; if (ii < 0 || ii >= N) continue; v += k[d + R] * I[j * N + ii]; w += k[d + R]; } tmp[j * N + i] = v / w; }
+    for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) { let v = 0, w = 0;
+      for (let d = -R; d <= R; d++) { const jj = j + d; if (jj < 0 || jj >= N) continue; v += k[d + R] * tmp[jj * N + i]; w += k[d + R]; } img[j * N + i] = v / w; }
   }
   const nb = 60, prof = new Float64Array(nb), cnt = new Float64Array(nb);
   for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {

@@ -1,18 +1,21 @@
 // ?hotflow (spec 2026-10-04 hot flow): the GPU renderer's own 1.3 mm image of Sgr A* and M87*, measured like the CPU
 // calibration (hot-flow-image.ts): total flux at the preset distance and the ring diameter (azimuthal-mean peak,
-// unblurred). PASS iff Sgr A*'s ring is within 2 sigma of the EHT's 51.8 uas and, for both objects, the flux is within
-// 5 % of the measured value its n0 was fitted to and the ring within 0.5 uas of the CPU twin's (twin checks). Also reported: what the jet model, if drawn at 230 GHz (the shader can, the app does not),
+// unblurred and at a 15 uas blur). PASS iff M87*'s ring is within 2 sigma of the EHT's 42 uas (spec 2026-10-08; Sgr A*'s
+// EHT comparison is reported) and, for both objects, the flux is within 5 % of the measured value its n0 was fitted to and
+// the ring matches the CPU twin's, measured on this frame (TWIN_GRID): within 0.5 uas and robust to the blur (moves
+// <= RING_ROBUST_UAS) for the EHT-gated M87*; within RING_ROBUST_UAS for Sgr A*, whose R-beta ring is flat-topped
+// (~10 uas wide), so its peak cannot be located to 0.5 uas (GPU vs a converged CPU twin: 0.5-0.6 uas, 2026-10-08). Also reported: what the jet model, if drawn at 230 GHz (the shader can, the app does not),
 // would add to M87*'s frame -- the measurement behind spec 2.5's decision not to draw the jet at 1.3 mm.
 import { Renderer } from "../render/gpu";
 import { SCENES, prepareScene, sceneUniforms, type Scene } from "./scenes";
-import { HOTFLOW_TARGETS, ringDiameterUas, imageCentroid } from "../physics/hot-flow-image";
+import { HOTFLOW_TARGETS, RING_ROBUST_UAS, ringDiameterUas, imageCentroid } from "../physics/hot-flow-image";
 import { HOTSPOT_TWIN } from "../physics/hotspot";
 import type { UniformValues } from "../render/uniforms";
 import { HOTFLOW } from "../physics/hot-flow";
 import { PRESETS } from "../physics/presets";
 
 const N = 512, FRAMES = 16;
-export interface HotFlowRow { name: string; jy: number; ringUas: number; peakTb: number }
+export interface HotFlowRow { name: string; jy: number; ringUas: number; ringBlurUas: number; peakTb: number }
 
 async function image(r: Renderer, s: Scene, extra: Partial<UniformValues> = {}): Promise<Float64Array> {
   const rIn = prepareScene(r, s);
@@ -36,7 +39,8 @@ function fluxJy(I: Float64Array, id: string): number {
 async function measure(r: Renderer, s: Scene): Promise<HotFlowRow> {
   const I = await image(r, s);
   let peakTb = 0; for (const v of I) peakTb = Math.max(peakTb, v * HOTFLOW.kTb);
-  return { name: s.name, jy: fluxJy(I, s.preset!), ringUas: ringDiameterUas(I, N, HALF, geom(s.preset!).uasPerM), peakTb };
+  const u = geom(s.preset!).uasPerM;
+  return { name: s.name, jy: fluxJy(I, s.preset!), ringUas: ringDiameterUas(I, N, HALF, u), ringBlurUas: ringDiameterUas(I, N, HALF, u, 15), peakTb };
 }
 // Hotspot (spec 2026-10-04 mm hotspots 5): Sgr A* at the peak of eruption 0's hotspot minus the same frame with the slider
 // at 0 (in mm, fluxVar drives only the hotspots): the flux it adds and its centroid must match the CPU twin
@@ -56,13 +60,17 @@ export async function runHotFlow(canvas: HTMLCanvasElement): Promise<{ ok: boole
   const sg = SCENES.find((s) => s.name === "sgra-mm")!, m87 = SCENES.find((s) => s.name === "m87-mm")!;
   const a = await measure(r, sg), b = await measure(r, m87), c = await measure(r, { ...m87, name: "m87-mm with the model jet (not drawn)", jetStrength: 1 });
   const T = HOTFLOW_TARGETS.sgra, M = HOTFLOW_TARGETS.m87;
-  const twin = (x: HotFlowRow, t: typeof T | typeof M) => Math.abs(x.jy / t.jy - 1) < 0.05 && Math.abs(x.ringUas - t.cpuRingUas) < 0.5;
-  const sgOk = twin(a, T), m87Ok = twin(b, M), ehtOk = Math.abs(a.ringUas - T.ringUas) < 2 * T.ringErr;
+  // EHT-gated (M87*): ring within 0.5 uas of the CPU twin and robust to the blur; reported (Sgr A*, flat-topped): within RING_ROBUST_UAS
+  const twin = (x: HotFlowRow, t: typeof T | typeof M) => Math.abs(x.jy / t.jy - 1) < 0.05 && (t.ehtGated
+    ? Math.abs(x.ringUas - t.cpuRingUas) < 0.5 && Math.abs(x.ringUas - x.ringBlurUas) <= RING_ROBUST_UAS
+    : Math.abs(x.ringUas - t.cpuRingUas) <= RING_ROBUST_UAS);
+  const sgOk = twin(a, T), m87Ok = twin(b, M), ehtOk = Math.abs(b.ringUas - M.ringUas) < 2 * M.ringErr;
+  const sgEht = (x: number) => ((x - T.ringUas) / T.ringErr).toFixed(1);
   const h1 = await hotspotRow(r, 1), h0 = await hotspotRow(r, 0);
   const row = (x: HotFlowRow) => `${x.name}: ${x.jy.toFixed(3)} Jy, ring ${x.ringUas.toFixed(1)} uas, peak T_b ${x.peakTb.toExponential(2)} K`;
   return { ok: sgOk && m87Ok && ehtOk && h1.ok && h0.ok, lines: [
-    `${row(a)} (twin: ${T.jy} Jy +- 5 %, CPU ring ${T.cpuRingUas} +- 0.5 ${sgOk ? "ok" : "FAILED"}; EHT ${T.ringUas} +- ${T.ringErr} ${ehtOk ? "ok" : "FAILED"})`,
-    `${row(b)} (twin: ${M.jy} Jy +- 5 %, CPU ring ${M.cpuRingUas} +- 0.5 ${m87Ok ? "ok" : "FAILED"}; EHT ${M.ringUas} +- ${M.ringErr}, reported)`,
+    `${row(a)}, blur 15 ${a.ringBlurUas.toFixed(1)} (twin: ${T.jy} Jy +- 5 %, CPU ring ${T.cpuRingUas} +- ${RING_ROBUST_UAS} ${sgOk ? "ok" : "FAILED"}; EHT ${T.ringUas} +- ${T.ringErr}: ${sgEht(a.ringUas)} sigma unblurred, ${sgEht(a.ringBlurUas)} blurred, reported)`,
+    `${row(b)}, blur 15 ${b.ringBlurUas.toFixed(1)} (twin: ${M.jy} Jy +- 5 %, CPU ring ${M.cpuRingUas} +- 0.5, robust <= ${RING_ROBUST_UAS} ${m87Ok ? "ok" : "FAILED"}; EHT ${M.ringUas} +- ${M.ringErr} ${ehtOk ? "ok" : "FAILED"})`,
     `${row(c)}: the jet would add ${(c.jy - b.jy).toFixed(3)} Jy (${((100 * (c.jy - b.jy)) / b.jy).toFixed(0)} % of the flow; EHT: jet base <~10 % of the ring)`,
     h1.line, h0.line,
   ] };

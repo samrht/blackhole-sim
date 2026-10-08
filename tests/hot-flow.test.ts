@@ -77,6 +77,21 @@ describe("hot flow (spec 2026-10-04)", () => {
 });
 
 describe("ring diameter measure (hot-flow-image.ts)", () => {
+  it("the blur is separable: same ring as the direct 2-D Gaussian, edges included", () => {
+    const N = 64, half = 13, I = new Float64Array(N * N);
+    for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
+      const x = -half + ((2 * half) / N) * (i + 0.5), y = -half + ((2 * half) / N) * (j + 0.5), b = Math.hypot(x, y);
+      I[j * N + i] = Math.exp(-((b - 5) ** 2) / 0.5) + 0.3 * Math.exp(-((b - 9) ** 2) / 2) * (1 + 0.5 * Math.sin(3 * Math.atan2(y, x)));
+    }
+    const direct = (blur: number, uasPerM: number) => { // the previous 2-D implementation, inline
+      const px = (2 * half) / N, sig = blur / 2.3548 / uasPerM, R = Math.ceil((3 * sig) / px), img = new Float64Array(N * N);
+      for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) { let v = 0, w = 0;
+        for (let dj = -R; dj <= R; dj++) for (let di = -R; di <= R; di++) { const ii = i + di, jj = j + dj; if (ii < 0 || jj < 0 || ii >= N || jj >= N) continue;
+          const ww = Math.exp(-((di * px) ** 2 + (dj * px) ** 2) / (2 * sig * sig)); v += ww * I[jj * N + ii]; w += ww; } img[j * N + i] = v / w; }
+      return ringDiameterUas(img, N, half, uasPerM);
+    };
+    for (const u of [3.82, 5.18]) expect(ringDiameterUas(I, N, half, u, 15)).toBeCloseTo(direct(15, u), 9);
+  });
   // A thin Gaussian ring of radius R M; the measure must not depend on the frame or the pixel grid (the 60-bin profile
   // alone quantised it to ~2.3 uas: 46.0 vs 48.2 at 48^2 vs 96^2, 47.1 on the GPU's 28 M frame vs 48.2 on the CPU's 26 M).
   // Grids as fine as the gates use (CPU 96^2, GPU 512^2); at 48^2 the 0.54 M pixels are coarser than the bins.
