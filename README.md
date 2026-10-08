@@ -248,7 +248,7 @@ Sgr A*, 68.8 M for Gargantua, 48²); otherwise mm frames send `fluxVar = 0`, whi
 hotspot-free live frames skip that code exactly. **The cost:** hotspots (with their window) are present about 55 % of the time at any Flux variability
 above 0 (the slider sets their brightness, not how often they come; 54.7 % for Sgr A*, 53.5 % at a = 0), so more than half
 of 1.3 mm playback renders at the live rate and the render scale drops while it does; Flux variability 0 turns hotspots
-off and keeps the view cached. The faster integrator (in progress) is the planned fix for the live rate. Gates: `?parity` adds 825 hotspot cases (state on the f32 epoch split
+off and keeps the view cached. The faster integrator (below) cuts the live rate. Gates: `?parity` adds 825 hotspot cases (state on the f32 epoch split
 up to t = 7.5e6 M, profile, Doppler factor; worst 0.354 of tolerance; σ = 2.6 fails at 149×); `?hotflow` renders Sgr A*
 at the peak of eruption 0's hotspot and gates the flux it adds and its centroid against the CPU twin (light delay on:
 0.212 vs 0.214 Jy at (−1.49, −4.37) vs (−1.49, −4.37) M; off: 0.597 vs 0.602 Jy, centroid within 0.01 M); golden adds
@@ -260,7 +260,62 @@ hotspot); an app check jumps the clock (dev-only `window.__bhSetTime`) into a ho
 temperature (real ones are heated and partly non-thermal), no polarization (ALMA's loop is a polarization signature),
 radius range and A₀ from Sgr A* alone; hotspot frames render at the live rate.
 
-**Current gates (feat/mm-hotspots):** `npm test` 248 passed, 10 skipped; `?parity` PASS 1.654e-4 over 1162 (hot flow
+**Faster integrator: Carter's equations in Mino time (perf/mino-integrator, 2026-10-08):** the renderer's geodesic
+solver is replaced; the metric, the geodesic equations' content and every emission model, constant and calibration are
+unchanged (spec `docs/specs/2026-10-07-mino-integrator-design.md`, plan `docs/plans/2026-10-07-mino-integrator.md`). A
+null geodesic in Kerr has three constants (E, L_z, Carter's Q), so per ray the camera computes ξ = L_z/E and η = Q/E² once
+and the state is integrated in Mino time (dλ = dl/Σ), where the r and θ motions separate: w = 1/r with w'' = R̃'(w)/2
+(R̃ = w⁴R(1/w) is O(1) everywhere; in r the conserved r'² − R was set by far-field error at R ~ 10¹² and swamped R near the
+hole), θ itself with θ'' = Θ'(θ)/2 (u = cos θ cannot carry sin²θ to relative precision near a pole), φ, a regularised time
+τ = t + r₀ + F(w, w') and a regularised affine length ℓ = l − r₀ + w'/w as quadratures (t' ~ 1/w² made 6e-4 M delay
+errors in f32; the emitters' weights were differences of l ~ 1000). Dormand–Prince 5(4), adaptive, MINO_TOL = 1e-5, with
+the drift of both first integrals (w'² − R̃, θ'² − Θ) in the error norm at MINO_CTOL = 1e-3 of it and a rounding floor;
+precise sin/cos (`sinCosP`, Cephes, ~1 ulp: WGSL's built-in cos(1°) is 2e-5 off on Intel) for all Mino trig and the
+camera's (ξ, η); a hemisphere frame (θ measured from the nearer pole) so near-pole rays keep relative precision in f32;
+disk and escape-sphere hits by a landing DP5 step refined by safeguarded Newton (the 4th-order Hermite crossing was 1.4e-4
+rad off in φ on near-critical rays); steps that would carry w past 0 are rejected (WGSL's log of a negative is finite on
+Intel, and such steps had read far rays' sky off the escape sphere); sky directions read on r = 1.2 r_obs, where the
+reference lands too. The jet and the hot flow are integrated with a composite midpoint rule on the step's dense output
+(hot flow every 0.125 · max(1, r/8) M, half the old 0.25 left-sample spacing). Every function has a CPU twin
+(`src/physics/trace-mino.ts`) gated by `?parity` one step at a time from identical f32 inputs.
+
+*Accuracy.* Two gates, both against converged references: `tests/sweep-mino.test.ts` (`SWEEP=1`, CPU, f64; 12 ray sets
+incl. near-critical, grazing, near-axis and both 1.3 mm objects; references cross-checked against Mino at 1e-11) and
+`?accuracy` (GPU, the shipped renderer's own cache-build entries over six 40×40 views, against
+`src/test/accuracy-ref.json` and the old renderer's entries recorded on the same adapter). On the GPU the new renderer's
+largest errors are r 9e-6–1.5e-4 relative, φ ≤ 1.3e-5 rad, delay ≤ 4.9e-5, sky ≤ 0.005 px, 1.3 mm intensity ≤ 8e-4
+(median 5e-5 Sgr A*, 1.8e-5 Gargantua) against the old renderer's 4.8e-5–1.2e-4, ≤ 2.7e-4, ≤ 1.4e-3, ≤ 0.036 px and
+≤ 1e-2 (median 1.1e-3), with no fate flips. Per pixel, errors are judged against floors (1e-5; 0.01 px; the 1.3 mm
+rule's quadrature error; each raised to the pixel's own f32 input conditioning): the old renderer exceeds its floor on
+960–1265 pixels of each geometry quantity and 235–261 of the 1.3 mm views, the new one on at most 34 (delay, edge-on) and
+on none at 1.3 mm. The original rule, no pixel worse than the old renderer, could not pass at any practical tolerance:
+both renderers share f32 floors that a 1-ulp input nudge does not capture (near-critical rounding amplified by the photon
+orbit, and a ~−1e-5 bias in the f32 log-sum of the hot flow's coefficients), and the old one beat the new only where its
+own error happened to cancel (17 of ~9600 pixels; MINO_TOL 1e-6 left 9 at +12–25 % cost). By decision the gate now
+fails a pixel that exceeds its floor, its old error and the old renderer's typical exceedance, and fails a view where the
+new renderer exceeds floors more often or by more than the old one (`src/test/accuracy.browser.ts`).
+
+*Jet.* The emitters sample the step's dense output. For the jet, only the part of a step inside its bounding sphere is
+sampled (bisected on the dense w; exact, the shape is 0 outside), sub-interval boundaries march in affine length at
+min(0.25, 0.02 (r − r₊)) M (the density the old near-field steps gave; a flat 0.25 under-sampled the jet base), and samples
+clearly outside the funnel are rejected on their dense (w, θ) alone. Against a 16× finer render of the three jet scenes
+(default / edge-on / face-on), pixels > 5 % off 69 / 97 / 9 and mean error 3.4e-3 / 4.8e-3 / 6.4e-4, against the old
+renderer's 95 / 127 / 10 and 5.2e-3 / 5.8e-3 / 1.7e-3. (The first Mino cut, deployed briefly on 2026-10-08, spread each
+step's samples over the whole step and ran the visible view with the jet on 1.6× slower than the old renderer.)
+
+*Speed* (bench minima, two rounds interleaved with `main`, RTX 3050 Laptop): visible live 1280×720 jet on 46–47 ms vs
+60–66 (jet off 20 vs 47–50), 1920×1080 113–141 vs 173–194, 1.3 mm live 101–114 vs 133–139, 1.3 mm with a hotspot
+123–131 vs 143–153; cache builds 899–1125 vs 1414–1834 ms per set; cached frames unchanged. Mean integrator steps per
+ray fell 3–12× per sweep set (20–101 vs 203–392; least on the near-axis sets); per step the Mino step costs more (seven right-hand sides), and
+the emitters' sampling is now the larger share of a jet frame.
+
+**Current gates (perf/mino-integrator):** `npm test` 275 passed, 14 skipped; `?parity` PASS 1.654e-4 over 1174 (Mino step, landing,
+escape sphere); `?shadow` PASS; `?golden` PASS, re-recorded (default 6ca46ee2, jet-off 158728de, edge-on 235adb17,
+face-on-jet 7d2b6e3f, delay 890c85cb, sgra-mm 04eb2271, m87-mm 1a0eb5bb, sgra-mm-hotspot f846f473; no non-finite
+pixels); `?cachecheck` PASS 0.00e+0 everywhere; `?hotflow` PASS; `?accuracy` PASS; `SWEEP=1 tests/sweep-mino.test.ts`
+PASS (flips 0, worse 0, strict count 2, drift 1.0e-6); every app check PASS.
+
+**Previous gates (feat/mm-hotspots):** `npm test` 248 passed, 10 skipped; `?parity` PASS 1.654e-4 over 1162 (hot flow
 0.245, hotspots 0.354 of tolerance); `?shadow` PASS; `?golden` PASS (visible 914d238f/62578f82/a78f2dcc/97ea770a/f1496f01,
 sgra-mm f298812a, m87-mm 3ea2d532 unchanged; sgra-mm-hotspot fa9214e0); `?cachecheck` PASS 0.00e+0 everywhere; `?hotflow`
 PASS (incl. the hotspot twin, light delay on and off); every app check PASS, incl. the 1.3 mm hotspot.

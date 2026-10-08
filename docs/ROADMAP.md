@@ -85,6 +85,11 @@ this file is the queue. Each item gets its own spec (and plan) before code, as e
   docs/specs/2026-10-04-mm-hotspots-design.md): an eruption-born Keplerian blob at 8–12 r_g, A₀ calibrated to ALMA's
   +0.3 Jy for Sgr A*, live-traced while alive. Follow-ups: shearing blob; heated / non-thermal electrons; polarization.
 - [x] **Zoom** (2026-10-07; README "Zoom"): 0.25x-16x, wheel / pinch toward the pointer, keys, share links.
+- [x] **Faster integrator** (2026-10-08; README "Faster integrator"; spec `docs/specs/2026-10-07-mino-integrator-design.md`):
+  Carter's equations in Mino time, DP5(4); live frames 14-35 % faster in both views, every gate at or above the old
+  renderer's accuracy (`?accuracy` and the sweep judge per-pixel errors against the old renderer's own exceedances, by
+  decision). Follow-ups: the shared f32 floors (flowCoeffsJ's log-sum bias ~-1e-5; near-critical rounding) and the
+  emitters' per-sample cost, now the larger share of a jet frame.
 - [ ] **Mobile layout**: control panel as a collapsible sheet and a phone-sized default render
   scale (camera drag already works on touch: it uses pointer events).
 
