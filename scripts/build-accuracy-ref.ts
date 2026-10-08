@@ -3,7 +3,7 @@
 // rays the renderer's cache build traces, so the shipped integrator is measured, not a copy). Disk rays: rHit, phiHit,
 // delay; sky rays: the direction and the local lensing Jacobian at the app's pixel scale (720 px over the 28 M field);
 // 1.3 mm flow rays: the 230 GHz intensity. Run: npx vite-node scripts/build-accuracy-ref.ts (~30 min, background).
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { screenToState } from "../src/physics/camera";
 import { iscoRadius } from "../src/physics/orbits";
 import { convergedRef, refTrace, flowReference, REF1, REF_ROBS, type FlowObj } from "../src/physics/trace-reference";
@@ -31,10 +31,18 @@ export function accImpact(i: number, j: number, N = ACC_N): [number, number] {
 const sig = (x: number) => Number(x.toPrecision(10));
 const out: Record<string, unknown> = { N: ACC_N, fov: ACC_FOV, jitter: JITTER[0], scenes: [] as unknown[] };
 const t0 = Date.now();
+// ONLY=sgra-mm,garg-mm rebuilds those scenes and keeps every other scene of the existing fixture as it is; JROWS=a,b
+// rebuilds only pixel rows a <= j < b of them (the rest from the existing fixture), so a rebuild can run in short chunks.
+const ONLY = process.env.ONLY?.split(",");
+const JR = process.env.JROWS?.split(",").map(Number);
+const prev = ONLY ? JSON.parse(readFileSync("src/test/accuracy-ref.json", "utf8")) : null;
 for (const sc of ACC_SCENES) {
+  if (ONLY && !ONLY.includes(sc.name)) { (out.scenes as unknown[]).push(prev.scenes.find((s: { name: string }) => s.name === sc.name)); continue; }
+  const prevSc = prev?.scenes.find((s: { name: string }) => s.name === sc.name);
   const incl = (sc.inclDeg * Math.PI) / 180, rIn = iscoRadius(sc.a, true), fl = sc.flow ? flowOf(sc.flow) : undefined;
   const rays: unknown[] = []; let un = 0;
   for (let j = 0; j < ACC_N; j++) for (let i = 0; i < ACC_N; i++) {
+    if (JR && (j < JR[0] || j >= JR[1])) { rays.push(prevSc.rays[j * ACC_N + i]); continue; }
     const [al, be] = accImpact(i, j);
     const s0 = screenToState(al, be, sc.a, incl, REF_ROBS);
     if (fl) { // 1.3 mm: the exact intensity and the renderer rule's own resolution q along the exact path

@@ -77,6 +77,14 @@ function qScale(s: RefScene, N: number, k: number): number {
   return m;
 }
 const median = (a: number[]) => { const s = [...a].sort((x, y) => x - y); return s.length ? s[Math.floor((s.length - 1) / 2)] : 0; };
+// 1.3 mm scenes (spec 2026-10-08 MAD R-beta §4): the emission changed after the pre-Mino renderer was removed, so its
+// recorded mm entries no longer describe this emission. Its statistics against the then-current reference (?accuracy
+// 2026-10-08: pixels above floor and worst error / floor) are the bounds instead of a per-pixel comparison.
+// Intensity is scored where the reference reaches DARK_I of the scene's peak: below it the GPU skips gas under its
+// ln n < -40 density cutoff by design (the CPU reference has none; Gargantua's frame corners sit at ~1e-23 of the peak)
+// and nothing is visible (the afmhot scale spans ~1e-3).
+const DARK_I = 1e-9;
+const MM_OLD: Record<string, { over: number; worst: number }> = { "sgra-mm": { over: 261, worst: 38.39 }, "garg-mm": { over: 235, worst: 19.27 } };
 export async function runAccuracy(canvas: HTMLCanvasElement): Promise<{ verdict: "PASS" | "FAIL" | "SKIP"; lines: string[] }> {
   const fx: Fixture = await (await fetch("/src/test/accuracy-ref.json")).json();
   const oldRes = await fetch("/src/test/accuracy-old.json");
@@ -89,12 +97,14 @@ export async function runAccuracy(canvas: HTMLCanvasElement): Promise<{ verdict:
     let scored = 0, flips = 0; const worse: Record<string, number> = { r: 0, p: 0, d: 0, px: 0, I: 0 };
     const maxNew: Err = { r: 0, p: 0, d: 0, px: 0, I: 0 }, maxOld: Err = { r: 0, p: 0, d: 0, px: 0, I: 0 }; const examples: string[] = [];
     const ratios: Record<string, { k: number; n: number; o: number }[]> = { r: [], p: [], d: [], px: [], I: [] };
+    const iPeak = Math.max(0, ...s.rays.map((r) => (r.c && r.I !== undefined ? r.I : 0)));
     s.rays.forEach((row, k) => {
       if (!row.c) return;
       scored++;
       const en = errors(row, E[k]), eo = O ? errors(row, O[k]) : null;
       const edge = !!row.s && row.s[0] >= 1e9; // a 1-ulp nudge flips the reference's fate
       if (!en) { if ((!O || eo) && !edge) { flips++; if (examples.length < 4) examples.push(`#${k} fate ${E[k][0]} vs ref ${row.f}`); } return; }
+      if (row.I !== undefined && row.I < DARK_I * iPeak) en.I = NaN; // dark: below what the renderer resolves (DARK_I)
       for (const q of ["r", "p", "d", "px", "I"] as const) {
         if (!Number.isFinite(en[q])) continue;
         maxNew[q] = Math.max(maxNew[q], en[q]);
@@ -102,7 +112,8 @@ export async function runAccuracy(canvas: HTMLCanvasElement): Promise<{ verdict:
         // 1.3 mm: the rule's quadrature error q along the exact path (plan Task 2 ruling), at its neighbourhood scale
         const sens = row.s ? { r: row.s[0], p: row.s[1], d: row.s[2], px: row.s[3], I: 0 }[q] : 0;
         const floor = Math.max(sens, q === "I" && row.q !== undefined ? Math.max(FLOOR.I, 2 * qScale(s, fx.N, k)) : FLOOR[q]);
-        if (eo && Number.isFinite(eo[q])) ratios[q].push({ k, n: en[q] / floor, o: eo[q] / floor });
+        if (q === "I" && MM_OLD[s.name]) ratios[q].push({ k, n: en[q] / floor, o: NaN });
+        else if (eo && Number.isFinite(eo[q])) ratios[q].push({ k, n: en[q] / floor, o: eo[q] / floor });
       }
     });
     const verdicts: string[] = [];
@@ -110,7 +121,14 @@ export async function runAccuracy(canvas: HTMLCanvasElement): Promise<{ verdict:
       if (!v.length) continue;
       const overN = v.filter((x) => x.n > 1).length, overO = v.filter((x) => x.o > 1).length;
       const maxN = Math.max(...v.map((x) => x.n)), maxO = Math.max(...v.map((x) => x.o));
-      if (maxN === 0 && maxO === 0) continue; // a quantity this scene does not have (geometry in mm, intensity in visible)
+      if (maxN === 0 && !(maxO > 0)) continue; // a quantity this scene does not have (geometry in mm, intensity in visible)
+      const frozen = q === "I" ? MM_OLD[s.name] : undefined;
+      if (frozen) {
+        if (overN > frozen.over) { worse[q]++; examples.push(`${q}: ${overN} px above floor > old ${frozen.over}`); }
+        if (maxN > frozen.worst) { worse[q]++; examples.push(`${q}: worst ${maxN.toFixed(2)}x floor > old ${frozen.worst}x`); }
+        verdicts.push(`${q} >floor ${overN}/${frozen.over} worst ${maxN.toFixed(2)}/${frozen.worst}x (old frozen)`);
+        continue;
+      }
       const typ = Math.max(1, median(v.filter((x) => x.o > 1).map((x) => x.o)));
       for (const x of v) if (x.n > Math.max(1, x.o, typ)) { worse[q]++; if (examples.length < 4) examples.push(`#${x.k} ${q} ${x.n.toFixed(2)}x floor > old ${x.o.toFixed(2)}x, typical ${typ.toFixed(2)}x`); }
       if (overN > overO) { worse[q]++; examples.push(`${q}: ${overN} px above floor > old ${overO}`); }
