@@ -147,13 +147,15 @@ describe("emission-shared.wgsl flux/filament constants match the CPU twins", () 
     GL6.forEach(([x, w], i) => { expect(nodes[i]).toBeCloseTo(x, 7); expect(wts[i]).toBeCloseTo(w, 7); });
   });
   it("hot-flow constants match hot-flow.ts and the cgs values they are logs of", () => {
-    for (const [n, v] of [["HF_T0", 1e11], ["HF_BETA", 10], ["HF_RMAX", 50], ["HF_KTB", HOTFLOW.kTb]] as [string, number][])
+    for (const [n, v] of [["HF_BETA_EQ", HOTFLOW.betaEq], ["HF_R_HIGH", HOTFLOW.rHigh], ["HF_R_LOW", HOTFLOW.rLow], ["HF_RMAX", 50], ["HF_KTB", HOTFLOW.kTb]] as [string, number][])
       expect(Number(wconst(n))).toBe(v);
+    expect(WGSL_E).not.toMatch(/HF_T0|HF_BETA\b/);
     expect(Number(wconst("HF_LNNU"))).toBeCloseTo(Math.log(230e9), 7);
     const C = 2.99792458e10, QE = 4.80320471e-10, ME = 9.1093837e-28, MP = 1.67262192e-24, KB = 1.380649e-16;
     const logs: [string, number][] = [["HF_LN_QE2", Math.log(QE * QE)], ["HF_LN_THE", Math.log(KB / (ME * C * C))],
       ["HF_LN_B2", Math.log((8 * Math.PI * MP * C * C * 2) / 12)], ["HF_LN_RJ", Math.log((2 * KB) / (C * C))],
-      ["HF_LN_2S3C", Math.log(2 * Math.sqrt(3) * C)], ["SYN_LNNUB0", Math.log(QE / (2 * Math.PI * ME * C))]];
+      ["HF_LN_2S3C", Math.log(2 * Math.sqrt(3) * C)], ["SYN_LNNUB0", Math.log(QE / (2 * Math.PI * ME * C))],
+      ["HF_LN_TI", Math.log((MP * C * C) / (3 * KB))]];
     for (const [n, v] of logs) expect(Number(wconst(n))).toBeCloseTo(v, 7);
   });
   it("the old knot and churn noise is gone from the shared jet code", () => {

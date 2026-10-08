@@ -297,11 +297,13 @@ fn jetSlabJ(acc: JetOut, j: vec3<f32>, alpha: vec3<f32>, ds: f32) -> JetOut {
   return o;
 }
 // --- Hot flow at 230 GHz (spec 2026-10-04 hot flow; twin: src/physics/hot-flow.ts) ---------------------------------
-// Broderick et al. 2011 RIAF profiles, Pu et al. 2016 velocity (Keplerian / free fall mixed 50/50), thermal synchrotron
+// Broderick et al. 2011 RIAF density with R-beta electrons (spec 2026-10-08), Pu et al. 2016 velocity (Keplerian / free fall mixed 50/50), thermal synchrotron
 // (Mahadevan et al. 1996 fit) with Kirchhoff absorption. Coefficients are built in logs so n0 (5e5 for M87* up to ~1e18
 // for dense custom objects) and j (~1e-20 cgs) stay inside f32: ln X spans about [-28, 36] and every exp stays below 88.
 const HF_LNNU = 26.16134515;        // ln(230e9)
-const HF_T0 = 1e11; const HF_BETA = 10.0; const HF_RMAX = 50.0; const HF_KTB = 6.1528e13;
+// Electrons (spec 2026-10-08, twin of HOTFLOW): R-beta heating, R_high 160, R_low 1, midplane beta 1; ln(m_p c^2 / 3 k).
+const HF_BETA_EQ = 1.0; const HF_R_HIGH = 160.0; const HF_R_LOW = 1.0; const HF_LN_TI = 28.92008804;
+const HF_RMAX = 50.0; const HF_KTB = 6.1528e13;
 // cgs logs: ln e^2, ln(k / m_e c^2), ln(8 pi m_p c^2 * 2 / 12) [B^2 = e^(that + ln n - ln r) / beta], ln(2 k / c^2),
 // ln(2 sqrt(3) c); ln(e / 2 pi m_e c) is the jet's SYN_LNNUB0.
 const HF_LN_QE2 = -42.91313517; const HF_LN_THE = -22.50327261; const HF_LN_B2 = -5.06769552;
@@ -352,11 +354,15 @@ fn flowShiftOrbJ(r: f32, th: f32, p: vec4<f32>, a: f32, orb: vec3<f32>) -> f32 {
 fn flowCoeffsJ(r: f32, th: f32, lnNu: f32, n0: f32) -> vec2<f32> {
   let z = r * cos(th); let rho = r * sin(th);
   if (rho < 1e-6) { return vec2<f32>(0.0); }
-  let lnN = log(n0) - 1.1 * log(0.5 * r) - z * z / (2.0 * rho * rho);
+  let g = z * z / (2.0 * rho * rho);
+  let lnNeq = log(n0) - 1.1 * log(0.5 * r);              // midplane density: the MAD field's reference
+  let lnN = lnNeq - g;
   if (lnN < -40.0) { return vec2<f32>(0.0); }
-  let lnT = log(HF_T0) - 0.84 * log(0.5 * r);
+  // R-beta (twin: flowTemperature): beta = 2 beta_eq e^-g (0 far off the plane: R = R_low), T_e = T_i / R(beta)
+  let beta = 2.0 * HF_BETA_EQ * exp(-g); let b2 = beta * beta;
+  let lnT = HF_LN_TI - log(r) - log((HF_R_HIGH * b2 + HF_R_LOW) / (1.0 + b2));
   let lnThe = HF_LN_THE + lnT;
-  let lnB = 0.5 * (HF_LN_B2 - log(HF_BETA) + lnN - log(r));
+  let lnB = 0.5 * (HF_LN_B2 - log(HF_BETA_EQ) + lnNeq - log(r));
   let lnX = log(2.0 / 3.0) + lnNu - (SYN_LNNUB0 + lnB) - 2.0 * lnThe;
   let lnJ = lnN + HF_LN_QE2 + lnNu - HF_LN_2S3C - 2.0 * lnThe + lnMahadevanJ(lnX);
   let lnA = lnJ - (HF_LN_RJ + 2.0 * lnNu + lnT);
