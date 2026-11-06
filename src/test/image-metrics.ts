@@ -7,6 +7,8 @@ export const IMAGE_VIEWS: ImageView[] = [
   { name: "edge", a: 0.998, inclDeg: 85, fov: 14, panX: 0, panY: 0, time: 37, note: "high spin, near edge-on" },
   { name: "schw", a: 0, inclDeg: 30, fov: 14, panX: 0, panY: 0, time: 37, note: "no spin" },
   { name: "zoom-pole", a: 0.998, inclDeg: 85, fov: 14 / 16, panX: 0, panY: 4.7, time: 37, note: "16x zoom onto the alpha = 0 column, where near-pole rays hit the disk" },
+  { name: "zoom-pole-far", a: 0.998, inclDeg: 85, fov: 14 / 16, panX: 0, panY: -9.82, time: 37, note: "16x zoom onto the worst near-pole ray of the scan (5.5 px at the shipped tolerance)" },
+  { name: "zoom-pole-hit", a: 0.998, inclDeg: 85, fov: 14 / 16, panX: -5.2e-4, panY: -9.82, time: 37, note: "as zoom-pole-far, panned so a pixel column lands on that ray (|alpha| = 3.9e-4)" },
   { name: "zoom-ring", a: 0.9, inclDeg: 72, fov: 14 / 16, panX: 5.2, panY: 0, time: 37, note: "16x zoom onto the bright inner disk at the shadow's edge" },
 ];
 

@@ -14,6 +14,7 @@ import { skyDirCPU } from "../physics/trace-reference";
 import { prepareScene, sceneUniforms, type Scene } from "./scenes";
 import { dsDispatch, dsModule, dsObs } from "./limit-ds.browser";
 import { compareDisplay, compareLinear, IMAGE_VIEWS, pixelRays } from "./image-metrics";
+import { summarize } from "./drift-analysis";
 import { H_TOL, H_TOL_FAR } from "../physics/trace";
 
 const F = Math.fround;
@@ -80,17 +81,36 @@ export async function runImageError(canvas: HTMLCanvasElement): Promise<{ report
   const rIn = prepareScene(r, scene), rOut = 40;
   const u = sceneUniforms(r, scene, rIn, { fovScale: view.fov, panX: view.panX, panY: view.panY, setIndex: 0 });
   const rays = pixelRays(w, h, view.fov, view.panX, view.panY, JITTER[0]);
+  let renders = 0;
+  // The renderer's entry buffers are STORAGE | COPY_SRC: neither writeBuffer nor a buffer copy can reach them, so a compute pass owned by this route
+  // does, and every injection is read back and must match exactly. A silent failure here makes every arm the same image.
+  const copyPipe = await compile(device, `@group(0) @binding(0) var<storage, read> src: array<u32>;
+@group(0) @binding(1) var<storage, read_write> dst: array<u32>;
+@compute @workgroup_size(256) fn main(@builtin(global_invocation_id) g: vec3<u32>) { if (g.x < arrayLength(&src)) { dst[g.x] = src[g.x]; } }`, "main");
+  const inject = async (entries: ArrayBuffer) => {
+    const src = device.createBuffer({ size: entries.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST }); device.queue.writeBuffer(src, 0, entries);
+    const bg = device.createBindGroup({ layout: copyPipe.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: src } }, { binding: 1, resource: { buffer: r.entryBufs[0] } }] });
+    const enc = device.createCommandEncoder(), cp = enc.beginComputePass();
+    cp.setPipeline(copyPipe); cp.setBindGroup(0, bg); cp.dispatchWorkgroups(Math.ceil(entries.byteLength / 4 / 256)); cp.end(); device.queue.submit([enc.finish()]);
+    await device.queue.onSubmittedWorkDone(); src.destroy();
+    const got = await r.readbackEntries(0), want = new Uint32Array(entries);
+    for (let i = 0; i < want.length; i++) if (got[i] !== want[i]) throw new Error(`entry injection failed at word ${i}: ${got[i]} != ${want[i]}`);
+  };
   const render = async (entries: ArrayBuffer | null) => {
-    if (entries) device.queue.writeBuffer(r.entryBufs[0], 0, entries);
+    if (entries) await inject(entries);
     r.frame(u, { cachedSet: 0 }); await device.queue.onSubmittedWorkDone();
     const linear = new Float32Array(await r.readbackAccum()), disp = await r.readbackDisplay();
+    let sum = 0; for (let i = 0; i < linear.length; i += 4) sum += linear[i + 1];
+    if (!(sum > 0)) throw new Error(`render ${++renders} is black`);
     return { linear, display: toRGBA(disp.data, disp.format), dw: disp.w, dh: disp.h };
   };
   const kinds = (e: ArrayBuffer) => new Uint32Array(e).filter((_, i) => i % 4 === 0).map((x) => x & 3);
 
   // ---- The reference ----
   const dsRun = async (tol: number, chunk: number) => { const pipe = await compile(device, dsModule(tol), "trace"); return dsDispatch(device, pipe, rays, n, { a: view.a, inclDeg: view.inclDeg, rIn, rOut }, chunk); };
+  device.pushErrorScope("validation");
   const refRun = await dsRun(1e-9, 1024), refEntries = entriesFromDs(refRun.raw, rays, n, view.a, incl), ref = await render(refEntries), refKinds = kinds(refEntries);
+  const scopeErr = await device.popErrorScope(); if (scopeErr) throw new Error(`validation error: ${scopeErr.message}`);
   console.log(`reference traced in ${(refRun.ms / 1000).toFixed(1)} s`);
   // Sampled against f64 at tol 1e-11: the largest difference in the stored quantities.
   let check = { rays: 0, fateMismatch: 0, rRelMax: 0, phiMax: 0, dirMax: 0 };
@@ -109,6 +129,7 @@ export async function runImageError(canvas: HTMLCanvasElement): Promise<{ report
   const built = (await r.readbackEntries(0)).slice(0, n * 4), builtBuf = built.buffer.slice(built.byteOffset, built.byteOffset + n * 16);
   const realImg = await render(null);
 
+  device.pushErrorScope("validation");
   const arms: Record<string, unknown> = {}, images: Record<string, string> = {};
   const toPng = (data: Uint8Array | Uint8ClampedArray) => { const c = document.createElement("canvas"); c.width = w; c.height = h; const g = c.getContext("2d")!; const im = g.createImageData(w, h); im.data.set(data); g.putImageData(im, 0, 0); return c.toDataURL("image/png"); };
   const diffPng = (a: Uint8Array | Uint8ClampedArray, b: Uint8Array | Uint8ClampedArray, gain: number) => { const o = new Uint8Array(a.length); for (let i = 0; i < a.length / 4; i++) { let m = 0; for (let c = 0; c < 3; c++) m = Math.max(m, Math.abs(a[i * 4 + c] - b[i * 4 + c])); const v = Math.min(255, m * gain); o[i * 4] = 255 - v; o[i * 4 + 1] = 255 - v; o[i * 4 + 2] = 255 - v; o[i * 4 + 3] = 255; } return toPng(o); };
@@ -127,19 +148,20 @@ export async function runImageError(canvas: HTMLCanvasElement): Promise<{ report
     const img = await render(entries), s = score(img, entries) as Record<string, unknown>;
     if (arm.name === "f32 1e-5 (shipped)") {
       // Control: this kernel's entries against the renderer's own, bit by bit where the kind agrees.
-      const a = new Float32Array(entries), b = new Float32Array(builtBuf), au = new Uint32Array(entries), bu = new Uint32Array(builtBuf); let same = 0, kindDiff = 0, rMax = 0;
+      const a = new Float32Array(entries), b = new Float32Array(builtBuf), au = new Uint32Array(entries), bu = new Uint32Array(builtBuf); let same = 0, kindDiff = 0, rMax = 0; const rd: number[] = [];
       for (let i = 0; i < n; i++) {
         if ((au[i * 4] & 3) !== (bu[i * 4] & 3)) { kindDiff++; continue; }
         if (a[i * 4 + 1] === b[i * 4 + 1] && a[i * 4 + 2] === b[i * 4 + 2] && a[i * 4 + 3] === b[i * 4 + 3]) same++;
-        else if ((au[i * 4] & 3) === 1) rMax = Math.max(rMax, Math.abs(a[i * 4 + 1] / b[i * 4 + 1] - 1));
+        else if ((au[i * 4] & 3) === 1) { const q = Math.abs(a[i * 4 + 1] / b[i * 4 + 1] - 1); rMax = Math.max(rMax, q); rd.push(q); }
       }
-      s.controlAgainstBuild = { identicalPixels: same, kindDiff, pixels: n, diskRRelMax: rMax };
+      s.controlAgainstBuild = { identicalPixels: same, kindDiff, pixels: n, diskRRelMax: rMax, diskRRel: summarize(rd), imageAgainstBuild: compareDisplay(realImg.display, img.display) };
       images["shipped"] = toPng(img.display); images["shipped-diff"] = diffPng(ref.display, img.display, 32);
     }
     if (arm.name === "compensated 1e-6") images["compensated-diff"] = diffPng(ref.display, img.display, 32);
     arms[arm.name] = { ...s, ms };
     console.log(`arm ${arm.name}`);
   }
+  const armErr = await device.popErrorScope(); if (armErr) throw new Error(`validation error: ${armErr.message}`);
   const info = r.adapterInfo;
   return { report: { view, w, h, adapter: `${info.vendor} ${info.architecture}`.trim(), rIn, referenceMs: refRun.ms, referenceCheck: check, arms }, images };
 }

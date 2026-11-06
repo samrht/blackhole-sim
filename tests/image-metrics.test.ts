@@ -54,7 +54,7 @@ describe("pixel rays", () => {
 
 describe("views", () => {
   it("cover the ordinary views and the two 16x zooms", () => {
-    expect(IMAGE_VIEWS.map((v) => v.name)).toEqual(["default", "edge", "schw", "zoom-pole", "zoom-ring"]);
+    expect(IMAGE_VIEWS.map((v) => v.name)).toEqual(["default", "edge", "schw", "zoom-pole", "zoom-pole-far", "zoom-pole-hit", "zoom-ring"]);
     expect(IMAGE_VIEWS.filter((v) => v.fov < 14).every((v) => v.fov === 14 / 16)).toBe(true);
   });
 });

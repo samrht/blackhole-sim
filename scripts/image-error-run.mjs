@@ -8,7 +8,7 @@ const dir = `docs/diagnostics/2026-11-06-accuracy-limit/image/${view}`;
 mkdirSync(dir, { recursive: true });
 const browser = await chromium.launch({ channel: "chrome", headless: true, args: ["--enable-unsafe-webgpu", "--enable-features=Vulkan", "--ignore-gpu-blocklist", "--force_high_performance_gpu"] });
 const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
-page.on("console", (m) => { const t = m.text(); if (/^(reference|arm )/.test(t)) console.log(`  ${view}: ${t.slice(0, 200)}`); else if (m.type() === "error" && !/404/.test(t)) console.log("[error]", t.slice(0, 700)); });
+page.on("console", (m) => { const t = m.text(); if (/^(reference|arm )/.test(t)) console.log(`  ${view}: ${t.slice(0, 200)}`); else if ((m.type() === "error" || m.type() === "warning") && !/404/.test(t)) console.log(`[${m.type()}]`, t.slice(0, 700)); });
 page.on("pageerror", (e) => console.log("PAGEERROR", e.message.slice(0, 700)));
 const t0 = Date.now();
 await page.goto(`http://localhost:5173/?imgerr&view=${view}`);

@@ -18,7 +18,7 @@ Going from 3rd to 5th order, in the same equations, lowers the wall only about 2
 
 **The exception is rays passing almost over the pole.** They reach whole-pixel errors at the shipped tolerance. Most of that is truncation; the wildest tail is rounding.
 
-**In absolute terms the ordinary error is tiny:** at the shipped tolerance the 99th percentile is 5e-4 to 9e-3 of a 720p pixel, depending on the view and ray type.
+**In absolute terms the ordinary error is tiny:** at the shipped tolerance the 99th percentile is 5e-4 to 9e-3 of a 720p pixel, depending on the view and ray type, and at most 0.56 % of displayed pixels change, nearly all by one level of 255 (section 9).
 
 ## Method
 
@@ -121,7 +121,7 @@ Near-axis rays (|alpha| < 0.03) at the shipped tolerance, p99 / max px:
 
 The 1 to 6 px errors appear with the noise floor alone, so they are truncation. The extreme tail (13 and 80 px at a = 0, 69 px at a = 0.998 with no disk) disappears under compensation, so that part is rounding. The damage is concentrated at |alpha| < 1e-3.
 
-- **Reach in the app:** at 1x zoom the nearest jittered ray to the axis is |alpha| = 4.9e-3 M, outside the worst band, so this should not be visible by default. At 16x zoom that distance falls to 3e-4 M, inside it, and a 1x pixel is 16 zoomed pixels. This is a prediction from the numbers; **it has not been looked for on screen.**
+- **Reach in the app:** at 1x zoom the nearest jittered ray to the axis is |alpha| = 4.9e-3 M, outside the worst band, so this should not be visible by default. At 16x zoom that distance falls to 3e-4 M, inside it, and a 1x pixel is 16 zoomed pixels. Section 9 looks for it on screen: the column is there, but only 2 levels of 255.
 - **Reliability:** the largest values are not trustworthy as pixel figures. The check that the Jacobian holds fails for the 80 px and 69 px rays, so those are only "large", and they differ between GPUs (80 px vs 13 px maximum). The a = 0.998 disk rays above 3 px pass it (worst ratio 0.35).
 
 ### 7. Options for the renderer, none applied
@@ -166,11 +166,53 @@ So double-single costs 25x to 85x plain f32, while compensation stays within abo
 
 The arithmetic is checked on the GPU against exact values: every operation within 0.7 units of 2^-44 over 4,096 operand pairs.
 
+### 9. Does any of this reach the image?
+
+Mostly not. For each arm, every pixel of a 1280 x 720 frame is traced and the results are written into the renderer's cache entries. The renderer's own shade and present passes then make the picture, with turbulence, hot spots, stars and light delay, so arms differ in geometry alone. The reference is double-single at tol 1e-9, stored in f32 as the renderer stores everything. Bloom and the jet are off, and each image is one jitter set with no accumulation.
+
+**The shipped renderer against the reference.** Levels are of 255, on the largest colour channel. Flux and disk pixel errors are relative.
+
+| View | Pixels off by 1+ levels | 2+ | 5+ | Largest | PSNR (dB) | Total flux | Median disk pixel |
+|---|---|---|---|---|---|---|---|
+| a = 0.9, i = 72 | 1,743 (0.19 %) | 4 | 1 | 6 | 79.7 | 7.7e-7 | 5.8e-6 |
+| a = 0.998, i = 85 | 2,587 (0.28 %) | 8 | 2 | 74 | 68.1 | 4.4e-6 | 2.1e-5 |
+| a = 0, i = 30 | 336 (0.04 %) | 11 | 0 | 3 | 85.5 | 8.3e-8 | 1.8e-6 |
+| 16x, a = 0.9, inner disk | 1,049 (0.11 %) | 0 | 0 | 1 | 82.3 | 6.3e-7 | 4.2e-6 |
+| 16x, a = 0.998, axis at beta = 4.7 | 1,116 (0.12 %) | 0 | 0 | 1 | 82.1 | 4.4e-7 | 4.8e-6 |
+| 16x, a = 0.998, axis at beta = -9.8 | 5,092 (0.55 %) | 0 | 0 | 1 | 75.5 | 4.5e-6 | 3.4e-5 |
+| same, a column on the worst ray | 5,162 (0.56 %) | 4 | 0 | 2 | 75.4 | 4.6e-6 | 3.4e-5 |
+
+Pixels off by one level or more, per arm:
+
+| Arm | default | edge | schw | zoom-ring | zoom-pole | zoom-pole-far | zoom-pole-hit |
+|---|---|---|---|---|---|---|---|
+| Same f32 algorithm, two shaders (noise floor) | 417 | 653 | 135 | 147 | 208 | 807 | 836 |
+| f32, tol 1e-5 (shipped) | 1,743 | 2,587 | 336 | 1,049 | 1,116 | 5,092 | 5,162 |
+| f32, tol 1e-6 | 920 | 1,300 | 180 | 548 | 693 | 2,968 | 2,998 |
+| f32, tol 1e-7 | 903 | 1,206 | 178 | 488 | 790 | 2,642 | 2,753 |
+| Compensated, tol 1e-6 | 668 | 852 | 126 | 441 | 428 | 2,471 | 2,549 |
+| Compensated, tol 1e-7 | 489 | 648 | 80 | 343 | 319 | 729 | 751 |
+| Double-single, tol 1e-5 | 158 | 206 | 31 | 141 | 248 | 258 | 237 |
+| Double-single, tol 1e-7 | 5 | 3 | 0 | 4 | 6 | 2 | 4 |
+| RK4, pre-Mino | 88,669 | 53,422 | 15,527 | 33,775 | 40,159 | 160,979 | 160,646 |
+
+- **The error is real but small on screen.** At the shipped tolerance 0.04 % to 0.56 % of pixels move by one level, and at most 11 move by two or more. Total flux agrees to better than 5e-6.
+- **The test can see larger errors.** The old RK4 renderer moves 1.7 % to 17.5 % of pixels, up to 238 levels. Its linear disk landing shows up in the image as well as in section 5.
+- **The f32 arms are close to the noise floor.** The same f32 algorithm in two compiled shaders already differs on 135 to 836 pixels, depending on the view. The shipped arm is 2.5x to 7x above that floor, so small differences between f32 arms should not be over-read.
+- **Double-single at tol 1e-7 reproduces the reference** to at most 6 pixels by one level.
+- **Tightening helps in proportion.** Tol 1e-6 about halves the count, and compensation at tol 1e-7 lowers it further, but these are one-level changes.
+- **The largest values are isolated pixels.** The default view's 101-level "same algorithm" pixel is a single fate flip. At a = 0.998 only two shipped pixels move by 5 levels or more, the largest by 74; they are sky pixels, probably stars (not checked individually).
+
+**The near-pole column is real but barely visible.** With a pixel column placed on the worst ray of section 6, that column has the most differing pixels in the frame (26 of 720, against a mean of 4 per column) and the largest difference, one pixel off by 4.9 % in brightness. That is 2 levels of 255. The prediction of a visible column did not hold in this view. A likely reason is that the emission varies slowly over a shift of that size, which was not tested.
+
+**Limits of this test:** visible band only; no jet and no 1.3 mm hot flow, which integrates along the whole ray and could respond differently; RTX only; one time per view; 8-bit display after tone mapping. A brighter or finer emitter would respond more.
+
+**The controls matter.** The first version of this route wrote entries to a buffer that does not accept writes, so every arm silently rendered the same image, and only a black reference frame gave it away. The route now reads every injection back and requires an exact match, stops if a render is black, and stops on any validation error. The reference agrees with f64 at tol 1e-11 on 3,000 sampled pixels per view (no fate mismatches; largest relative r difference 1.1e-9).
+
 ## Open questions
 
 - **Why the two GPUs differ on compensated sky rays** (1.9e-4 against 1.0e-4). The direction calculation is the next limit there, and its built-in sin and cos are the obvious candidate, not proven.
 - **Why a lower order raises the wall.** Between methods the wall ratio matches the square root of the step ratio (2.3x to 2.5x against 2.4x to 2.8x), which suggests a random walk in the store. But within a method the wall stays flat as steps grow (DP5 36 to 55 steps, BS3 202 to 437 at a = 0.998), so that cannot be the whole story.
-- **Whether the near-pole column is visible** at 16x zoom.
 
 ## Corrections to earlier versions of this note
 
@@ -181,7 +223,7 @@ The arithmetic is checked on the GPU against exact values: every operation withi
 ## Limits
 
 - Four views, 4,304 rays each, two GPUs. DP5 medians on ordinary rays agree between GPUs to about 1.4x, except compensated no-disk sky rays (1.9x). Sky-ray p99s as rendered differ by up to 5x (a = 0, 4.2e-3 against 2.1e-2). Near-axis maxima do not agree.
-- Geometry only. A displacement is not a colour error; emission gradients decide what it does to a pixel.
+- Sections 1 to 8 are geometry only: a displacement is not a colour error. Section 9 tests the colour error, in the visible band.
 - f32 RK4 uses the shipped monitor at every step scale, f64 RK4 a monitor tightened with the step. A tightened monitor in f32 sits below rounding noise and only rejects, so that run was discarded.
 - The CPU switches model arithmetic in f32 but keep the controller's own norm and the landing iteration in f64.
 - Pixel-coordinate rounding is excluded by design. It adds to the f32 arms in the real renderer.
@@ -204,6 +246,7 @@ npx vite                                          # dev server for the GPU arms
 node scripts/limit-run.mjs edge-998               # add "igpu" for the integrated GPU: about 20 s each
 node scripts/limit-ds-run.mjs edge-998            # double-single: about 3 to 5 min each, adds to results/
 node scripts/limit-plot.mjs                       # redraws limit-cost.svg
+node scripts/image-error-run.mjs default          # the image test, about 2 min per view: default edge schw zoom-ring zoom-pole zoom-pole-far zoom-pole-hit
 ```
 
 `results/` holds every arm's statistics and the per-ray near-axis scan. `data/` (rays, references, Jacobians) is regenerated by the first two commands and not committed.
