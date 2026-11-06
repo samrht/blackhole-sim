@@ -1,6 +1,6 @@
 # What limits accuracy on a GPU ray tracer: f32 rounding or integrator order? (2026-11-06)
 
-Follow-up to `../2026-11-06-conserved-drift/`, which found that conserved-quantity drift is mostly f32 evaluation error and a coordinate factor. This experiment scores what a ray actually delivers instead: where it lands on screen.
+Follow-up to `../2026-11-06-conserved-drift/`, which found that conserved-quantity drift is mostly f32 evaluation error, amplified near the horizon because a fixed error in Boyer-Lindquist variables corresponds to a large H there. This experiment scores what a ray actually delivers instead: where it lands on screen.
 
 ![Median on-screen error against force evaluations](limit-cost.svg)
 
