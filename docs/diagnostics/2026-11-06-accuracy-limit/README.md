@@ -137,6 +137,35 @@ Median gain against what ships, and extra attempts:
 
 Only tol 1e-7 cures the near-pole rays, and they are one pixel column at most.
 
+### 8. Double-single: "why not just emulate f64?"
+
+Every quantity as a pair of f32 (about 48 bits): state, stage sums, force, drift check and landing, with the step size in double-single too. It runs on the same f32 GPU hardware, through WGSL with no 64-bit type.
+
+Median px, with attempts per ray in brackets, a = 0.998 disk rays:
+
+| Tolerance | 1e-3 | 1e-4 | 1e-5 | 1e-6 | 1e-7 | 1e-8 | 1e-9 |
+|---|---|---|---|---|---|---|---|
+| f64 | 1.4e-3 (27) | 1.6e-4 (33) | 2.1e-5 (43) | 2.9e-6 (57) | 5.1e-7 (74) | 5.6e-8 (94) | 5.6e-9 (130) |
+| Double-single | 1.4e-3 (27) | 1.6e-4 (33) | 2.1e-5 (43) | 2.9e-6 (57) | 5.1e-7 (74) | 5.5e-8 (94) | 5.6e-9 (130) |
+| Double-single, stored in f32 | 1.4e-3 | 1.7e-4 | 4.9e-5 | 4.4e-5 | 4.4e-5 | 4.4e-5 | 4.4e-5 |
+
+- **It reproduces f64 to the limit of the test,** in all four views: the same attempts per ray (one differs by 1, at a = 0.9, tol 1e-9) and the same errors. Near-pole rays match f64 too (a = 0.998 at tol 1e-5: 0.88 / 1.0 px on both).
+- **This independently confirms section 2.** With the noise floor gone, the controller takes f64's steps, not f32's.
+- **But the renderer shades from f32.** Storing the result in f32 sets a new floor: 4.4e-5, 4.6e-6, 9.7e-6 and 1.5e-5 px across the views. Double-single at the shipped tolerance, stored in f32, beats shipped f32 by 8x to 20x.
+
+Cost, microseconds per ray on the RTX, from a 64,000-ray batch (16,000 for double-single, scaled), best of 3, in large batches so queue overhead does not dominate:
+
+| View | Plain, 1e-5 | Compensated, 1e-5 | Double-single, 1e-5 | DS / plain | Plain, 1e-7 | Compensated, 1e-7 | Double-single, 1e-7 | DS / plain |
+|---|---|---|---|---|---|---|---|---|
+| a = 0.998 disk | 0.38 | 0.40 | 10.0 | 26x | 0.58 | 0.62 | 14.4 | 25x |
+| a = 0.998 no disk | 0.44 | 0.41 | 24.2 | 55x | 1.05 | 1.16 | 38.6 | 37x |
+| a = 0.9 disk | 0.43 | 0.42 | 10.8 | 25x | 0.42 | 0.40 | 16.4 | 39x |
+| a = 0 disk | 0.43 | 0.42 | 19.8 | 46x | 0.38 | 0.41 | 32.4 | 85x |
+
+So double-single costs 25x to 85x plain f32, while compensation stays within about 10 % (in both directions, so that is near this test's noise). These are kernels on the same rays, not frames of the renderer. The iGPU repeats were stopped by low memory and did not finish, so these timings and the double-single accuracy numbers are RTX only.
+
+The arithmetic is checked on the GPU against exact values: every operation within 0.7 units of 2^-44 over 4,096 operand pairs.
+
 ## Open questions
 
 - **Why the two GPUs differ on compensated sky rays** (1.9e-4 against 1.0e-4). The direction calculation is the next limit there, and its built-in sin and cos are the obvious candidate, not proven.
@@ -164,7 +193,7 @@ Only tol 1e-7 cures the near-pole rays, and they are one pixel column at most.
 - **Rounding model:** everything on reproduces the GPU (table in section 3).
 - **Method order** (`tests/mino-order.test.ts`): measured local error goes as h^4 for BS3 and h^6 for DP5, and the default stays bit-identical to DP5.
 - **Fate flips,** DP5 f32: 0 of 4,304 at the shipped tolerance on both GPUs in all four views; at most 2 at tighter tolerances. Compensated: at most 1 at any tolerance.
-- **Renderer untouched:** every renderer shader and `gpu.ts` byte-identical to main; `?golden` PASS, 8 of 8 on the recording adapter; 10 of 10 app checks on the normal page. `npm test`: 318 passed, 14 skipped. `setMinoMethod`, `setMinoRounding` and `minoTraceRay` are CPU-only and off by default.
+- **Renderer untouched:** every renderer shader and `gpu.ts` byte-identical to main; `?golden` PASS, 8 of 8 on the recording adapter; 10 of 10 app checks on the normal page. `npm test`: 318 passed, 14 skipped (before the double-single section). `setMinoMethod`, `setMinoRounding` and `minoTraceRay` are CPU-only and off by default.
 
 ## Re-run
 
@@ -173,6 +202,7 @@ npx vite-node scripts/limit-cpu.ts edge-998       # also edge-998-nodisk, defaul
 npx vite-node scripts/limit-eps.ts edge-998       # the noise-floor arm, seconds; adds to data/
 npx vite                                          # dev server for the GPU arms
 node scripts/limit-run.mjs edge-998               # add "igpu" for the integrated GPU: about 20 s each
+node scripts/limit-ds-run.mjs edge-998            # double-single: about 3 to 5 min each, adds to results/
 node scripts/limit-plot.mjs                       # redraws limit-cost.svg
 ```
 

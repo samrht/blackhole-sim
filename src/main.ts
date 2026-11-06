@@ -20,7 +20,16 @@ import { HOTSPOT, hotspotAliveWindow } from "./physics/hotspot";
 
 const canvas = document.getElementById("c") as HTMLCanvasElement;
 
-if (location.search.includes("limit")) {
+if (location.search.includes("imgerr")) {
+  // Debug toggle: does the accuracy limit reach the image? (test/image-error.browser.ts) The normal page never loads it.
+  const { runImageError } = await import("./test/image-error.browser");
+  try { Object.assign(window, { __imgerr: await runImageError(canvas) }); } catch (e) { Object.assign(window, { __imgerrError: String(e) }); throw e; }
+} else if (location.search.includes("limitds")) {
+  // Debug toggle: the double-single baseline of the accuracy-limit experiment (test/limit-ds.browser.ts). Its own compute module.
+  const { runLimitDs } = await import("./test/limit-ds.browser");
+  try { Object.assign(window, { __limitDs: await runLimitDs() }); } catch (e) { Object.assign(window, { __limitDsError: String(e) }); throw e; }
+  document.body.innerHTML = `<pre style="padding:20px">LIMITDS done: see scripts/limit-ds-run.mjs</pre>`;
+} else if (location.search.includes("limit")) {
   // Debug toggle: the GPU arms of the accuracy-limit experiment (test/limit.browser.ts). Its own compute module; the normal page never loads it.
   const { runLimit } = await import("./test/limit.browser");
   try { Object.assign(window, { __limit: await runLimit() }); } catch (e) { Object.assign(window, { __limitError: String(e) }); throw e; }
