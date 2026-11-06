@@ -18,7 +18,7 @@ Going from 3rd to 5th order, in the same equations, lowers the wall only about 2
 
 **The exception is rays passing almost over the pole.** They reach whole-pixel errors at the shipped tolerance. Most of that is truncation; the wildest tail is rounding.
 
-**In absolute terms the ordinary error is tiny:** at the shipped tolerance the 99th percentile is 5e-4 to 9e-3 of a 720p pixel, depending on the view and ray type, and at most 0.56 % of displayed pixels change, nearly all by one level of 255 (section 9).
+**In absolute terms the ordinary error is tiny:** at the shipped tolerance the 99th percentile is 5e-4 to 9e-3 of a 720p pixel, depending on the view and ray type, and at most 0.56 % of displayed pixels change, nearly all by one level of 255 (section 9). At 1.3 mm the integrator barely matters and the quadrature along the ray is the limit (section 10).
 
 ## Method
 
@@ -209,6 +209,44 @@ Pixels off by one level or more, per arm:
 
 **The controls matter.** The first version of this route wrote entries to a buffer that does not accept writes, so every arm silently rendered the same image, and only a black reference frame gave it away. The route now reads every injection back and requires an exact match, stops if a render is black, and stops on any validation error. The reference agrees with f64 at tol 1e-11 on 3,000 sampled pixels per view (no fate mismatches; largest relative r difference 1.1e-9).
 
+### 10. The 1.3 mm hot flow: the limit is somewhere else
+
+The flow is integrated along the whole ray, so it cannot be coloured from end points. Each arm runs the renderer's own flow loop on a 512 x 512 frame with only the integrator changed: the shipped code at each tolerance, compensated, or a double-single path handed to the same f32 emission. The reference is the double-single path at tol 1e-9. It gives M87* 0.503 Jy and a 41.8 uas ring (shipped gate value 41.8), and Sgr A* 2.445 Jy and 57.2 uas. Steady flow, one jitter set, no hot spots.
+
+Changes against that reference:
+
+| Arm | M87* ring change (uas) | M87* flux | M87* pixels off by 1+, 5+ levels | Sgr A* ring change (uas) | Sgr A* flux | Sgr A* pixels off by 1+, 5+ levels |
+|---|---|---|---|---|---|---|
+| f32 1e-3 (deliberately loose) | 1.9e-3 | 2.2e-5 | 17,453, 153 | 1.9e-3 | 1.8e-5 | 10,771, 1 |
+| f32 1e-5 (shipped) | 1.7e-5 | 4.6e-5 | 17,217, 141 | 7.8e-3 | 7.2e-6 | 10,195, 4 |
+| f32 1e-6 | 2.9e-3 | 9.1e-5 | 17,196, 142 | 2.0e-5 | 2.4e-5 | 9,539, 6 |
+| f32 1e-7 | 1.8e-3 | 1.5e-4 | 17,217, 101 | 8.9e-4 | 2.2e-5 | 9,396, 1 |
+| compensated 1e-5 | 3.5e-5 | 3.9e-5 | 17,015, 147 | 7.6e-3 | 5.6e-6 | 10,186, 0 |
+| compensated 1e-7 | 1.9e-3 | 1.6e-4 | 17,158, 101 | 8.6e-4 | 2.1e-5 | 9,392, 3 |
+| double-single path 1e-5 | 3.2e-3 | 8.3e-5 | 16,964, 149 | 5.1e-3 | 2.3e-5 | 9,838, 6 |
+| double-single path 1e-7 | 8.6e-4 | 5.5e-5 | 12,095, 30 | 8.0e-3 | 8.8e-6 | 5,909, 1 |
+| quadrature step x2, f32 1e-5 | 2.5e-3 | 4.0e-4 | 31,137, 4,075 | 3.6e-2 | 1.7e-4 | 16,794, 680 |
+| quadrature step /4, double-single 1e-9 | 4.3e-4 | 7.2e-6 | 7,390, 1 | 3.6e-4 | 2.2e-5 | 6,943, 0 |
+
+- **The science numbers do not notice the integrator.** Across all integrator arms the ring moves by at most 0.003 uas for M87* and 0.008 uas for Sgr A*, against the EHT's +-3 uas for M87*. Flux moves by at most 1.6e-4.
+- **Neither tolerance nor compensation changes the pixel count.** M87* stays near 17,000 pixels from tol 1e-3 to 1e-7. So neither the f32 wall nor the drift-check effect is what these pixels show.
+- **The quadrature is what moves it.** Doubling the step along the ray raises M87*'s pixels off by 5+ levels from 141 to 4,075. A better path changes them less: the double-single path at tol 1e-7 still has 12,095 and 30.
+- **These counts are sensitivity, not true error.** The reference has the same quadrature with different step boundaries, so they partly measure where the samples fall. Refining the reference's quadrature by 4x already changes 7,390 M87* pixels by one level.
+
+Against the independent f64 `flowReference` on 150 bright rays per object (1 and 17 of them not converged in that code, and kept):
+
+| Arm, \|I / I_ref - 1\| | M87* median | M87* p99 | Sgr A* median | Sgr A* p99 |
+|---|---|---|---|---|
+| Double-single path, tol 1e-9 | 1.8e-4 | 1.8e-3 | 1.3e-4 | 2.5e-3 |
+| Shipped | 1.5e-4 | 2.3e-2 | 7.5e-5 | 1.8e-3 |
+| Double-single path, tol 1e-7 | 2.2e-4 | 3.6e-3 | 1.3e-4 | 1.1e-3 |
+
+A nearly exact path with f32 emission and the renderer's quadrature is no better at the median than shipped (about 1e-4), so what limits the median is not the path. This test does not separate the quadrature from f32 emission. M87*'s p99 is the one place the path shows: 2.3e-2 shipped against 1.8e-3 with the double-single path, on the worst 1 or 2 rays of 150, too few to characterise.
+
+**Controls:** this route's pipeline against the renderer's own build pass, same source: identical on all 262,144 pixels in both objects. Compensation switched off reproduces shipped exactly. No validation errors.
+
+**Limits:** RTX only; steady flow without hot spots; the scalar flow on this branch, not the polarized transfer on `feat/polarized-mm`.
+
 ## Open questions
 
 - **Why the two GPUs differ on compensated sky rays** (1.9e-4 against 1.0e-4). The direction calculation is the next limit there, and its built-in sin and cos are the obvious candidate, not proven.
@@ -246,6 +284,7 @@ npx vite                                          # dev server for the GPU arms
 node scripts/limit-run.mjs edge-998               # add "igpu" for the integrated GPU: about 20 s each
 node scripts/limit-ds-run.mjs edge-998            # double-single: about 3 to 5 min each, adds to results/
 node scripts/limit-plot.mjs                       # redraws limit-cost.svg
+node scripts/flow-error-run.mjs m87               # the 1.3 mm test, about 2 min each: m87 sgra
 node scripts/image-error-run.mjs default          # the image test, about 2 min per view: default edge schw zoom-ring zoom-pole zoom-pole-far zoom-pole-hit
 ```
 

@@ -20,7 +20,11 @@ import { HOTSPOT, hotspotAliveWindow } from "./physics/hotspot";
 
 const canvas = document.getElementById("c") as HTMLCanvasElement;
 
-if (location.search.includes("imgerr")) {
+if (location.search.includes("imgflow")) {
+  // Debug toggle: does the accuracy limit reach the 1.3 mm image? (test/flow-error.browser.ts) The normal page never loads it.
+  const { runFlowError } = await import("./test/flow-error.browser");
+  try { Object.assign(window, { __imgflow: await runFlowError(canvas) }); } catch (e) { Object.assign(window, { __imgflowError: String(e) }); throw e; }
+} else if (location.search.includes("imgerr")) {
   // Debug toggle: does the accuracy limit reach the image? (test/image-error.browser.ts) The normal page never loads it.
   const { runImageError } = await import("./test/image-error.browser");
   try { Object.assign(window, { __imgerr: await runImageError(canvas) }); } catch (e) { Object.assign(window, { __imgerrError: String(e) }); throw e; }

@@ -15,7 +15,7 @@ interface Data { config: LimitConfig; rIn: number; rOut: number; rays: [number, 
 const WORDS = 18, FATE: Obs["f"][] = ["captured", "disk", "escaped"], DS_COST_RAYS = 16000;
 export const DS_TOLS = [1e-3, 1e-4, 1e-5, 1e-6, 1e-7, 1e-8, 1e-9];
 // The DP5(4) tableau, in double-single (trace-mino.ts A and E).
-const TABLEAU: Record<string, number> = { K_A21: 1 / 5, K_A31: 3 / 40, K_A32: 9 / 40, K_A41: 44 / 45, K_A42: -56 / 15, K_A43: 32 / 9,
+export const TABLEAU: Record<string, number> = { K_A21: 1 / 5, K_A31: 3 / 40, K_A32: 9 / 40, K_A41: 44 / 45, K_A42: -56 / 15, K_A43: 32 / 9,
   K_A51: 19372 / 6561, K_A52: -25360 / 2187, K_A53: 64448 / 6561, K_A54: -212 / 729,
   K_A61: 9017 / 3168, K_A62: -355 / 33, K_A63: 46732 / 5247, K_A64: 49 / 176, K_A65: -5103 / 18656,
   K_B1: 35 / 384, K_B3: 500 / 1113, K_B4: 125 / 192, K_B5: -2187 / 6784, K_B6: 11 / 84,
