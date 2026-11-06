@@ -2,7 +2,7 @@
 //   npx vite-node scripts/limit-cpu.ts <config>     (one config per process; run them side by side)
 // Output: docs/diagnostics/2026-11-06-accuracy-limit/data/<config>.json. The GPU arms read the rays from it (src/test/limit.browser.ts).
 import { mkdirSync, writeFileSync } from "node:fs";
-import { minoRay, minoTrace, minoTraceRay, setMinoMethod } from "../src/physics/trace-mino";
+import { minoRay, minoRayF32, minoTrace, minoTraceRay, setMinoMethod, setMinoRounding, type MinoRounding } from "../src/physics/trace-mino";
 import { convergedRef, refTrace, skyDirCPU, SHIP, REF_ROBS, type RefCfg } from "../src/physics/trace-reference";
 import { screenToState } from "../src/physics/camera";
 import { iscoRadius } from "../src/physics/orbits";
@@ -87,6 +87,18 @@ arms["mino f64, f32 inputs"] = score((al, be) => {
 log("f32 inputs");
 // A nearly exact result merely stored in f32: what the output format alone costs.
 arms["mino f64 1e-9, f32 output"] = score((al, be) => roundObs(ref(al, be, 1e-9)));
+// Rounding switches: f32 rounding on in one place at a time. "no store" (force and increments in f32, the state exact) is what perfect
+// compensated summation could reach. "everything" adds the ray constants and output, and must reproduce the GPU or the split means nothing.
+const LAB: [string, MinoRounding][] = [["force", { rhs: true }], ["increment", { incr: true }], ["store", { store: true }], ["pi", { pi: true }], ["no store", { rhs: true, incr: true }], ["no force", { incr: true, store: true, pi: true }], ["engine", { rhs: true, incr: true, store: true, pi: true }]];
+for (const tol of [1e-5, 1e-7]) {
+  for (const [n, r] of LAB) { setMinoRounding(r); arms[`lab ${n} ${tol}`] = score((al, be) => fromMino(minoTrace(al, be, a, inclDeg, opts(tol)))); }
+  setMinoRounding({ rhs: true, incr: true, store: true, pi: true });
+  arms[`lab everything ${tol}`] = score((al, be) => {
+    const q = f32Inputs(al, be, a, incl), m = minoTraceRay(minoRayF32(q.a, q.xi, q.eta, REF_ROBS), q.incl, q.beta, opts(tol));
+    return roundObs({ f: m.fate as Obs["f"], r: m.rHit, p: m.phiHit, t: m.tHit, dir: m.fate === "escaped" ? skyDirCPU(m.s, q.a) : undefined, steps: m.steps, attempts: m.attempts });
+  });
+  setMinoRounding(); log(`rounding switches at ${tol}`);
+}
 // The clean order test: the same equations, error norm and landing, at 3rd order.
 setMinoMethod("bs3");
 for (const tol of BS3_TOLS) { arms[`bs3 f64 ${tol}`] = score((al, be) => fromMino(minoTrace(al, be, a, inclDeg, { ...opts(tol), maxSteps: BS3_BUDGET }))); log(`bs3 f64 ${tol}`); }

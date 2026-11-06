@@ -30,6 +30,7 @@
 // l = ell + r0 - w'/w exactly (minoL; differences: minoDl).
 // WGSL twin: the Mino block of integrator-shared.wgsl (with camera-shared.wgsl's precise sinCosP).
 import type { Fate } from "./trace";
+import { sinCosP } from "../render/sincos";
 
 export const MINO_TOL = 1e-5;     // DP5(4) error-norm tolerance, set by tests/sweep-mino.test.ts (SWEEP=1)
 export const MINO_UFRAC = 0.25;   // step <= MINO_UFRAC x the polar-oscillation half-period bound (no hidden double crossing)
@@ -75,10 +76,46 @@ export function minoInit(r0: number, th0: number, beta: number, c: MinoRay): Flo
 /** Mirror a state that is past the equator into the other hemisphere's frame (identity otherwise); exact. */
 // threshold = the f32 value of pi / 2 (the WGSL's 0.5 * PI), so both twins mirror the same f32 state; either frame is exact
 const MINO_HALF_PI = Math.fround(Math.PI / 2);
+// Rounding switches for the ?limit diagnostic: f32 rounding turned on in one place at a time, to measure which of them sets the
+// f32 accuracy wall. All off by default, where each is the identity and the trace is bit-identical. Nothing ships them.
+// eps alone: exact arithmetic, but the drift check's rounding-noise floor at f32's epsilon, as the GPU has it.
+export interface MinoRounding { rhs?: boolean; incr?: boolean; store?: boolean; pi?: boolean; eps?: boolean }
+const same = (v: number) => v;
+let rndIncr = same, rndStore = same, mirrorPi = Math.PI, forceF32 = false, labEps = 0;
+export function setMinoRounding(r: MinoRounding = {}): void {
+  rndIncr = r.incr ? Math.fround : same; rndStore = r.store ? Math.fround : same; mirrorPi = r.pi ? Math.fround(Math.PI) : Math.PI;
+  forceF32 = !!r.rhs; labEps = r.rhs || r.incr || r.store || r.eps ? 1.1920929e-7 : 0;
+}
 export function minoHemi(y: Float64Array): Float64Array {
   if (y[2] <= MINO_HALF_PI) return y;
-  const o = y.slice(); o[2] = Math.PI - y[2]; o[6] = -y[6]; o[7] = -y[7]; return o;
+  const o = y.slice(); o[2] = rndStore(mirrorPi - y[2]); o[6] = -y[6]; o[7] = -y[7]; return o;
 }
+/** minoRay in f32, op by op, as the WGSL minoRay computes it. */
+export function minoRayF32(a: number, xi: number, eta: number, r0: number): MinoRay {
+  const F = Math.fround, a2 = F(a * a), a4 = F(a2 * a2), xma = F(xi - a), K = F(eta + F(xma * xma)), A1 = F(a2 - F(a * xi)), A12 = F(A1 * A1);
+  const om2 = F(Math.max(0, F(F(eta + F(xi * xi)) - a2)) + F(6 * a2));
+  const tp = [F(F(A1 - K) - 4), F(F(2 * K) + F(2 * a2)), F(F(F(F(A12 + F(A1 * a2)) - F(8 * A1)) - F(F(2 * K) * a2)) + F(4 * K)), F(F(F(4 * A1) * a2) - F(8 * K)),
+    F(F(F(F(A12 * a2) - F(4 * A12)) - F(K * a4)) + F(F(F(8 * K) * a2))), F(F(F(F(2 * A12) * a2)) - F(F(2 * K) * a4))];
+  return { a, xi, eta, K, A1, omMax: F(Math.sqrt(om2)), r0, tp, c2: F(F(2 * A1) - K), c3: F(2 * K), c4: F(A12 - F(K * a2)) };
+}
+/** minoRhs in f32, op by op: the state is taken as f32 and every operation rounds, as the WGSL minoRhs (with sinCosP). */
+export function minoRhsF32(y: Float64Array, c: MinoRay): Float64Array {
+  const F = Math.fround, w = F(y[1]), a = F(c.a), xi = F(c.xi), a2 = F(a * a), w2 = F(w * w), [s, co] = sinCosP(F(y[2]), true), s2 = Math.max(F(s * s), 1e-30);
+  const A1 = F(c.A1), K = F(c.K), c3 = F(c.c3), c4 = F(c.c4), tp = c.tp.map(F);
+  const Q = F(1 + F(A1 * w2)), Dw = F(F(1 - F(2 * w)) + F(a2 * w2));
+  const P = F(tp[0] + F(w * F(tp[1] + F(w * F(tp[2] + F(w * F(tp[3] + F(w * F(tp[4] + F(w * tp[5]))))))))));
+  const rp = F(F(c.c2) + F(w * F(F(1.5 * c3) + F(w * F(2 * c4)))));
+  return new Float64Array([
+    F(F(F(P / Dw) + F(rp * F(F(F(2 * w) * F(Math.log(w))) - 1))) - F(a * F(xi - F(a * s2)))),
+    F(y[5]), F(y[6]),
+    F(-F(F(F(F(a * Q) / Dw) - a) + F(xi / s2))),
+    F(F(F(a2 * co) * co) + F(w * F(F(0.5 * c3) + F(w * c4)))),
+    F(F(F(F(2 * A1) * w) * Q) - F(K * F(F(w - F(3 * w2)) + F(F(F(2 * a2) * w2) * w)))),
+    F(co * F(F(F(xi * xi) / F(s2 * s)) - F(a2 * s))),
+    0,
+  ]);
+}
+const force = (y: Float64Array, c: MinoRay) => (forceF32 ? minoRhsF32(y, c) : minoRhs(y, c));
 export function minoRhs(y: Float64Array, c: MinoRay): Float64Array {
   const w = y[1], a = c.a, xi = c.xi, a2 = a * a, w2 = w * w;
   const s = Math.sin(y[2]), co = Math.cos(y[2]), s2 = Math.max(s * s, 1e-30);
@@ -151,13 +188,13 @@ export function minoTry(y: Float64Array, h: number, c: MinoRay, f0: Float64Array
   const k: Float64Array[] = [f0], T = tableau.A, S = T.length, B = S - 1;
   for (let s = 1; s < S; s++) {
     const ys = y.slice();
-    for (let j = 0; j < 7; j++) { let acc = 0; for (let q = 0; q < s; q++) acc += T[s][q] * k[q][j]; ys[j] = y[j] + h * acc; }
-    k.push(minoRhs(ys, c));
+    for (let j = 0; j < 7; j++) { let acc = 0; for (let q = 0; q < s; q++) acc = rndIncr(acc + rndIncr(rndIncr(T[s][q]) * k[q][j])); ys[j] = rndStore(y[j] + rndIncr(rndIncr(h) * acc)); }
+    k.push(force(ys, c));
   }
   // the last row of A is the high-order solution, so the last stage's argument IS y1 and its derivative = f(y1) (FSAL)
-  const y1 = y.slice(); for (let j = 0; j < 7; j++) { let acc = 0; for (let q = 0; q < B; q++) acc += T[B][q] * k[q][j]; y1[j] = y[j] + h * acc; }
-  const err = new Float64Array(7); for (let j = 0; j < 7; j++) { let acc = 0; for (let q = 0; q < S; q++) acc += tableau.E[q] * k[q][j]; err[j] = h * acc; }
-  const d = minoDrift(y, y1, c, k[B], eps);
+  const y1 = y.slice(); for (let j = 0; j < 7; j++) { let acc = 0; for (let q = 0; q < B; q++) acc = rndIncr(acc + rndIncr(rndIncr(T[B][q]) * k[q][j])); y1[j] = rndStore(y[j] + rndIncr(rndIncr(h) * acc)); }
+  const err = new Float64Array(7); for (let j = 0; j < 7; j++) { let acc = 0; for (let q = 0; q < S; q++) acc = rndIncr(acc + rndIncr(rndIncr(tableau.E[q]) * k[q][j])); err[j] = rndIncr(rndIncr(h) * acc); }
+  const d = minoDrift(y, y1, c, k[B], labEps || eps);
   const ec = Math.max(d[0] / Math.max(ctol * tol * d[1], d[2]), d[3] / Math.max(ctol * tol * d[4], d[5]));
   // w <= 0 (r beyond infinity) is outside the domain: rejected explicitly (en Infinity -> factor 0.2). tau' takes ln w, so
   // f64 already gave NaN there; WGSL's log of a negative is indeterminate (finite on Intel), and the GPU accepted steps
@@ -171,7 +208,7 @@ export function minoStep(y: Float64Array, h0: number, c: MinoRay, tol = MINO_TOL
   const hMax = c.omMax > 0 ? (uFrac * Math.PI) / c.omMax : Infinity;
   // mirror into the nearer hemisphere first (recomputing f there); bitwise deterministic, so cache replays match
   const yIn = y; y = minoHemi(y);
-  const f0 = y === yIn && f0In ? f0In : minoRhs(y, c);
+  const f0 = y === yIn && f0In ? f0In : force(y, c);
   let h = Math.min(h0, hMax);
   for (let att = 1; ; att++) {
     const { y1, f1, en } = minoTry(y, h, c, f0, tol, ctol, eps);

@@ -8,6 +8,7 @@ const METHODS = [
   { name: "DP5(4), 5th order, Mino", color: "#2a78d6", rhs: 6, f32: TOL.map((t) => `mino f32 ${t}`), f64: F64.map((t) => `mino f64 ${t}`) },
   { name: "BS3(2), 3rd order, Mino", color: "#eb6834", rhs: 3, f32: TOL.map((t) => `bs3 f32 ${t}`), f64: TOL.map((t) => `bs3 f64 ${t}`) },
   { name: "RK4, 4th order, affine, linear landing", color: "#1baf7a", rhs: 4, f32: SCALE.map((k) => `rk4 f32 ${k}`), f64: SCALE.map((k) => `rk4 f64 ${k}`) },
+  { name: "DP5(4) compensated", color: "#6250d6", rhs: 6, f32: TOL.map((t) => `comp f32 ${t}`), f64: [] },
 ];
 const PANELS = [["edge-998", "a = 0.998, i = 85, disk rays", "disk"], ["edge-998-nodisk", "a = 0.998, i = 85, no disk, sky rays", "sky"], ["default-9", "a = 0.9, i = 72, disk rays", "disk"], ["schw", "a = 0, i = 30, disk rays", "disk"]];
 const W = 520, H = 330, L = 62, R = 16, T = 34, B = 44, X0 = 2, Y0 = 30;
@@ -35,7 +36,7 @@ PANELS.forEach(([cfg, title, group], n) => {
   body += g + "</g>";
 });
 let lx = X0 + L, leg = "";
-for (const m of METHODS) { leg += `<line x1="${lx}" x2="${lx + 22}" y1="14" y2="14" stroke="${m.color}" stroke-width="2"/><text x="${lx + 28}" y="18" font-size="12" fill="${ink}">${m.name}</text>`; lx += 40 + m.name.length * 6.2; }
+for (const m of METHODS) { leg += `<line x1="${lx}" x2="${lx + 22}" y1="14" y2="14" stroke="${m.color}" stroke-width="2"/><text x="${lx + 28}" y="18" font-size="12" fill="${ink}">${m.name}</text>`; lx += 44 + m.name.length * 6; }
 leg += `<line x1="${lx}" x2="${lx + 22}" y1="14" y2="14" stroke="${muted}" stroke-width="2"/><text x="${lx + 28}" y="18" font-size="12" fill="${ink}">f32</text><line x1="${lx + 58}" x2="${lx + 80}" y1="14" y2="14" stroke="${muted}" stroke-width="2" stroke-dasharray="5 4"/><text x="${lx + 86}" y="18" font-size="12" fill="${ink}">f64</text>`;
 const tw = 2 * W + 12, th = Y0 + 2 * H + 10;
 writeFileSync(`${dir}/limit-cost.svg`, `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${tw} ${th}" width="${tw}" height="${th}" font-family="system-ui, sans-serif"><rect width="100%" height="100%" fill="#fff"/>${leg}${body}</svg>\n`);

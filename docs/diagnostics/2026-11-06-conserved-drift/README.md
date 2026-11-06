@@ -47,7 +47,7 @@ About 99.8 % of the signal is the measure: at r = 1.068, Delta = r^2 - 2r + a^2 
 
 ## Limits of this result
 
-- **The step controller watches these same integrals** (`minoDriftNorm`, tolerance 1e-8 of their terms or the rounding floor), so low drift here is partly by construction. Low drift does not show that a ray landed in the right place.
+- **The step controller watches these same integrals** (`minoDriftNorm`, tolerance 1e-8 of their terms or the rounding floor), so low drift in f64 is partly by construction. In f32 the rounding floor mostly switches that check off (measured in `../2026-11-06-accuracy-limit/`, section 2), so the GPU numbers here are less affected. Either way, low drift does not show that a ray landed in the right place.
 - One spin and inclination, one jitter set, one GPU. f64 tiers sample every 8th pixel (14,400 rays). End-of-ray values only: an excursion that returns is not seen.
 - 1.4e-4 M per pixel does not separate the highest photon subrings; f32 eta rounding (~2e-6 at eta ~ 27) also limits how critical a GPU ray can be.
 - No ray ran out of steps (budget 4800); step medians 25 to 78.

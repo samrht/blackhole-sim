@@ -13,10 +13,11 @@ import { skyDirCPU } from "../physics/trace-reference";
 
 interface Data { config: LimitConfig; rIn: number; rOut: number; rays: [number, number][]; dist: number[]; refs: Obs[]; jac: (number[][] | null)[]; arms: Record<string, ArmSummary> }
 const WORDS = 16, CHUNK = 256;
+let lastMs = 0; // the last arm's dispatch loop, no pipeline creation or readback
 const FATE: Obs["f"][] = ["captured", "disk", "escaped"];
 
 /** One GPU arm over all rays, in short dispatches so a slow arm stays under the driver's watchdog. */
-async function runArm(device: GPUDevice, code: string, entry: string, d: Data, u: { scale: number; hNear: number; hFar: number; maxSteps: number }): Promise<Obs[]> {
+async function runArm(device: GPUDevice, code: string, entry: string, d: Data, u: { scale: number; hNear: number; hFar: number; maxSteps: number; comp?: number }): Promise<Obs[]> {
   const n = d.rays.length, F = (d.config.inclDeg * Math.PI) / 180;
   const mod = device.createShaderModule({ code });
   for (const m of (await mod.getCompilationInfo()).messages) if (m.type === "error") throw new Error(`limit.wgsl:${m.lineNum}: ${m.message}`);
@@ -27,7 +28,8 @@ async function runArm(device: GPUDevice, code: string, entry: string, d: Data, u
   const uni = device.createBuffer({ size: 48, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
   const bg = device.createBindGroup({ layout: pipe.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: uni } }, { binding: 1, resource: { buffer: rayB } }, { binding: 2, resource: { buffer: outB } }] });
   const ab = new ArrayBuffer(48), f = new Float32Array(ab), w = new Uint32Array(ab);
-  f.set([d.config.a, F, 1000, d.rIn, d.rOut, u.scale, u.hNear, u.hFar]); w[8] = u.maxSteps;
+  f.set([d.config.a, F, 1000, d.rIn, d.rOut, u.scale, u.hNear, u.hFar]); w[8] = u.maxSteps; w[11] = u.comp ?? 0;
+  const t0 = performance.now();
   for (let first = 0; first < n; first += CHUNK) {
     w[9] = first; w[10] = Math.min(CHUNK, n - first);
     device.queue.writeBuffer(uni, 0, ab);
@@ -35,6 +37,7 @@ async function runArm(device: GPUDevice, code: string, entry: string, d: Data, u
     cp.setPipeline(pipe); cp.setBindGroup(0, bg); cp.dispatchWorkgroups(Math.ceil(w[10] / 64)); cp.end(); device.queue.submit([enc.finish()]);
     await device.queue.onSubmittedWorkDone();
   }
+  lastMs = performance.now() - t0;
   const rb = device.createBuffer({ size, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
   const enc = device.createCommandEncoder(); enc.copyBufferToBuffer(outB, 0, rb, 0, size); device.queue.submit([enc.finish()]);
   await rb.mapAsync(GPUMapMode.READ);
@@ -42,12 +45,12 @@ async function runArm(device: GPUDevice, code: string, entry: string, d: Data, u
   const U = new Uint32Array(raw), R = new Float32Array(raw), obs: Obs[] = [];
   for (let i = 0; i < n; i++) {
     const o = i * WORDS, word = U[o], f2: Obs["f"] = word & 4 ? "budget" : FATE[word & 3];
-    obs.push({ f: f2, r: R[o + 3], p: R[o + 4], t: -R[o + 5] - 1000, dir: [R[o + 6], R[o + 7], R[o + 8]], steps: U[o + 1], attempts: U[o + 2], end: [R[o + 10], R[o + 11], R[o + 12], R[o + 13], R[o + 14], R[o + 15]] } as Obs & { end: number[] });
+    obs.push({ f: f2, r: R[o + 3], p: R[o + 4], t: -R[o + 5] - 1000, dir: [R[o + 6], R[o + 7], R[o + 8]], steps: U[o + 1], attempts: U[o + 2], residual: R[o + 9], end: [R[o + 10], R[o + 11], R[o + 12], R[o + 13], R[o + 14], R[o + 15]] } as Obs & { end: number[]; residual: number });
   }
   return obs;
 }
 
-export async function runLimit(): Promise<{ name: string; adapter: string; arms: Record<string, ArmSummary>; worst: Record<string, unknown[]>; axisScan: unknown }> {
+export async function runLimit(): Promise<{ name: string; adapter: string; arms: Record<string, ArmSummary>; worst: Record<string, unknown[]>; axisScan: unknown; comp: Record<string, number> }> {
   const name = new URLSearchParams(location.search).get("config") ?? "edge-998";
   const res = await fetch(`/docs/diagnostics/2026-11-06-accuracy-limit/data/${name}.json`);
   if (!res.ok) throw new Error(`no CPU data for ${name}: run scripts/limit-cpu.ts first`);
@@ -101,6 +104,41 @@ export async function runLimit(): Promise<{ name: string; adapter: string; arms:
       return { ...g, dir: skyDirCPU(minoToState(Float64Array.from([0, w, v, ph, 0, wp, vp, sigma]), c), q.a) };
     })); console.log(`mino f32 ${tol}`);
   }
+  // The compiler must not have simplified the two-sum away, or every "comp" number below is meaningless.
+  const pairs: [number, number][] = [], fr = Math.fround; let seed = 7;
+  for (let k = 0; k < 2048; k++) { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; const x = seed / 2 ** 32; seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; pairs.push([fr(x * 10 ** (k % 5)), fr((seed / 2 ** 32 - 0.5) * 10 ** (-(k % 9)))]); }
+  const pr = await runArm(device, base + integratorSharedWGSL + limitWGSL, "probe", { ...d, rays: pairs }, { scale: 1, hNear: 0, hFar: 0, maxSteps: 1 });
+  let probeBad = 0, probeNonzero = 0;
+  // The same two-sum in f32 steps: each f32 add done in f64 and rounded is exact (53 >= 2 x 24 + 2 bits), while x + y - s in f64 is not when the exponents are far apart.
+  pr.forEach((q, i) => { const [x, y] = pairs[i], s = fr(x + y), bb = fr(s - x), e = fr(fr(x - fr(s - bb)) + fr(y - bb)); if (q.dir![0] !== s || q.dir![1] !== e) probeBad++; if (q.dir![1] !== 0) probeNonzero++; });
+  console.log(`two-sum probe: ${probeBad} wrong of ${pairs.length}, ${probeNonzero} with a nonzero error term`);
+  if (probeBad > 0) throw new Error(`two-sum probe failed: ${probeBad} of ${pairs.length} wrong`);
+  const comp: Record<string, number> = { probeBad, probeNonzero, probeCases: pairs.length };
+  for (const tol of F32_TOLS) {
+    const shared = integratorSharedWGSL.replace(/const MINO_TOL = 1e-5;/, `const MINO_TOL = ${tol.toExponential()};`);
+    const on = await runArm(device, base + shared + limitWGSL, "minoComp", d, { scale: 1, hNear: 0, hFar: 0, maxSteps: 4800, comp: 1 });
+    arms[`comp f32 ${tol}`] = score(on);
+    // As for plain f32: the compensated end states, the sky direction computed in f64.
+    arms[`comp f32 ${tol}, dir in f64`] = score(on.map((g, i) => {
+      if (g.f !== "escaped") return g;
+      const [w, wp, v, vp, sigma, ph] = (g as Obs & { end: number[] }).end, q = f32Inputs(d.rays[i][0], d.rays[i][1], d.config.a, incl), c = minoRay(q.a, q.xi, q.eta, 1000);
+      return { ...g, dir: skyDirCPU(minoToState(Float64Array.from([0, w, v, ph, 0, wp, vp, sigma]), c), q.a) };
+    }));
+    comp[`liveResidual ${tol}`] = on.filter((g) => (g as Obs & { residual: number }).residual !== 0).length / on.length;
+    arms[`comp off f32 ${tol}`] = score(await runArm(device, base + shared + limitWGSL, "minoComp", d, { scale: 1, hNear: 0, hFar: 0, maxSteps: 4800, comp: 0 }));
+    console.log(`comp f32 ${tol}`);
+  }
+  // Cost of the compensation: plain, then the compensated kernel with and without it, interleaved, best of 5.
+  for (const tol of [1e-5, 1e-7]) {
+    const shared = integratorSharedWGSL.replace(/const MINO_TOL = 1e-5;/, `const MINO_TOL = ${tol.toExponential()};`), best = [Infinity, Infinity, Infinity];
+    const opt = { scale: 1, hNear: 0, hFar: 0, maxSteps: 4800 };
+    for (let rep = 0; rep < 5; rep++) {
+      await runArm(device, base + shared + limitWGSL, "mino", d, opt); best[0] = Math.min(best[0], lastMs);
+      await runArm(device, base + shared + limitWGSL, "minoComp", d, { ...opt, comp: 0 }); best[1] = Math.min(best[1], lastMs);
+      await runArm(device, base + shared + limitWGSL, "minoComp", d, { ...opt, comp: 1 }); best[2] = Math.min(best[2], lastMs);
+    }
+    comp[`ms plain ${tol}`] = best[0]; comp[`ms comp off ${tol}`] = best[1]; comp[`ms comp on ${tol}`] = best[2];
+  }
   for (const tol of BS3_TOLS) {
     const shared = wgslWithBs3(integratorSharedWGSL).replace(/const MINO_TOL = 1e-5;/, `const MINO_TOL = ${tol.toExponential()};`);
     arms[`bs3 f32 ${tol}`] = score(await runArm(device, base + shared + limitWGSL, "mino", d, { scale: 1, hNear: 0, hFar: 0, maxSteps: BS3_BUDGET }));
@@ -111,5 +149,5 @@ export async function runLimit(): Promise<{ name: string; adapter: string; arms:
     worst[`rk4 f32 ${k}`] = last; console.log(`rk4 f32 ${k}`);
   }
   const info = (device as unknown as { adapterInfo?: { vendor?: string; architecture?: string } }).adapterInfo;
-  return { name, adapter: `${info?.vendor ?? "?"} ${info?.architecture ?? ""}`.trim(), arms, worst, axisScan };
+  return { name, adapter: `${info?.vendor ?? "?"} ${info?.architecture ?? ""}`.trim(), arms, worst, axisScan, comp };
 }
