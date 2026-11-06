@@ -268,7 +268,7 @@ export function minoToState(y: Float64Array, c: MinoRay): Float64Array {
   if (th > Math.PI) { th = 2 * Math.PI - th; ph += Math.PI; pth = -pth; }
   return new Float64Array([y[0] - c.r0 - minoF(w, y[5]), 1 / w, th, ph, 1, -y[5] / Dw, pth, -c.xi]);
 }
-export interface MinoTraceResult { fate: Fate; steps: number; attempts: number; rHit?: number; phiHit?: number; tHit?: number; s: Float64Array; drift: number }
+export interface MinoTraceResult { fate: Fate; steps: number; attempts: number; rHit?: number; phiHit?: number; tHit?: number; s: Float64Array; y: Float64Array; drift: number }
 /** The render loop's termination order: disk crossing (cos theta = 0 root of the dense output), capture, escape, budget.
  *  drift is the largest |w'^2 - R~(w)| seen (the first integral, of order 1 along the whole ray). */
 export function minoTrace(al: number, be: number, a: number, inclDeg: number, o: { rIn: number; rOut: number; rObs: number; maxSteps?: number; tol?: number; uFrac?: number; ctol?: number }): MinoTraceResult {
@@ -283,13 +283,13 @@ export function minoTrace(al: number, be: number, a: number, inclDeg: number, o:
     const d = minoPlane(st, c, o.rIn, o.rOut);
     if (d) {
       const rHit = 1 / d[1];
-      if (rHit >= o.rIn && rHit <= o.rOut) { const s = minoToState(d, c); return { fate: "disk", steps: step, attempts, rHit, phiHit: s[3], tHit: s[0], s, drift }; }
+      if (rHit >= o.rIn && rHit <= o.rOut) { const s = minoToState(d, c); return { fate: "disk", steps: step, attempts, rHit, phiHit: s[3], tHit: s[0], s, y: d, drift }; }
     }
     y = st.y; h = st.hNext; f = st.f1;
     // tests in w (a long outgoing step may carry w past 0, where 1/w would read as captured)
-    if (y[1] >= 1 / (rh * 1.005)) return { fate: "captured", steps: step, attempts, s: minoToState(y, c), drift };
+    if (y[1] >= 1 / (rh * 1.005)) return { fate: "captured", steps: step, attempts, s: minoToState(y, c), y, drift };
     const esc = minoSphere(st, c, 1 / (o.rObs * 1.2));
-    if (esc) return { fate: "escaped", steps: step, attempts, s: minoToState(esc, c), drift };
+    if (esc) return { fate: "escaped", steps: step, attempts, s: minoToState(esc, c), y: esc, drift };
   }
-  return { fate: "budget", steps: maxSteps, attempts, s: minoToState(y, c), drift };
+  return { fate: "budget", steps: maxSteps, attempts, s: minoToState(y, c), y, drift };
 }

@@ -20,7 +20,15 @@ import { HOTSPOT, hotspotAliveWindow } from "./physics/hotspot";
 
 const canvas = document.getElementById("c") as HTMLCanvasElement;
 
-if (location.search.includes("parity")) {
+if (location.search.includes("drift")) {
+  // Debug toggle: per-ray conserved-quantity drift heat-map (test/drift.browser.ts). Its own compute module; the normal page never loads it.
+  const { runDrift } = await import("./test/drift.browser");
+  try {
+    const { report, png } = await runDrift(canvas);
+    Object.assign(window, { __drift: report, __driftPNG: png });
+    console.log("drift", report);
+  } catch (e) { Object.assign(window, { __driftError: String(e) }); throw e; }
+} else if (location.search.includes("parity")) {
   // Validation entry: CPU<->GPU parity for the metric/orbit/g-factor math.
   const { runParity } = await import("./test/parity.browser");
   const res = await runParity();
