@@ -20,7 +20,12 @@ import { HOTSPOT, hotspotAliveWindow } from "./physics/hotspot";
 
 const canvas = document.getElementById("c") as HTMLCanvasElement;
 
-if (location.search.includes("drift")) {
+if (location.search.includes("limit")) {
+  // Debug toggle: the GPU arms of the accuracy-limit experiment (test/limit.browser.ts). Its own compute module; the normal page never loads it.
+  const { runLimit } = await import("./test/limit.browser");
+  try { Object.assign(window, { __limit: await runLimit() }); } catch (e) { Object.assign(window, { __limitError: String(e) }); throw e; }
+  document.body.innerHTML = `<pre style="padding:20px">LIMIT done: see scripts/limit-run.mjs</pre>`;
+} else if (location.search.includes("drift")) {
   // Debug toggle: per-ray conserved-quantity drift heat-map (test/drift.browser.ts). Its own compute module; the normal page never loads it.
   const { runDrift } = await import("./test/drift.browser");
   try {

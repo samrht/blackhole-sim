@@ -101,6 +101,12 @@ export function minoRhs(y: Float64Array, c: MinoRay): Float64Array {
 const A = [[], [1 / 5], [3 / 40, 9 / 40], [44 / 45, -56 / 15, 32 / 9], [19372 / 6561, -25360 / 2187, 64448 / 6561, -212 / 729],
   [9017 / 3168, -355 / 33, 46732 / 5247, 49 / 176, -5103 / 18656], [35 / 384, 0, 500 / 1113, 125 / 192, -2187 / 6784, 11 / 84]];
 const E = [71 / 57600, 0, -71 / 16695, 71 / 1920, -17253 / 339200, 22 / 525, -1 / 40];
+// Bogacki-Shampine 3(2), also FSAL, for the ?limit diagnostic's clean order test: the same equations, error norm and landing
+// at a lower order. Nothing ships it: the WGSL renderer is DP5 only, and this switch defaults to DP5.
+const A3 = [[], [1 / 2], [0, 3 / 4], [2 / 9, 1 / 3, 4 / 9]];
+const E3 = [-5 / 72, 1 / 12, 1 / 9, -1 / 8];
+let tableau = { A, E, fac: 0.2 };
+export function setMinoMethod(m: "dp5" | "bs3"): void { tableau = m === "dp5" ? { A, E, fac: 0.2 } : { A: A3, E: E3, fac: 1 / 3 }; }
 /** y0, f0: the step's start state and derivative AS USED (mirrored into the nearer hemisphere if it started past the
  *  equator): dense output and the plane crossing of this step take (y0, y, f0, f1). */
 export interface MinoStepOut { y0: Float64Array; y: Float64Array; f0: Float64Array; f1: Float64Array; h: number; hNext: number; attempts: number; en: number }
@@ -142,21 +148,21 @@ export function minoDrift(y0: Float64Array, y1: Float64Array, c: MinoRay, f1: Fl
 /** One DP5(4) attempt of size h from y (f0 = minoRhs(y)): the 5th-order result, its derivative (FSAL) and the error norm.
  *  eps: machine epsilon of the arithmetic being modelled (2^-52 here; 2^-23 when ?parity predicts the f32 GPU). */
 export function minoTry(y: Float64Array, h: number, c: MinoRay, f0: Float64Array, tol = MINO_TOL, ctol = MINO_CTOL, eps = 2 ** -52): { y1: Float64Array; f1: Float64Array; en: number } {
-  const k: Float64Array[] = [f0];
-  for (let s = 1; s < 7; s++) {
+  const k: Float64Array[] = [f0], T = tableau.A, S = T.length, B = S - 1;
+  for (let s = 1; s < S; s++) {
     const ys = y.slice();
-    for (let j = 0; j < 7; j++) { let acc = 0; for (let q = 0; q < s; q++) acc += A[s][q] * k[q][j]; ys[j] = y[j] + h * acc; }
+    for (let j = 0; j < 7; j++) { let acc = 0; for (let q = 0; q < s; q++) acc += T[s][q] * k[q][j]; ys[j] = y[j] + h * acc; }
     k.push(minoRhs(ys, c));
   }
-  // row 7 of A is the 5th-order solution, so stage 7's argument IS y1 and k[6] = f(y1) (FSAL)
-  const y1 = y.slice(); for (let j = 0; j < 7; j++) { let acc = 0; for (let q = 0; q < 6; q++) acc += A[6][q] * k[q][j]; y1[j] = y[j] + h * acc; }
-  const err = new Float64Array(7); for (let j = 0; j < 7; j++) { let acc = 0; for (let q = 0; q < 7; q++) acc += E[q] * k[q][j]; err[j] = h * acc; }
-  const d = minoDrift(y, y1, c, k[6], eps);
+  // the last row of A is the high-order solution, so the last stage's argument IS y1 and its derivative = f(y1) (FSAL)
+  const y1 = y.slice(); for (let j = 0; j < 7; j++) { let acc = 0; for (let q = 0; q < B; q++) acc += T[B][q] * k[q][j]; y1[j] = y[j] + h * acc; }
+  const err = new Float64Array(7); for (let j = 0; j < 7; j++) { let acc = 0; for (let q = 0; q < S; q++) acc += tableau.E[q] * k[q][j]; err[j] = h * acc; }
+  const d = minoDrift(y, y1, c, k[B], eps);
   const ec = Math.max(d[0] / Math.max(ctol * tol * d[1], d[2]), d[3] / Math.max(ctol * tol * d[4], d[5]));
   // w <= 0 (r beyond infinity) is outside the domain: rejected explicitly (en Infinity -> factor 0.2). tau' takes ln w, so
   // f64 already gave NaN there; WGSL's log of a negative is indeterminate (finite on Intel), and the GPU accepted steps
   // past r = infinity on far rays and read their sky off the escape sphere (?accuracy 2026-10-08). Twin: WGSL minoTry.
-  return { y1, f1: k[6], en: y1[1] > 0 ? Math.max(errNorm(y, y1, err, tol), ec) : Infinity };
+  return { y1, f1: k[B], en: y1[1] > 0 ? Math.max(errNorm(y, y1, err, tol), ec) : Infinity };
 }
 /** One accepted DP5(4) step from y with proposed size h0 (capped at the polar-oscillation guard). Rejected attempts shrink
  *  h and retry; after MINO_MAX_REJECT the last attempt is accepted (the ray proceeds, as today's monitor does). f0In: the
@@ -170,7 +176,7 @@ export function minoStep(y: Float64Array, h0: number, c: MinoRay, tol = MINO_TOL
   for (let att = 1; ; att++) {
     const { y1, f1, en } = minoTry(y, h, c, f0, tol, ctol, eps);
     // step-size factor, kept finite: 5 for a zero error, 0.2 for a non-finite one (twin of the WGSL select chain)
-    const fac = en === 0 ? 5 : Number.isFinite(en) ? 0.9 * Math.pow(en, -0.2) : 0.2;
+    const fac = en === 0 ? 5 : Number.isFinite(en) ? 0.9 * Math.pow(en, -tableau.fac) : 0.2;
     if (en <= 1 || att > MINO_MAX_REJECT) return { y0: y, y: y1, f0, f1, h, hNext: Math.min(hMax, h * Math.min(5, Math.max(0.2, fac))), attempts: att, en };
     h *= Math.max(0.2, Math.min(0.9, fac));
   }
@@ -273,8 +279,11 @@ export interface MinoTraceResult { fate: Fate; steps: number; attempts: number; 
  *  drift is the largest |w'^2 - R~(w)| seen (the first integral, of order 1 along the whole ray). */
 export function minoTrace(al: number, be: number, a: number, inclDeg: number, o: { rIn: number; rOut: number; rObs: number; maxSteps?: number; tol?: number; uFrac?: number; ctol?: number }): MinoTraceResult {
   const incl = (inclDeg * Math.PI) / 180, xi = -al * Math.sin(incl), ci = Math.cos(incl), si = Math.sin(incl);
-  const c = minoRay(a, xi, be * be + (xi * xi * ci * ci) / Math.max(si * si, 1e-8) - a * a * ci * ci, o.rObs);
-  const rh = 1 + Math.sqrt(Math.max(0, 1 - a * a)), maxSteps = o.maxSteps ?? 4800;
+  return minoTraceRay(minoRay(a, xi, be * be + (xi * xi * ci * ci) / Math.max(si * si, 1e-8) - a * a * ci * ci, o.rObs), incl, be, o);
+}
+/** minoTrace with the ray's constants given directly (the f32-inputs arm of the ?limit diagnostic). */
+export function minoTraceRay(c: MinoRay, incl: number, be: number, o: { rIn: number; rOut: number; rObs: number; maxSteps?: number; tol?: number; uFrac?: number; ctol?: number }): MinoTraceResult {
+  const rh = 1 + Math.sqrt(Math.max(0, 1 - c.a * c.a)), maxSteps = o.maxSteps ?? 4800;
   let y = minoInit(o.rObs, incl, be, c), h = 50 / (o.rObs * o.rObs), f: Float64Array | undefined, attempts = 0, drift = 0;
   for (let step = 1; step <= maxSteps; step++) {
     const st = minoStep(y, h, c, o.tol ?? MINO_TOL, o.uFrac ?? MINO_UFRAC, f, o.ctol ?? MINO_CTOL);
